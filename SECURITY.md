@@ -22,6 +22,7 @@ Until the first stable release, security fixes target the latest published beta 
 ## Security boundaries
 
 - SSH runs through the system OpenSSH client with `-F /dev/null`. Existing SSH configuration, default identities and the agent are not used implicitly.
+- SSH and jump hosts verify server keys against muty's own `~/Library/Application Support/muty/known_hosts`. System and user OpenSSH host-key files are not trusted implicitly; importing user host keys requires an explicit action in Settings.
 - Password prompts use a private authenticated Unix socket. Verify new host-key fingerprints before trusting them.
 - The local vault uses AES-256-GCM. Master-password mode derives its key with PBKDF2-HMAC-SHA256 at 600,000 iterations. Backups exclude private SSH keys.
 - Process memory may retain secret material. Complete zeroization is not guaranteed.

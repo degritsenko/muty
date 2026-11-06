@@ -53,6 +53,8 @@ if [[ "${MUTY_TEST_PTY:-0}" == 1 ]]; then
  echo 'PASS integration.lifecycleStress'
  run_pty_case integration.parallel
  echo 'PASS integration.authCancelAndParallel'
+ run_pty_case integration.isolatedHostKeys
+ echo 'PASS integration.isolatedHostKeysSSHAndSFTP'
 fi
 # Password via a test-only helper; its output is never recorded.
 cat > "$fixtures/askpass" <<'HELPER'
@@ -106,7 +108,7 @@ if [[ "${MUTY_TEST_PTY:-0}" == 1 ]]; then
  [[ "$ready" == 1 ]] || { echo 'FAIL restart readiness'; exit 1; }
  run_pty_case integration.blackhole
  echo 'PASS integration.silentTransportLoss'
- echo '14/14 integration checks passed'
+ echo '15/15 integration checks passed'
 else
  echo '7/7 CLI checks passed; SwiftTerm PTY skipped (set MUTY_TEST_PTY=1 after scripts/test.sh)'
 fi

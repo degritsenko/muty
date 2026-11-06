@@ -84,8 +84,6 @@ struct ProfileEditor: View {
                             Section("Connection") {
                                 TextField("Host / IP", text: $profile.host)
                                 TextField("Port", text: $port)
-                                TextField("Username", text: $profile.user)
-                                    .disabled(profile.authentication == .password && profile.credentialID != nil)
                                 JumpHostPicker(profile: $profile, profiles: model.profiles)
                             }
                             Section("Authentication") {
@@ -94,19 +92,30 @@ struct ProfileEditor: View {
                                 }
                                 if profile.authentication == .password {
                                     CredentialSelectionView(vault: model.vault, credentialID: $profile.credentialID)
+                                    if profile.credentialID != nil {
+                                        LabeledContent("Username", value: model.vault.credentials.first(where: { $0.id == profile.credentialID })?.username ?? profile.user)
+                                        Text("Provided by selected credential")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    } else {
+                                        TextField("Username", text: $profile.user)
+                                    }
+                                    if profile.credentialID != nil || profile.savePassword {
+                                        SavedPasswordView(vault: model.vault, passwordID: profile.credentialID ?? profile.id)
+                                            .id(profile.credentialID ?? profile.id)
+                                    }
                                     if profile.credentialID == nil {
                                         if let original = draft.original, profile.savePassword {
-                                            LabeledContent("Password saved in muty") {
+                                            HStack {
                                                 Button("Forget Saved Password…") {
                                                     if model.forgetSavedPassword(original) { profile.savePassword = false }
                                                 }.disabled(model.readOnly)
                                             }
                                         } else {
-                                            Text("Password will be requested when connecting.")
-                                                .font(.caption).foregroundStyle(.secondary)
+                                            LabeledContent("Password", value: "Ask when connecting")
                                         }
                                     }
                                 } else if profile.authentication == .identityFile {
+                                    TextField("Username", text: $profile.user)
                                     KeySelectionView(library: model.keyLibrary, keyID: $profile.keyID, legacyPath: $profile.identityFile)
                                 }
                             }

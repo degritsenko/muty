@@ -6,4 +6,4 @@ chown tester:tester /home/tester/.ssh/authorized_keys
 chmod 700 /home/tester/.ssh
 chmod 600 /home/tester/.ssh/authorized_keys
 printf 'tester:%s\n' "$(cat /fixtures/password)" | chpasswd
-exec /usr/sbin/sshd -D -e -o PasswordAuthentication=yes -o PermitRootLogin=no -o AllowUsers=tester
+exec /usr/sbin/sshd -D -e -o PasswordAuthentication=yes -o PermitRootLogin=no -o AllowUsers=tester -o AllowTcpForwarding=yes

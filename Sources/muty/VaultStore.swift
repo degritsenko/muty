@@ -65,6 +65,9 @@ final class VaultStore: ObservableObject, CredentialStore {
     private var envelope: VaultEnvelope?
     private var key: SymmetricKey?
     private var document: VaultDocument?
+    var savedSessionIDs: Set<UUID> {
+        Set(document?.sessionPasswords.keys.compactMap { UUID(uuidString: $0) } ?? [])
+    }
     private static func aad(_ protected: Bool) -> Data {
         Data("muty.credentials:1:\(protected ? "protected" : "automatic")".utf8)
     }

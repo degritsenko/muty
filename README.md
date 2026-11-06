@@ -30,4 +30,10 @@ open dist/muty.app
 
 See [Contributing](CONTRIBUTING.md) for development and testing, [Security](SECURITY.md) for vulnerability reporting, and [Privacy](PRIVACY.md) for local data handling.
 
+## Host keys
+
+muty keeps trusted server keys in `~/Library/Application Support/muty/known_hosts`, using the OpenSSH file format. SSH sessions and jump hosts use this file; SFTP reuses the verified SSH connection. User and system OpenSSH host-key files are not consulted automatically.
+
+When upgrading from 0.7.2 or earlier, use **Settings → Host Keys → Import from OpenSSH…** to copy existing trust records from `~/.ssh/known_hosts`. Import preserves hashed names and special markers, skips duplicate records and leaves the source file unchanged. Without an import, muty asks you to verify previously unknown servers again. Always verify the fingerprint before accepting a key.
+
 Original code is licensed under [Apache-2.0](LICENSE). See [third-party notices](THIRD_PARTY_NOTICES.md).

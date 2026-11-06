@@ -34,9 +34,9 @@ struct AppSettingsView: View {
         case general = "General"
         case highlights = "Highlights"
         case terminal = "Terminal"
-        case credentials = "Credentials"
         case keys = "SSH Keys"
         case hostKeys = "Host Keys"
+        case credentials = "Credentials"
 
         var icon: String {
             switch self {
@@ -68,7 +68,8 @@ struct AppSettingsView: View {
             }.frame(width: 145)
             Divider()
             settingsPage.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }.frame(width: 760, height: 440).padding()
+        }.frame(width: selectedTab == .credentials ? 940 : 760,
+                height: selectedTab == .credentials ? 520 : 440).padding()
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Spacer()

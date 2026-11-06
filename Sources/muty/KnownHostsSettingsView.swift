@@ -22,11 +22,56 @@ struct KnownHostEntry: Identifiable {
 }
 
 @MainActor final class KnownHostsStore: ObservableObject {
+    static func prepare(file: URL) throws {
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                               attributes: [.posixPermissions: 0o700])
+        let fd = open(file.path, O_WRONLY | O_CREAT | O_NOFOLLOW | O_NONBLOCK, 0o600)
+        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { Darwin.close(fd) }
+        var info = stat()
+        guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
+              info.st_uid == getuid(), fchmod(fd, 0o600) == 0 else {
+            throw MutyError("Host-key file must be a regular file owned by the current user.")
+        }
+    }
     @Published private(set) var entries: [KnownHostEntry] = []
     @Published private(set) var error: String?
     private(set) var file: URL
     private var snapshot: Data?
     private var lines: [String] = []
+    @discardableResult func importFrom(_ source: URL) throws -> Int {
+        guard source.resolvingSymlinksInPath() != file else { throw MutyError("Choose a different source host-key file.") }
+        guard FileManager.default.fileExists(atPath: source.path) else { throw MutyError("OpenSSH known_hosts was not found.") }
+        let imported = KnownHostsStore(file: source)
+        if let error = imported.error { throw MutyError(error) }
+        guard !imported.entries.isEmpty else { throw MutyError("No host keys were found in the source file.") }
+        try Self.prepare(file: file)
+        let fd = open(file.path, O_RDWR | O_APPEND | O_NOFOLLOW | O_NONBLOCK)
+        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { Darwin.close(fd) }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { throw MutyError("Host-key file is busy. Try again.") }
+        defer { _ = flock(fd, LOCK_UN) }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
+        let current = try handle.readToEnd() ?? Data()
+        guard current.count <= 16_000_000,
+              let text = String(data: current, encoding: .utf8) else { throw MutyError("Invalid host-key file.") }
+        var existing = Set(text.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+        var additions: [String] = []
+        for entry in imported.entries {
+            let line = imported.lines[entry.id].trimmingCharacters(in: .whitespacesAndNewlines)
+            if existing.insert(line).inserted { additions.append(line) }
+        }
+        guard !additions.isEmpty else { reload(); return 0 }
+        let data = Data(((text.isEmpty || text.hasSuffix("\n") ? "" : "\n") + additions.joined(separator: "\n") + "\n").utf8)
+        guard current.count + data.count <= 16_000_000 else { throw MutyError("Host-key file exceeds 16 MB.") }
+        if !current.isEmpty {
+            try BackupArchive.write(current, to: file.appendingPathExtension("muty-backup-" + UUID().uuidString))
+        }
+        try handle.write(contentsOf: data)
+        try handle.synchronize()
+        reload()
+        return additions.count
+    }
     init(file: URL) { self.file = file.resolvingSymlinksInPath(); reload() }
     func reload(file: URL? = nil) {
         if let file { self.file = file.resolvingSymlinksInPath() }
@@ -96,29 +141,20 @@ struct KnownHostsSettingsView: View {
     @StateObject private var store: KnownHostsStore
     @ViewState private var query = ""
     @ViewState private var selection = Set<Int>()
-    @ViewState private var source = 0
-    private let files: [URL]
     init(model: AppModel) {
         self.model = model
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        files = [home.appendingPathComponent(".ssh/known_hosts"), home.appendingPathComponent(".ssh/known_hosts2"),
-                 URL(fileURLWithPath: "/etc/ssh/ssh_known_hosts"), URL(fileURLWithPath: "/etc/ssh/ssh_known_hosts2")]
-        let initial = home.appendingPathComponent(".ssh/known_hosts")
-        _store = StateObject(wrappedValue: KnownHostsStore(file: initial))
+        _store = StateObject(wrappedValue: KnownHostsStore(file: SSHNetworking.knownHostsFile))
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Host Keys").font(.title2.bold())
                 Spacer()
+                Button("Import from OpenSSH…", action: importOpenSSH).disabled(model.readOnly)
                 Button("Refresh") { selection = []; store.reload() }
             }
-            Picker("File", selection: $source) {
-                Text("User — known_hosts").tag(0)
-                Text("User — known_hosts2").tag(1)
-                Text("System — ssh_known_hosts (read-only)").tag(2)
-                Text("System — ssh_known_hosts2 (read-only)").tag(3)
-            }
+            Text("muty uses its own known_hosts file. OpenSSH files are unchanged.")
+                .font(.caption).foregroundStyle(.secondary)
             TextField("Search host, [host]:port or fingerprint", text: $query)
                 .textFieldStyle(.roundedBorder)
             List(selection: $selection) {
@@ -137,19 +173,29 @@ struct KnownHostsSettingsView: View {
             HStack {
                 Text("\(store.entries.count) stored keys").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Show File") { NSWorkspace.shared.activateFileViewerSelecting([files[source]]) }
+                Button("Show File") { NSWorkspace.shared.activateFileViewerSelecting([store.file]) }
                 Button("Remove Selected…", role: .destructive, action: remove)
-                    .disabled(selection.isEmpty || source >= 2 || store.error != nil)
+                    .disabled(selection.isEmpty || model.readOnly || store.error != nil)
             }
-            Text("Shared with OpenSSH. Hashed hosts can be found by their exact name. Removed entries are commented out and backed up; SSH may ask to verify the server again.")
+            Text("Hashed hosts can be found by their exact name. Removed entries are commented out and backed up; muty may ask to verify the server again.")
                 .font(.caption).foregroundStyle(.secondary)
             if let error = store.error { Text(error).font(.caption).foregroundStyle(.red) }
         }.padding()
-        .onChange(of: source) { _, value in selection = []; store.reload(file: files[value]) }
         .onChange(of: query) { _, _ in selection = [] }
     }
+    private func importOpenSSH() {
+        guard !model.readOnly, model.confirm("Import OpenSSH Host Keys?",
+            text: "Trust the active entries from ~/.ssh/known_hosts in muty? Hashed names, certificate authorities and revoked-key markers are preserved. Existing muty entries are kept; the source file is unchanged.",
+            action: "Import") else { return }
+        do {
+            let source = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh/known_hosts")
+            let count = try store.importFrom(source)
+            selection = []
+            model.operationStatus = "\(count) host keys imported into muty."
+        } catch { model.errorMessage = error.localizedDescription }
+    }
     private func remove() {
-        guard source < 2, model.confirm("Remove Stored Host Keys?", text: "Remove \(selection.count) entries? Verify the server fingerprint before trusting a replacement key. A backup of the current file will be saved.", action: "Remove") else { return }
+        guard !model.readOnly, model.confirm("Remove Stored Host Keys?", text: "Remove \(selection.count) entries from muty? Verify the server fingerprint before trusting a replacement key. A backup of the current file will be saved. OpenSSH files are unchanged.", action: "Remove") else { return }
         do {
             let backup = try store.remove(selection)
             selection = []

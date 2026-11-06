@@ -51,12 +51,14 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     private var statusTimer: Timer?
     private let credentials: any CredentialStore
     private let sshOptions: [String]
+    private let knownHostsFile: URL
 
     init(profile: SessionProfile, manual: Bool, temporary: Bool = false,
-         credentials: any CredentialStore = VaultStore.shared, sshOptions: [String] = [], deferredStart: Bool = false, ignoreSavedPassword: Bool = false, transferQueueID: UUID = UUID()) {
+         credentials: any CredentialStore = VaultStore.shared, knownHostsFile: URL = SSHNetworking.knownHostsFile, sshOptions: [String] = [], deferredStart: Bool = false, ignoreSavedPassword: Bool = false, transferQueueID: UUID = UUID()) {
         self.transferQueueID = transferQueueID
         self.credentials = credentials
         self.sshOptions = sshOptions
+        self.knownHostsFile = knownHostsFile
         self.profile = profile; self.manual = manual; self.temporary = temporary
         self.deferredStart = deferredStart
         self.ignoreSavedPassword = ignoreSavedPassword
@@ -86,7 +88,8 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
             if p.authentication == .identityFile, let keyID = p.keyID {
                 p.identityFile = try SSHKeyLibrary().path(for: keyID)
             }
-            var args = sshOptions + (try SSHNetworking.transportArguments(p))
+            try KnownHostsStore.prepare(file: knownHostsFile)
+            var args = sshOptions + (try SSHNetworking.transportArguments(p, knownHostsFile: knownHostsFile))
             if p.authentication == .password {
                 targetReceipt = try SSHAuthenticationReceipt()
                 args = targetReceipt!.arguments + args
@@ -111,7 +114,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
                 }
                 let jumpAuth = try askpassEnvironment(for: jump, jump: true)
                 let destination = PortForward.address(p.host) + ":" + String(p.port)
-                var jumpArgs = try SSHNetworking.transportArguments(jump) + ["-W", destination, "--", jump.host]
+                var jumpArgs = try SSHNetworking.transportArguments(jump, knownHostsFile: knownHostsFile) + ["-W", destination, "--", jump.host]
                 if jump.authentication == .password {
                     jumpReceipt = try SSHAuthenticationReceipt()
                     jumpArgs = jumpReceipt!.arguments + jumpArgs

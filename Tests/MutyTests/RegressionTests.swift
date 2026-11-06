@@ -28,6 +28,61 @@ private final class PTYObserver: NSObject, LocalProcessTerminalViewDelegate {
 }
 
 final class RegressionTests {
+    @MainActor func testIndependentKnownHosts() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("muty host keys " + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let key = directory.appendingPathComponent("host")
+        let generate = Process()
+        generate.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
+        generate.arguments = ["-q", "-t", "ed25519", "-N", "", "-f", key.path]
+        try generate.run(); generate.waitUntilExit()
+        assert(generate.terminationStatus == 0)
+        let publicKey = try String(contentsOf: key.appendingPathExtension("pub"), encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let source = directory.appendingPathComponent("openssh")
+        try Data(("host.invalid " + publicKey + "\n@revoked old.invalid " + publicKey +
+                  "\n@cert-authority *.test.invalid " + publicKey + "\n").utf8).write(to: source)
+        let hash = Process()
+        hash.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
+        hash.arguments = ["-H", "-f", source.path]
+        hash.standardOutput = FileHandle.nullDevice; hash.standardError = FileHandle.nullDevice
+        try hash.run(); hash.waitUntilExit()
+        assert(hash.terminationStatus == 0)
+        let original = try Data(contentsOf: source)
+        let file = directory.appendingPathComponent("muty/known_hosts")
+        let store = KnownHostsStore(file: file)
+        let imported = try store.importFrom(source)
+        let repeated = try store.importFrom(source)
+        let preserved = try Data(contentsOf: source)
+        assert(imported == 3 && repeated == 0 && preserved == original)
+        assert(store.entries.count == 3 && store.entries.contains { $0.marker == "@revoked" })
+        assert(store.entries.contains { $0.marker == "@cert-authority" })
+        assert(store.entries.contains { $0.hosts.hasPrefix("|1|") && $0.matches("host.invalid") })
+        let mode = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
+        assert(mode?.intValue == 0o600)
+        let backup = try store.remove([store.entries[0].id])
+        assert(FileManager.default.fileExists(atPath: backup.path))
+        assert(store.entries.count == 2)
+        let afterRemoval = try Data(contentsOf: source)
+        assert(afterRemoval == original)
+        var profile = SessionProfile(); profile.user = "tester"
+        let options = try SSHNetworking.transportArguments(profile, knownHostsFile: file)
+        let process = Process(), output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        process.arguments = options + ["-G", "host.invalid"]
+        process.standardOutput = output; process.standardError = FileHandle.nullDevice
+        try process.run()
+        let config = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        process.waitUntilExit()
+        assert(process.terminationStatus == 0)
+        assert(config.contains("userknownhostsfile " + file.path))
+        assert(config.contains("globalknownhostsfile /dev/null"))
+        let link = directory.appendingPathComponent("symlink")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source)
+        do { try KnownHostsStore.prepare(file: link); fatalError("Host-key symlinks must be rejected") }
+        catch is POSIXError {}
+    }
     @MainActor func testSwitchToIdentityDoesNotRequireOldKeychainPassword() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -219,6 +274,82 @@ final class RegressionTests {
         assert(kill(pid, 0) == -1 && errno == ESRCH)
     }
 
+    @MainActor func testIsolatedHostKeyConnections() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let port = env["MUTY_TEST_PORT"].flatMap(Int.init), let fixtures = env["MUTY_TEST_FIXTURES"] else {
+            throw MutyError("Host-key integration requires the disposable stand")
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("muty host integration " + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let trusted = try String(contentsOfFile: fixtures + "/known_hosts", encoding: .utf8)
+        let source = KnownHostsStore(file: URL(fileURLWithPath: fixtures + "/known_hosts"))
+        guard let first = source.entries.first else { throw MutyError("Missing test host key") }
+        let line = trusted.components(separatedBy: "\n")[first.id]
+        let fields = line.split(whereSeparator: \.isWhitespace)
+        let actualKey = fields.dropFirst().joined(separator: " ")
+        let wrongKeyFile = directory.appendingPathComponent("wrong")
+        let generate = Process()
+        generate.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
+        generate.arguments = ["-q", "-t", "ed25519", "-N", "", "-f", wrongKeyFile.path]
+        try generate.run(); generate.waitUntilExit()
+        guard generate.terminationStatus == 0 else { throw MutyError("Test key generation failed") }
+        let wrongKey = try String(contentsOf: wrongKeyFile.appendingPathExtension("pub"), encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        for scenario in ["direct", "jump", "changedTarget", "changedJump"] {
+            let throughJump = scenario != "direct"
+            let file = directory.appendingPathComponent(scenario + "/known_hosts")
+            try KnownHostsStore.prepare(file: file)
+            let jumpKey = scenario == "changedJump" ? wrongKey : actualKey
+            let targetKey = scenario == "changedTarget" ? wrongKey : actualKey
+            try Data(("[127.0.0.1]:\(port) \(jumpKey)\n127.0.0.1 \(targetKey)\n").utf8).write(to: file)
+            var jump = SessionProfile()
+            jump.host = "127.0.0.1"; jump.port = port; jump.user = "tester"
+            jump.authentication = .identityFile; jump.identityFile = fixtures + "/client"
+            var target = jump
+            target.id = UUID(); target.sftpEnabled = true
+            if throughJump { target.port = 22; target.jumpHostID = jump.id }
+            let connection = SSHConnection(profile: target, manual: false, knownHostsFile: file, sshOptions: ["-v"])
+            connection.resolveJumpProfile = { _ in jump }
+            defer {
+                connection.disconnect()
+                UserDefaults.standard.removeObject(forKey: "sftp-local-" + target.id.uuidString)
+                UserDefaults.standard.removeObject(forKey: "sftp-remote-" + target.id.uuidString)
+            }
+            connection.start()
+            let rejected = scenario.hasPrefix("changed")
+            let deadline = Date().addingTimeInterval(12)
+            while connection.running && !connection.transportReady && Date() < deadline {
+                _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+            }
+            if rejected {
+                let output = String(decoding: connection.terminal.getTerminal().getBufferAsData(), as: UTF8.self)
+                guard !connection.running, !connection.transportReady,
+                      output.contains("HOST IDENTIFICATION HAS CHANGED") || output.contains("Host key verification failed") else {
+                    throw MutyError("Changed host key was not rejected: " + scenario)
+                }
+            } else {
+                guard connection.transportReady else {
+                    let output = String(decoding: connection.terminal.getTerminal().getBufferAsData(), as: UTF8.self)
+                    throw MutyError("Isolated host-key SSH failed: \(scenario); \(connection.error ?? connection.status); \(output.suffix(3000))")
+                }
+                let app = AppModel(store: ProfileStore(directory: directory.appendingPathComponent(scenario + "/profile")), keychain: LockedCredentials())
+                connection.openFileBrowser(app: app)
+                let sftpDeadline = Date().addingTimeInterval(10)
+                while connection.fileBrowser?.remotePath.isEmpty == true && connection.fileBrowser?.error == nil && Date() < sftpDeadline {
+                    _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+                }
+                guard let browser = connection.fileBrowser, !browser.remotePath.isEmpty, browser.error == nil else {
+                    throw MutyError("SFTP over isolated host-key SSH failed: " + scenario)
+                }
+            }
+            connection.disconnect()
+        }
+        guard try String(contentsOfFile: fixtures + "/known_hosts", encoding: .utf8) == trusted else {
+            throw MutyError("Source known_hosts was modified")
+        }
+    }
+
     @MainActor func testFullPasswordConnection(wrongPassword: Bool = false) throws {
         let env = ProcessInfo.processInfo.environment
         guard let port = env["MUTY_TEST_PORT"].flatMap(Int.init), let fixtures = env["MUTY_TEST_FIXTURES"] else {
@@ -235,7 +366,7 @@ final class RegressionTests {
         try store.write(id: profile.id, password: wrongPassword ? "deliberately-wrong-test-password" : password)
         defer { try? store.delete(id: profile.id) }
         let connection = SSHConnection(profile: profile, manual: false, credentials: store,
-            sshOptions: ["-F", "/dev/null", "-o", "UserKnownHostsFile=" + fixtures + "/known_hosts"])
+            knownHostsFile: URL(fileURLWithPath: fixtures + "/known_hosts"))
         defer { connection.disconnect() }
         connection.terminal.frame = NSRect(x: 0, y: 0, width: 800, height: 500)
         connection.start()
@@ -299,7 +430,7 @@ final class RegressionTests {
         defer { connections.forEach { $0.disconnect() } }
         for _ in 0..<12 {
             let c = SSHConnection(profile: profile, manual: false,
-                sshOptions: ["-F", "/dev/null", "-o", "UserKnownHostsFile=" + fixtures + "/known_hosts"])
+                knownHostsFile: URL(fileURLWithPath: fixtures + "/known_hosts"))
             connections.append(c)
             c.start()
             let pid = c.terminal.process.shellPid
@@ -322,14 +453,14 @@ final class RegressionTests {
         guard let port = env["MUTY_TEST_PORT"].flatMap(Int.init), let fixtures = env["MUTY_TEST_FIXTURES"] else {
             throw MutyError("Parallel test requires stand")
         }
-        let options = ["-F", "/dev/null", "-o", "UserKnownHostsFile=" + fixtures + "/known_hosts"]
+        let knownHosts = URL(fileURLWithPath: fixtures + "/known_hosts")
         var profile = SessionProfile()
         profile.host = "127.0.0.1"; profile.port = port; profile.user = "tester"
         profile.authentication = .password
-        let waiting = SSHConnection(profile: profile, manual: true, sshOptions: options)
+        let waiting = SSHConnection(profile: profile, manual: true, knownHostsFile: knownHosts)
         profile.authentication = .identityFile; profile.identityFile = fixtures + "/client"
-        let first = SSHConnection(profile: profile, manual: false, sshOptions: options)
-        let second = SSHConnection(profile: profile, manual: false, sshOptions: options)
+        let first = SSHConnection(profile: profile, manual: false, knownHostsFile: knownHosts)
+        let second = SSHConnection(profile: profile, manual: false, knownHostsFile: knownHosts)
         let all = [waiting, first, second]
         defer { all.forEach { $0.disconnect() } }
         all.forEach { $0.start() }
@@ -406,7 +537,8 @@ final class RegressionTests {
         profile.host = "127.0.0.1"; profile.port = port; profile.user = "tester"
         profile.authentication = .identityFile; profile.identityFile = fixtures + "/client"
         let c = SSHConnection(profile: profile, manual: false,
-            sshOptions: ["-F", "/dev/null", "-o", "ServerAliveInterval=1", "-o", "ServerAliveCountMax=2", "-o", "UserKnownHostsFile=" + fixtures + "/known_hosts"])
+            knownHostsFile: URL(fileURLWithPath: fixtures + "/known_hosts"),
+            sshOptions: ["-o", "ServerAliveInterval=1", "-o", "ServerAliveCountMax=2"])
         defer { c.disconnect() }
         c.start()
         let pid = c.terminal.process.shellPid
@@ -599,7 +731,13 @@ final class RegressionTests {
 @main struct Runner {
     @MainActor static func main() throws {
         let tests = RegressionTests()
+        if CommandLine.arguments.dropFirst().first == "integration.isolatedHostKeys" {
+            try tests.testIsolatedHostKeyConnections()
+            print("PASS isolated host keys: direct/jump SSH and SFTP, changed target/jump rejection")
+            return
+        }
         let cases: [(String, () throws -> Void)] = [
+            ("hosts.independentStorageAndImport", tests.testIndependentKnownHosts),
             ("profiles.legacy", tests.testLegacyProfilePreservesPasswordMode),
             ("ui.quickAddressPasteAndColor", tests.testQuickAddressAndPasteSafety),
             ("profiles.folderCanonicalization", tests.testFolderCanonicalization),

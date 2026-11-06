@@ -41,8 +41,14 @@ struct PortForward: Codable, Identifiable, Equatable {
 }
 
 enum SSHNetworking {
-    static func transportArguments(_ p: SessionProfile) throws -> [String] {
-        var args = ["-F", "/dev/null", "-o", "StrictHostKeyChecking=ask", "-o", "ConnectTimeout=20",
+    static var knownHostsFile: URL { ProfileStore().directory.appendingPathComponent("known_hosts") }
+
+    static func transportArguments(_ p: SessionProfile, knownHostsFile: URL = SSHNetworking.knownHostsFile) throws -> [String] {
+        let path = knownHostsFile.path.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "%", with: "%%")
+        var args = ["-F", "/dev/null", "-o", "UserKnownHostsFile=\"" + path + "\"",
+                    "-o", "GlobalKnownHostsFile=/dev/null",
+                    "-o", "StrictHostKeyChecking=ask", "-o", "ConnectTimeout=20",
                     "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3",
                     "-o", "HostKeyAlgorithms=+ssh-rsa", "-o", "KexAlgorithms=+diffie-hellman-group14-sha1",
                     "-o", "IdentityAgent=none",
