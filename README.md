@@ -1,6 +1,6 @@
 # muty
 
-Native, local-first SSH and SFTP workspace for macOS. No account or cloud service required.
+Native SSH and SFTP client for macOS. Built with SwiftUI and SwiftTerm, powered by macOS OpenSSH. No account or cloud service required.
 
 ![Active SSH terminal session connected to a demo Alpine Linux server](docs/ssh-session.png)
 
@@ -34,6 +34,5 @@ See [Contributing](CONTRIBUTING.md) for development and testing, [Security](SECU
 
 muty keeps trusted server keys in `~/Library/Application Support/muty/known_hosts`, using the OpenSSH file format. SSH sessions and jump hosts use this file; SFTP reuses the verified SSH connection. User and system OpenSSH host-key files are not consulted automatically.
 
-When upgrading from 0.7.2 or earlier, use **Settings → Host Keys → Import from OpenSSH…** to copy existing trust records from `~/.ssh/known_hosts`. Import preserves hashed names and special markers, skips duplicate records and leaves the source file unchanged. Without an import, muty asks you to verify previously unknown servers again. Always verify the fingerprint before accepting a key.
 
 Original code is licensed under [Apache-2.0](LICENSE). See [third-party notices](THIRD_PARTY_NOTICES.md).
