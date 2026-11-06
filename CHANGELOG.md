@@ -2,7 +2,13 @@
 
 All notable public changes will be documented in this file.
 
-## Unreleased
+## 0.7.1
+
+### Fixed
+
+- Command-W and File → Close Tab close the selected session tab.
+
+## 0.7.0
 
 ### Added
 

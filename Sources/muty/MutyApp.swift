@@ -63,6 +63,13 @@ struct MutyApp: App {
                     model.connect(profile, temporary: true)
                 }.keyboardShortcut("l", modifiers: .command)
             }
+            CommandGroup(replacing: .saveItem) {
+                Button("Close Tab") {
+                    if let tab = model.selectedConnection { model.close(tab) }
+                }
+                .keyboardShortcut("w", modifiers: .command)
+                .disabled(showingSettings || model.selectedConnection == nil)
+            }
             CommandMenu("Import & Backup") {
                 Button("Back Up…") { model.beginFullBackupExport() }.disabled(model.readOnly)
                 Button("Restore Backup…") { model.chooseConfigurationImport(restoringBackup: true) }.disabled(model.readOnly)
@@ -97,9 +104,6 @@ struct MutyApp: App {
                 Button("4 Panes — Grid") { model.split("four") }.disabled(model.tabs.isEmpty)
                 Button("Single Pane") { model.split("none") }.disabled(model.splitMode == "none")
                 Divider()
-                Button("Close Tab") {
-                    if let tab = model.tabs.first(where: { $0.id == model.selectedTab }) { model.close(tab) }
-                }.keyboardShortcut("w").disabled(showingSettings || model.tabs.isEmpty)
                 Button("Next Tab") { cycle(1) }.keyboardShortcut("]", modifiers: [.command, .shift])
                 Button("Previous Tab") { cycle(-1) }.keyboardShortcut("[", modifiers: [.command, .shift])
                 Divider()
