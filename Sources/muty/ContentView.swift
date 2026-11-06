@@ -488,6 +488,9 @@ private struct SessionTab: View {
         .contextMenu {
             Button(connection.profile.connectionType == .localShell ? "Restart Shell" : "Reconnect") { model.reconnect(connection) }
             Button(connection.profile.connectionType == .localShell ? "Stop Shell" : "Disconnect") { connection.disconnect() }.disabled(!connection.running)
+            if !connection.running && connection.profile.connectionType == .ssh && connection.profile.authentication == .password {
+                Button("Enter Password Again…") { model.reconnect(connection, promptForPassword: true) }
+            }
             Divider()
             SessionLoggingMenu(connection: connection)
             Divider()
@@ -582,19 +585,6 @@ private struct SessionPane: View {
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
             }
-            if let error = connection.error {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle")
-                    Text(error).font(.caption).textSelection(.enabled)
-                    Spacer()
-                    if !connection.running && connection.profile.connectionType == .ssh && connection.profile.authentication == .password {
-                        Button("Enter Password Again…") { model.reconnect(connection, promptForPassword: true) }
-                    }
-                }.padding(10).background(Color.orange.opacity(0.12))
-            }
-            if !connection.running && connection.status != "Not Started" {
-                Text(connection.profile.connectionType == .localShell ? "Press Enter to restart shell" : "Press Enter to reconnect").font(.caption).foregroundStyle(.secondary).padding(6)
-            }
             if connection.profile.connectionType == .ssh && !connection.profile.tunnelOnly && connection.profile.sshEnabled && connection.profile.sftpEnabled {
                 HStack(spacing: 4) {
                     Button("SSH") {
@@ -617,6 +607,27 @@ private struct SessionPane: View {
                     SFTPBrowserView(browser: browser, endpoint: connection.profile.endpoint)
                         .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(nsColor: .windowBackgroundColor))
                 }
+            }
+            if connection.error != nil || (!connection.running && connection.status != "Not Started") {
+                Divider()
+                HStack(spacing: 8) {
+                    if let error = connection.error {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                            .textSelection(.enabled)
+                    } else {
+                        Text(connection.status).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 4)
+                    if !connection.running {
+                        Text(connection.profile.connectionType == .localShell ? "Press Enter to restart shell" : "Press Enter to reconnect")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .font(.caption)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.bar)
             }
         }.sheet(isPresented: $tunnelsVisible) {
             if let tunnels = connection.activeTunnels { ActiveTunnelsView(manager: tunnels, model: model, profile: connection.profile) }

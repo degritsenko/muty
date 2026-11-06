@@ -214,7 +214,10 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
                                         replaceSaved: replacing && node.savePassword)
 
         }
-        server.onError = { [weak self] message in self?.error = message }
+        server.onError = { [weak self] message in
+            guard let self, !self.stopping else { return }
+            self.error = message
+        }
         if jump { jumpBroker = server } else { broker = server }
         return extra.merging(["SSH_ASKPASS": helper, "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": "muty:0", "LC_ALL": "C"]) { _, new in new }
     }
@@ -290,11 +293,12 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     }
 
     func disconnect() {
+        stopping = true
+        if running { error = nil }
         fileBrowser?.disconnect()
         stopLogging()
         terminal.cancelPendingPaste()
         discardPendingPasswords()
-        stopping = true
         broker?.stop(); broker = nil; stopJumpResources()
         releaseTransport()
         guard running else { return }
@@ -421,7 +425,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         let code = exitCode.map { $0 > 255 ? ($0 >> 8) & 255 : $0 }
         status = code == 0 ? "Session Ended" : "Connection Ended (\(code.map(String.init) ?? "signal"))"
         if code != 0 && error == nil {
-            error = profile.connectionType == .localShell ? "Shell exited with an error. See terminal output." : "SSH exited with an error. See terminal output, retry, or check session settings."
+            error = profile.connectionType == .localShell ? "Shell exited with an error. See terminal output." : "SSH session ended with an error. See terminal output."
         }
     }
 }

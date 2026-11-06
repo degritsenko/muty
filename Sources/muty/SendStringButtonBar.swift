@@ -268,8 +268,16 @@ struct SendStringButtonBar: View {
                     }
                 }
             } label: { Label(title, systemImage: "square.stack").lineLimit(1) }
-                .fixedSize().disabled(store.loadError != nil)
+                .fixedSize()
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1)
+                        .allowsHitTesting(false)
+                }
+                .disabled(store.loadError != nil)
                 .help("Button set · folder assignments include subfolders")
+            Divider().frame(height: 18)
+                .padding(.horizontal, 2)
             ScrollView(.horizontal) {
                 HStack(spacing: 5) {
                     ForEach(store.document.buttons.filter { $0.setID == selectedSet }) { button in

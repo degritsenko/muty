@@ -31,11 +31,12 @@ import AppKit
         contentView?.addSubview(field)
         return field
     }
-    func cancelButton(x: CGFloat, y: CGFloat = 16) {
+    @discardableResult func cancelButton(x: CGFloat, y: CGFloat = 16) -> NSButton {
         let button = NSButton(title: "Cancel", target: self, action: #selector(cancel(_:)))
         button.bezelStyle = .rounded; button.keyEquivalent = "\u{1b}"
         button.frame = NSRect(x: x, y: y, width: 90, height: 28)
         contentView?.addSubview(button)
+        return button
     }
 }
 
@@ -43,7 +44,6 @@ import AppKit
     private let vault: VaultStore
     private let mode: VaultAccessMode
     private let protected = NSButton(checkboxWithTitle: "Use a master password", target: nil, action: nil)
-    private let acknowledged = NSButton(checkboxWithTitle: "I understand and accept weaker protection", target: nil, action: nil)
     private let password = NSSecureTextField()
     private let confirmation = NSSecureTextField()
     private let save = NSButton()
@@ -62,16 +62,18 @@ import AppKit
         confirmation.frame = NSRect(x: 20, y: 150, width: 410, height: 26)
         confirmation.placeholderString = "Confirm master password"; confirmation.delegate = self
         contentView?.addSubview(password); contentView?.addSubview(confirmation)
-        acknowledged.frame = NSRect(x: 20, y: 112, width: 410, height: 24)
-        acknowledged.target = self; acknowledged.action = #selector(refresh(_:))
-        contentView?.addSubview(acknowledged)
         hint = label("", y: 100, width: 410, height: 38); hint.font = .systemFont(ofSize: 12); hint.textColor = .secondaryLabelColor
         error = label("", y: 48, width: 410, height: 44); error.font = .systemFont(ofSize: 12); error.textColor = .systemRed
-        cancelButton(x: 240)
+        let cancel = cancelButton(x: 240)
         save.title = mode == .unlock ? "Unlock" : "Save"; save.bezelStyle = .rounded
         save.target = self; save.action = #selector(submit(_:)); save.keyEquivalent = "\r"
         save.frame = NSRect(x: 340, y: 16, width: 90, height: 28)
         contentView?.addSubview(save)
+        protected.nextKeyView = password
+        password.nextKeyView = confirmation
+        confirmation.nextKeyView = cancel
+        cancel.nextKeyView = save
+        save.nextKeyView = protected
         initialFirstResponder = password
         refresh(nil)
     }
@@ -83,15 +85,23 @@ import AppKit
         protected.isHidden = mode == .unlock
         password.isHidden = !usesMaster
         confirmation.isHidden = mode == .unlock || !usesMaster
-        acknowledged.isHidden = usesMaster
-        hint.frame.origin.y = usesMaster ? 100 : 142
-        hint.frame.size.height = usesMaster ? 38 : 65
+        hint.frame = NSRect(x: 20, y: usesMaster ? 100 : 152, width: 410, height: usesMaster ? 38 : 55)
         hint.stringValue = usesMaster ? "Unlock once per app launch. A forgotten master password cannot be recovered." : "Without a master password, the key is stored with the vault. Anyone who copies the vault can recover its passwords."
         hint.textColor = usesMaster ? .secondaryLabelColor : .systemOrange
-        save.isEnabled = usesMaster ? !password.stringValue.isEmpty && password.stringValue.utf8.count <= 1024 && (mode == .unlock || password.stringValue == confirmation.stringValue) : acknowledged.state == .on
+        save.isEnabled = !usesMaster || (!password.stringValue.isEmpty && password.stringValue.utf8.count <= 1024 &&
+            (mode == .unlock || password.stringValue == confirmation.stringValue))
     }
     @objc private func submit(_ sender: Any?) {
         guard save.isEnabled else { return }
+        if mode != .unlock && protected.state == .off {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = mode == .change ? "Disable Master Password?" : "Save Without a Master Password?"
+            alert.informativeText = hint.stringValue
+            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: mode == .change ? "Disable" : "Save Without Master Password")
+            guard alert.runModal() == .alertSecondButtonReturn else { return }
+        }
         do {
             switch mode {
             case .setup: try vault.initialize(masterPassword: protected.state == .on ? password.stringValue : nil)
