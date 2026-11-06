@@ -15,7 +15,7 @@ Native, local-first SSH and SFTP workspace for macOS. No account or cloud servic
 
 ## Download
 
-The first public build is **v0.7.0 (132)** for Apple silicon (arm64), with macOS 14 or later. Download the app ZIP from the `v0.7.0` GitHub release, unzip it, and move `muty.app` to Applications.
+muty requires Apple silicon (arm64) and macOS 14 or later. Download the app ZIP from the [latest GitHub release](https://github.com/degritsenko/muty/releases/latest), unzip it, and move `muty.app` to Applications.
 
 The app is ad-hoc signed and has not been notarized. If macOS blocks the app and you trust the download, go to **System Settings → Privacy & Security → Open Anyway** after the first launch attempt and confirm. macOS saves an exception for muty. [Apple Support](https://support.apple.com/en-us/102445)
 
