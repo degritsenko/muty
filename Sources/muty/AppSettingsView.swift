@@ -24,8 +24,33 @@ struct KeySelectionView: View {
     }
 }
 
+@MainActor final class ModalSettingsWindow: NSWindow {
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, event.keyCode == 53,
+           event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+           attachedSheet == nil, NSApp.modalWindow === self {
+            performClose(nil)
+            return
+        }
+        super.sendEvent(event)
+    }
+
+    override func close() {
+        if NSApp.modalWindow === self { NSApp.stopModal() }
+        super.close()
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           event.charactersIgnoringModifiers == "w" {
+            performClose(nil)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
 struct AppSettingsView: View {
-    @Environment(\.dismiss) private var dismiss
     @ObservedObject var model: AppModel
     @ObservedObject var library: SSHKeyLibrary
     @ViewState private var selectedTab: Tab = .general
@@ -68,15 +93,7 @@ struct AppSettingsView: View {
             }.frame(width: 145)
             Divider()
             settingsPage.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }.frame(width: selectedTab == .credentials ? 940 : 760,
-                height: selectedTab == .credentials ? 520 : 440).padding()
-        .safeAreaInset(edge: .bottom) {
-            HStack {
-                Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
-            }.padding([.horizontal, .bottom])
-        }
-        .onAppear { selectedTab = .general }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding()
         .overlay(alignment: .bottom) { OperationStatusView(model: model) }
     }
 

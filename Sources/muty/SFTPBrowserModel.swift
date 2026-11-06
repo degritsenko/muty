@@ -27,7 +27,11 @@ struct SFTPProgress {
     @Published var error: String?
     private let client: SFTPClient
     private var job: Task<Void, Never>?
-    private var editors: [UUID: RemoteTextEditor] = [:]
+    private struct EditorKey: Hashable {
+        let path: String
+        let readOnly: Bool
+    }
+    private var editors: [EditorKey: RemoteTextEditor] = [:]
     private weak var app: AppModel?
     var visibleLocal: [BrowserFile] { localFiles.filter { showHidden || !$0.name.hasPrefix(".") } }
     var visibleRemote: [BrowserFile] { remoteFiles.filter { showHidden || !$0.name.hasPrefix(".") } }
@@ -280,10 +284,11 @@ struct SFTPProgress {
     }
     func openEditor(_ file: BrowserFile, readOnly: Bool) {
         guard !file.isDirectory, !file.isSymlink else { return }
+        let key = EditorKey(path: file.path, readOnly: readOnly)
+        if let existing = editors[key] { existing.activate(); return }
         run("Opening file…", work: { try $0.readDocument(file.path) }) { [weak self] snapshot in
             guard let self else { return }
-            let id = UUID()
-            let controller = RemoteTextEditor(path: file.path, snapshot: snapshot, readOnly: readOnly) { [weak self] bytes, expected in
+            let controller = RemoteTextEditor(path: file.path, snapshot: snapshot, readOnly: readOnly, tabGroupID: self.id) { [weak self] bytes, expected in
                 guard let self, !self.disconnected else { throw MutyError("SSH connection ended.") }
                 guard !self.busy else { throw MutyError("Another SFTP operation is running. Try saving again when it finishes.") }
                 self.busy = true; self.status = "Saving file…"
@@ -297,8 +302,14 @@ struct SFTPProgress {
                 self.status = "Saved"
                 return result.0
             }
-            controller.onClose = { [weak self] in self?.editors[id] = nil }
-            self.editors[id] = controller; controller.showWindow(nil); controller.window?.makeKeyAndOrderFront(nil)
+            if let existingWindow = self.editors.values.compactMap(\.window).first, let newWindow = controller.window {
+                let anchor = existingWindow.tabGroup?.selectedWindow ?? existingWindow
+                anchor.addTabbedWindow(newWindow, ordered: .above)
+            }
+            controller.onClose = { [weak self] in self?.editors[key] = nil }
+            self.editors[key] = controller
+            controller.showWindow(nil)
+            controller.activate()
         }
     }
     func makeFile(_ name: String, remote: Bool) {

@@ -45,39 +45,44 @@ struct RemoteTextSnapshot: Equatable {
     private let message = NSTextField(wrappingLabelWithString: "")
     private var snapshot: RemoteTextSnapshot
     private let readOnly: Bool
+    private let usesYAMLIndentation: Bool
     private var saving = false
     private var disconnected = false
     private let saveDocument: (Data, RemoteTextSnapshot) async throws -> RemoteTextSnapshot
     var onClose: (() -> Void)?
     private var dirty: Bool { editor.string != snapshot.text }
 
-    init(path: String, snapshot: RemoteTextSnapshot, readOnly: Bool,
+    init(path: String, snapshot: RemoteTextSnapshot, readOnly: Bool, tabGroupID: UUID,
          save: @escaping (Data, RemoteTextSnapshot) async throws -> RemoteTextSnapshot) {
         self.snapshot = snapshot; self.readOnly = readOnly; self.saveDocument = save
+        usesYAMLIndentation = ["yaml", "yml"].contains((path as NSString).pathExtension.lowercased())
         let window = RemoteEditorWindow(contentRect: NSRect(x: 0, y: 0, width: 850, height: 580),
                                         styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         super.init(window: window)
         window.title = (readOnly ? "View — " : "Edit — ") + (path as NSString).lastPathComponent
+        window.tabbingIdentifier = "muty.sftp.editor." + tabGroupID.uuidString
+        window.tabbingMode = .preferred
         window.minSize = NSSize(width: 500, height: 320); window.delegate = self
         window.isReleasedWhenClosed = false
         window.saveAction = { [weak self] in self?.save() }
         window.findAction = { [weak self] in self?.findText() }
         let pathLabel = NSTextField(wrappingLabelWithString: path)
         pathLabel.isSelectable = true; pathLabel.font = .systemFont(ofSize: 12); pathLabel.lineBreakMode = .byTruncatingMiddle
-        let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
+        let scroll = NSScrollView(); scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
         editor.isRichText = false; editor.isEditable = !readOnly; editor.isSelectable = true
         editor.allowsUndo = true; editor.usesFindBar = true
         editor.isAutomaticQuoteSubstitutionEnabled = false; editor.isAutomaticDashSubstitutionEnabled = false
         editor.isAutomaticTextReplacementEnabled = false; editor.isAutomaticSpellingCorrectionEnabled = false
         editor.isAutomaticTextCompletionEnabled = false
+        editor.smartInsertDeleteEnabled = false
         editor.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
         editor.textContainerInset = NSSize(width: 8, height: 8)
-        editor.isHorizontallyResizable = true; editor.isVerticallyResizable = true
+        editor.isHorizontallyResizable = false; editor.isVerticallyResizable = true
         editor.minSize = NSSize(width: 0, height: 0)
         editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         editor.autoresizingMask = [.width]
-        editor.textContainer?.containerSize = editor.maxSize; editor.textContainer?.widthTracksTextView = false
+        editor.textContainer?.widthTracksTextView = true
         editor.string = snapshot.text; editor.delegate = self; scroll.documentView = editor
         let find = NSButton(title: "Find…", target: self, action: #selector(findText))
         find.bezelStyle = .rounded
@@ -117,6 +122,23 @@ struct RemoteTextSnapshot: Equatable {
         return alert.runModal() == .alertSecondButtonReturn
     }
     override func showWindow(_ sender: Any?) { Self.openEditors[editorID] = self; super.showWindow(sender) }
+    func activate() {
+        guard let window else { return }
+        window.tabGroup?.selectedWindow = window
+        window.makeKeyAndOrderFront(nil)
+    }
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard usesYAMLIndentation, textView.isEditable, commandSelector == #selector(NSResponder.insertTab(_:)) else { return false }
+        let text = textView.string as NSString
+        let selection = textView.selectedRange()
+        let lineStart = text.lineRange(for: NSRange(location: selection.location, length: 0)).location
+        let prefix = text.substring(with: NSRange(location: lineStart, length: selection.location - lineStart))
+        let column = prefix.reduce(0) { column, character in
+            column + (character == "\t" ? 2 - column % 2 : 1)
+        }
+        textView.insertText(String(repeating: " ", count: 2 - column % 2), replacementRange: selection)
+        return true
+    }
     func textDidChange(_ notification: Notification) {
         message.stringValue = disconnected ? "SSH connection ended. Your draft remains available to copy." : dirty ? "Unsaved changes" : ""
         update()

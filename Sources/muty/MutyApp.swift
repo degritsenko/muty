@@ -40,16 +40,14 @@ struct MutyApp: App {
     var body: some Scene {
         Window("muty", id: "main") {
             ContentView(model: model)
-                .sheet(isPresented: $showingSettings) {
-                    AppSettingsView(model: model, library: model.keyLibrary)
-                }
-                .background(WindowTitleHider().frame(width: 0, height: 0)).onAppear { delegate.model = model; model.openStartupSession() }
+            .background(WindowTitleHider().frame(width: 0, height: 0))
+            .onAppear { delegate.model = model; model.openStartupSession() }
         }
         .windowToolbarStyle(.unifiedCompact)
         .defaultSize(width: 1150, height: 740)
         .commands {
             CommandGroup(replacing: .appSettings) {
-                Button("Settings…") { showingSettings = true }
+                Button("Settings…") { openSettings() }
                     .keyboardShortcut(",", modifiers: .command)
             }
             CommandGroup(replacing: .newItem) {
@@ -64,11 +62,12 @@ struct MutyApp: App {
                 }.keyboardShortcut("l", modifiers: .command)
             }
             CommandGroup(replacing: .saveItem) {
-                Button("Close Tab") {
-                    if let tab = model.selectedConnection { model.close(tab) }
+                Button(showingSettings ? "Close Settings" : "Close Tab") {
+                    if showingSettings { (NSApp.modalWindow as? ModalSettingsWindow)?.performClose(nil) }
+                    else if mainWindowIsKey, let tab = model.selectedConnection { model.close(tab) }
                 }
                 .keyboardShortcut("w", modifiers: .command)
-                .disabled(showingSettings || model.selectedConnection == nil)
+                .disabled(!showingSettings && model.selectedConnection == nil)
             }
             CommandMenu("Import & Backup") {
                 Button("Back Up…") { model.beginFullBackupExport() }.disabled(model.readOnly)
@@ -79,7 +78,7 @@ struct MutyApp: App {
             }
             CommandGroup(replacing: .textEditing) {
                 Button("Find in Terminal…") {
-                    model.terminalFindRequest = UUID()
+                    if mainWindowIsKey { model.terminalFindRequest = UUID() }
                 }.keyboardShortcut("f", modifiers: .command).disabled(showingSettings || model.selectedConnection == nil)
             }
             CommandGroup(after: .toolbar) {
@@ -109,6 +108,41 @@ struct MutyApp: App {
                 Divider()
             }
         }
+    }
+    private func openSettings() {
+        let candidates = [NSApp.keyWindow, NSApp.mainWindow].compactMap { $0 } + NSApp.orderedWindows
+        guard !showingSettings, NSApp.modalWindow == nil,
+              let main = candidates.first(where: { $0.identifier?.rawValue == "main" || $0.title == "muty" }),
+              main.attachedSheet == nil else { return }
+        let visible = main.screen.map { main.frame.intersection($0.visibleFrame) } ?? main.frame
+        let parent = visible.isEmpty ? main.frame : visible
+        let size = NSSize(width: min(820, max(760, parent.width - 48)),
+                          height: min(460, max(440, parent.height - 80)))
+        let window = ModalSettingsWindow(contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.title = "Settings"
+        window.tabbingMode = .disallowed
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: AppSettingsView(model: model, library: model.keyLibrary))
+        window.contentMinSize = NSSize(width: 760, height: 440)
+        window.setFrameAutosaveName("muty.modalSettings")
+        window.setContentSize(size)
+        showingSettings = true
+        window.alphaValue = 0
+        window.makeKeyAndOrderFront(nil)
+        let frame = window.frame
+        window.setFrameOrigin(NSPoint(x: parent.midX - frame.width / 2,
+                                      y: parent.midY - frame.height / 2))
+        window.alphaValue = 1
+        NSApp.runModal(for: window)
+        window.orderOut(nil)
+        showingSettings = false
+        main.makeKeyAndOrderFront(nil)
+    }
+
+    private var mainWindowIsKey: Bool {
+        guard let window = NSApp.keyWindow, window.attachedSheet == nil else { return false }
+        return window.identifier?.rawValue == "main" || window.title == "muty"
     }
     private func resizeFont(_ delta: Double) {
         fontSize = min(30, max(9, (fontSize.isFinite ? fontSize : 13) + delta))

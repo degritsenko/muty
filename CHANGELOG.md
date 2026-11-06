@@ -2,6 +2,12 @@
 
 All notable public changes will be documented in this file.
 
+## 0.7.5
+
+- Open remote text files in tabs within one editor window per SFTP session.
+- Wrap long lines in the remote editor and insert spaces when pressing Tab in YAML files.
+- Open Settings in a compact, resizable modal window that closes with Escape.
+
 ## 0.7.4
 
 ### Added
