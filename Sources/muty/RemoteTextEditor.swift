@@ -27,6 +27,16 @@ struct RemoteTextSnapshot: Equatable {
 @MainActor private final class RemoteEditorWindow: NSWindow {
     var saveAction: (() -> Void)?
     var findAction: (() -> Void)?
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, event.keyCode == 53,
+           event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+           attachedSheet == nil, NSApp.modalWindow == nil {
+            performClose(nil)
+            return
+        }
+        super.sendEvent(event)
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command {
             if event.charactersIgnoringModifiers == "s" { saveAction?(); return true }

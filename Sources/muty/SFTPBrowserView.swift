@@ -10,7 +10,7 @@ struct SFTPBrowserView: View {
                 SFTPFilePane(browser: browser, remote: false, title: "Local")
                 SFTPFilePane(browser: browser, remote: true, title: "Remote · " + endpoint)
             }
-            if !browser.transferQueue.items.isEmpty { SFTPTransfersView(queue: browser.transferQueue, browser: browser) }
+            SFTPTransfersView(queue: browser.transferQueue, browser: browser)
             Divider()
             HStack(spacing: 10) {
                 Toggle("Hidden files", isOn: $browser.showHidden).controlSize(.small)

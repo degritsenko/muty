@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import SwiftUI
 import SwiftTerm
 import Darwin
 @testable import muty
@@ -28,6 +29,57 @@ private final class PTYObserver: NSObject, LocalProcessTerminalViewDelegate {
 }
 
 final class RegressionTests {
+    func testSavedSessionSearch() {
+        var first = SessionProfile(); first.name = "ASA edge"; first.host = "10.0.0.1"; first.folder = "Cisco/KOR"
+        var second = SessionProfile(); second.name = "Backup"; second.host = "asa-backup.invalid"
+        var third = SessionProfile(); third.name = "Other"; third.host = "other.invalid"; third.folder = "Archive/ASA"
+        let profiles = [third, second, first]
+        assert(SavedSessionSearch.matches(profiles, query: "").isEmpty)
+        assert(SavedSessionSearch.matches(profiles, query: "  ").isEmpty)
+        assert(SavedSessionSearch.matches(profiles, query: " ASA ").map(\.id) == [first.id, second.id])
+        assert(SavedSessionSearch.matches(profiles, query: "cisco/kor").isEmpty)
+        assert(SavedSessionSearch.matches(profiles, query: "archive").isEmpty)
+        assert(SavedSessionSearch.matches(profiles, query: "10.0.0.1").map(\.id) == [first.id])
+        assert(SavedSessionSearch.matches(profiles, query: "missing.invalid").isEmpty)
+        var linux = SessionProfile(); linux.name = "Database"; linux.host = "db.invalid"; linux.folder = "linux_MSR/ERSL"
+        var lin = SessionProfile(); lin.name = "lin.gritsenko.me"; lin.host = "lin.gritsenko.me"
+        assert(SavedSessionSearch.matches([linux, lin], query: "lin").map(\.id) == [lin.id])
+        assert(SavedSessionSearch.matches([linux, lin], query: "lin.").map(\.id) == [lin.id])
+    }
+    @MainActor func testEditorEscapeAndCompletedTransfers() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let app = AppModel(store: ProfileStore(directory: directory), keychain: LockedCredentials())
+        let queue = SFTPTransferQueue()
+        var transfer = SFTPTransfer(kind: .download, source: "/test.txt", destination: "/tmp/test.txt")
+        transfer.state = .done
+        queue.items = [transfer]
+        let sessionID = UUID()
+        let browser = SFTPBrowserModel(client: SFTPClient(arguments: []), app: app, sessionID: sessionID, transferQueue: queue)
+        defer {
+            browser.disconnect()
+            UserDefaults.standard.removeObject(forKey: "sftp-local-" + sessionID.uuidString)
+        }
+        let view = NSHostingView(rootView: SFTPTransfersView(queue: queue, browser: browser))
+        view.frame = NSRect(x: 0, y: 0, width: 700, height: 180)
+        view.layoutSubtreeIfNeeded()
+        let before = view.fittingSize.height
+        queue.items.removeAll { $0.state == .done }
+        _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        view.layoutSubtreeIfNeeded()
+        assert(before > 100 && view.fittingSize.height < 10)
+        let snapshot = try RemoteTextSnapshot(bytes: Data("test\n".utf8), attributes: SFTPAttributes())
+        let editor = RemoteTextEditor(path: "/test.txt", snapshot: snapshot, readOnly: false, tabGroupID: UUID()) { _, expected in
+            fatalError("Escape must not save an unchanged file")
+        }
+        var closed = false
+        editor.onClose = { closed = true }
+        let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                    windowNumber: editor.window!.windowNumber, context: nil,
+                                    characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
+        editor.window!.sendEvent(event)
+        assert(closed)
+    }
     @MainActor func testIndependentKnownHosts() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("muty host keys " + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -737,6 +789,8 @@ final class RegressionTests {
             return
         }
         let cases: [(String, () throws -> Void)] = [
+            ("sessions.savedSessionSearch", tests.testSavedSessionSearch),
+            ("ui.editorEscapeAndCompletedTransfers", tests.testEditorEscapeAndCompletedTransfers),
             ("hosts.independentStorageAndImport", tests.testIndependentKnownHosts),
             ("profiles.legacy", tests.testLegacyProfilePreservesPasswordMode),
             ("ui.quickAddressPasteAndColor", tests.testQuickAddressAndPasteSafety),

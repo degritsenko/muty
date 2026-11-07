@@ -2,6 +2,23 @@
 
 All notable public changes will be documented in this file.
 
+## 0.7.6
+
+### Added
+
+- Search saved sessions by name or host from the toolbar next to terminal search, with suggestions, arrow-key navigation and Enter to connect.
+
+### Fixed
+
+- Hide the transfer panel immediately after clearing the last completed transfers.
+- Close remote editor and viewer tabs with Escape, preserving the existing unsaved-change confirmation.
+- Exclude folder names from Session Manager search and use the same matching rules as toolbar session search.
+- Hide session suggestions when no hosts match.
+
+### Changed
+
+- Move the Button Bar set selector to the right, after the add button.
+
 ## 0.7.5
 
 - Open remote text files in tabs within one editor window per SFTP session.

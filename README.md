@@ -5,13 +5,23 @@ Native SSH and SFTP client for macOS. Built with SwiftUI and SwiftTerm, powered 
 ![Active SSH terminal session connected to a demo Alpine Linux server](docs/ssh-session.png)
 
 - SSH and local shell tabs with split layouts.
-- Two-pane SFTP browser, transfer queue and remote text editor.
-- Saved sessions, folders and shared credentials.
+- Two-pane SFTP browser, transfer queue and tabbed remote text editor.
+- Saved sessions, folders, shared credentials and quick session search in the toolbar.
 - Jump hosts, port forwarding and tunnel-only sessions.
 - SecureCRT and MobaXterm session import.
 - Local credential vault and encrypted backups.
 
 ![muty connected to a demo SSH server, showing two-pane SFTP and a completed upload](docs/screenshot.png)
+
+*Screenshots show an earlier release.*
+
+## Sessions and remote files
+
+Use **Find saved session** next to the terminal search field to find saved sessions by name or host address. Choose a suggestion with the arrow keys and press Enter, or click it, to open a new connection. Folder names are shown for context but are not included in the search. The Session Manager uses the same search rules.
+
+Remote files open as tabs in one editor window per SFTP session. Long lines wrap to fit the window; Tab inserts spaces in YAML files. Escape closes the current editor or viewer tab, with a confirmation for unsaved changes. If a file has changed on the server, saving is refused and your unsaved text stays in the open tab.
+
+Use **Clear Completed** to remove completed transfers; the transfer panel disappears when the queue is empty. The button-set selector is on the right of the Button Bar, after the **+** button.
 
 ## Download
 

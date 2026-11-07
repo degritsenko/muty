@@ -241,8 +241,7 @@ struct SendStringButtonBar: View {
         model.selectedConnection.flatMap { model.currentFolder(for: $0) }
     }
     private var title: String { store.document.sets.first { $0.id == selectedSet }?.name ?? "Default" }
-    var body: some View {
-        HStack(spacing: 6) {
+    private var setPicker: some View {
             Menu {
                 Button("Default") { selectedSet = nil }
                 ForEach(store.document.sets) { set in Button(set.name) { selectedSet = set.id } }
@@ -276,8 +275,10 @@ struct SendStringButtonBar: View {
                 }
                 .disabled(store.loadError != nil)
                 .help("Button set · folder assignments include subfolders")
-            Divider().frame(height: 18)
-                .padding(.horizontal, 2)
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
             ScrollView(.horizontal) {
                 HStack(spacing: 5) {
                     ForEach(store.document.buttons.filter { $0.setID == selectedSet }) { button in
@@ -301,6 +302,9 @@ struct SendStringButtonBar: View {
             }.scrollIndicators(.hidden)
             Button { edit(nil) } label: { Image(systemName: "plus") }
                 .help("New Send String Button").disabled(store.loadError != nil)
+            Divider().frame(height: 18)
+                .padding(.horizontal, 2)
+            setPicker
         }
         .font(.system(size: 12)).controlSize(.small)
         .padding(.horizontal, 8).padding(.vertical, 4).frame(height: 32)

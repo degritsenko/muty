@@ -110,6 +110,7 @@ struct ContentView: View {
             }
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 10) {
+                    SavedSessionSearchField(model: model).frame(width: 190, height: 22)
                     HStack(spacing: 4) {
                         TerminalSearchField(text: $terminalQuery, request: model.terminalFindRequest) {
                             findInTerminal(backward: false)
@@ -257,9 +258,7 @@ struct ContentView: View {
                 List(selection: $selectedRows) {
                     if !search.isEmpty {
                         Section("Search Results") {
-                            ForEach(model.profiles.filter {
-                                "\($0.name) \($0.endpoint) \($0.folder ?? "")".localizedCaseInsensitiveContains(search)
-                            }) { profile in
+                            ForEach(SavedSessionSearch.matches(model.profiles, query: search)) { profile in
                                 SessionRow(profile: profile, location: .search, model: model, textFont: managerTextFont)
                             }
                         }

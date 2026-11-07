@@ -21,6 +21,7 @@ struct SFTPTransfersView: View {
     @ObservedObject var queue: SFTPTransferQueue
     @ObservedObject var browser: SFTPBrowserModel
     var body: some View {
+        if !queue.items.isEmpty {
         VStack(spacing: 4) {
             HStack {
                 Text("Transfers: \(queue.items.filter { $0.state == .done }.count)/\(queue.items.count)").font(.caption)
@@ -41,5 +42,6 @@ struct SFTPTransfersView: View {
                 }
             }.frame(height: 100)
         }.padding(6)
+        }
     }
 }
