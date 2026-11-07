@@ -11,13 +11,13 @@ Native SSH and SFTP client for macOS. Built with SwiftUI and SwiftTerm, powered 
 - SecureCRT and MobaXterm session import.
 - Local credential vault and encrypted backups.
 
-![muty connected to a demo SSH server, showing two-pane SFTP and a completed upload](docs/screenshot.png)
-
-*Screenshots show an earlier release.*
+![Two-pane SFTP browser connected to a disposable demo server](docs/screenshot.png)
 
 ## Sessions and remote files
 
 Use **Find saved session** next to the terminal search field to find saved sessions by name or host address. Choose a suggestion with the arrow keys and press Enter, or click it, to open a new connection. Folder names are shown for context but are not included in the search. The Session Manager uses the same search rules.
+
+![Saved-session search suggestions alongside terminal search](docs/session-search.png)
 
 Remote files open as tabs in one editor window per SFTP session. Long lines wrap to fit the window; Tab inserts spaces in YAML files. Escape closes the current editor or viewer tab, with a confirmation for unsaved changes. If a file has changed on the server, saving is refused and your unsaved text stays in the open tab.
 
