@@ -36,8 +36,8 @@ struct ForwardingSettingsView: View {
                     List(selection: $selected) {
                         ForEach(profile.forwards) { rule in
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(rule.name?.isEmpty == false ? rule.name! : rule.kind.title).lineLimit(1)
-                                Text(rule.kind.title + " · " + String(rule.listenPort) + (rule.enabled == false ? " · Off" : ""))
+                                Text(rule.name?.isEmpty == false ? rule.name! : L(rule.kind.title)).lineLimit(1)
+                                Text(L(rule.kind.title) + " · " + String(rule.listenPort) + (rule.enabled == false ? L(" · Off") : ""))
                                     .font(.caption).foregroundStyle(.secondary)
                             }.padding(.vertical, 3).tag(rule.id)
                         }
@@ -86,14 +86,14 @@ struct ForwardingSettingsView: View {
 struct ForwardRuleFields: View {
     @Binding var rule: PortForward
     let server: String
-    private var serverLabel: String { "SSH server (" + (server.isEmpty ? "session host" : server) + ")" }
+    private var serverLabel: String { L("SSH server") + " (" + (server.isEmpty ? L("session host") : server) + ")" }
     private var route: String {
         let listen = PortForward.address(rule.bindAddress) + ":" + String(rule.listenPort)
         let destination = PortForward.address(rule.destinationHost) + ":" + String(rule.destinationPort)
         switch rule.kind {
-        case .local: return "This Mac " + listen + " → " + serverLabel + " → " + destination
-        case .remote: return serverLabel + " " + listen + " → This Mac → " + destination
-        case .socks: return "Apps → This Mac " + listen + " (SOCKS) → " + serverLabel + " → destination"
+        case .local: return L("This Mac") + " " + listen + " → " + serverLabel + " → " + destination
+        case .remote: return serverLabel + " " + listen + " → " + L("This Mac") + " → " + destination
+        case .socks: return L("Apps") + " → " + L("This Mac") + " " + listen + " (SOCKS) → " + serverLabel + " → " + L("destination")
         }
     }
     var body: some View {
@@ -108,7 +108,7 @@ struct ForwardRuleFields: View {
                     Text("Type").foregroundStyle(.secondary)
                     HStack {
                         Picker("Type", selection: $rule.kind) {
-                            ForEach(PortForward.Kind.allCases) { Text($0.title).tag($0) }
+                            ForEach(PortForward.Kind.allCases) { Text(L($0.title)).tag($0) }
                         }.labelsHidden().frame(maxWidth: 140)
                         Spacer(minLength: 4)
                         Toggle("Enabled", isOn: Binding(get: { rule.enabled != false }, set: { rule.enabled = $0 }))
@@ -117,7 +117,7 @@ struct ForwardRuleFields: View {
                 }
             }
             Divider().padding(.vertical, 2)
-            Text(rule.kind == .remote ? "Listen on " + serverLabel : "Listen on This Mac")
+            Text(rule.kind == .remote ? L("Listen on") + " " + serverLabel : L("Listen on This Mac"))
                 .font(.caption.weight(.semibold))
             HStack(alignment: .top, spacing: 8) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -130,7 +130,7 @@ struct ForwardRuleFields: View {
                 }.frame(width: 75)
             }
             if rule.kind != .socks {
-                Text(rule.kind == .remote ? "Destination reached from This Mac" : "Destination reached from " + serverLabel)
+                Text(rule.kind == .remote ? L("Destination reached from This Mac") : L("Destination reached from") + " " + serverLabel)
                     .font(.caption.weight(.semibold)).padding(.top, 4)
                 HStack(alignment: .top, spacing: 8) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -144,7 +144,7 @@ struct ForwardRuleFields: View {
                 }
             }
             Spacer(minLength: 0)
-            Text(rule.kind == .remote ? "Destination localhost means this Mac. The listening interface belongs to the SSH server." : rule.kind == .local ? "Destination localhost means the SSH server. The listening interface belongs to this Mac." : "The SOCKS proxy listens on this Mac; connections are made from the SSH server.")
+            Text(rule.kind == .remote ? L("Destination localhost means this Mac. The listening interface belongs to the SSH server.") : rule.kind == .local ? L("Destination localhost means the SSH server. The listening interface belongs to this Mac.") : L("The SOCKS proxy listens on this Mac; connections are made from the SSH server."))
                 .font(.caption).foregroundStyle(.secondary)
             Text(route).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)

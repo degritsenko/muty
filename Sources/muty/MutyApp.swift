@@ -124,7 +124,7 @@ struct MutyApp: App {
                           height: min(460, max(440, parent.height - 80)))
         let window = ModalSettingsWindow(contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        window.title = "Settings"
+        window.title = L("Settings")
         window.tabbingMode = .disallowed
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: AppSettingsView(model: model, library: model.keyLibrary))

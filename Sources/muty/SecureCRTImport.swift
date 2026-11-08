@@ -52,7 +52,7 @@ final class SecureCRTParser: NSObject, XMLParserDelegate {
                 if proto == "SSH2" || proto == "Local Shell" {
                     let folder = SessionProfile.canonicalFolder(stack.dropFirst(depth).dropLast().map(\.name).joined(separator: "/"))
                     rawSessions.append((frame, folder))
-                } else { result.skipped.append("\(path): unsupported protocol \(proto)") }
+                } else { result.skipped.append(LF("%@: unsupported protocol %@", path, proto)) }
             } else if let folder = SessionProfile.canonicalFolder(path) { result.folders.append(folder) }
         }
         if let depth = credentialsDepth, stack.count == depth + 1 { rawCredentials.append(frame) }
@@ -121,7 +121,7 @@ final class SecureCRTParser: NSObject, XMLParserDelegate {
                 if let username = sharedUsernames[title.lowercased()] { profile.user = username }
                 if let credential = shared[title.lowercased()] {
                     profile.credentialID = credential.id
-                } else { result.passwordWarnings.append(path + ": shared credential unavailable; password not imported.") }
+                } else { result.passwordWarnings.append(path + ": " + L("shared credential unavailable; password not imported.")) }
             }
             do {
                 profile = try profile.validated()
@@ -195,7 +195,7 @@ extension AppModel {
 
     func chooseSecureCRTImport() {
         let panel = NSOpenPanel()
-        panel.title = "Import SecureCRT XML"
+        panel.title = L("Import SecureCRT XML")
         panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
         let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 76))
         let label = NSTextField(labelWithString: "Configuration Passphrase (optional)")
@@ -236,9 +236,9 @@ struct SessionImportView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Import SecureCRT Sessions").font(.title2.bold())
-            Text("\(ready.count) ready · \(preview.skipped.count) invalid or unsupported · \(preview.profiles.count - ready.count) already exist")
+            Text(LF("%ld ready · %ld invalid or unsupported · %ld already exist", ready.count, preview.skipped.count, preview.profiles.count - ready.count))
             Text("SSH keys, scripts and tunnels are excluded. Existing sessions are matched by folder, name, host, port and username. No sessions connect automatically.").font(.caption).foregroundStyle(.secondary)
-            Toggle("Import passwords (\(preview.passwords.count) session passwords, \(preview.credentials.count) shared credentials)", isOn: $importPasswords)
+            Toggle(LF("Import passwords (%ld session passwords, %ld shared credentials)", preview.passwords.count, preview.credentials.count), isOn: $importPasswords)
                 .disabled(preview.passwords.isEmpty && preview.credentials.isEmpty)
             if importPasswords {
                 Toggle("Replace existing passwords and credential assignments", isOn: $replacePasswords)
@@ -252,13 +252,13 @@ struct SessionImportView: View {
                     }
                 }
                 ForEach(Array(preview.passwordWarnings.enumerated()), id: \.offset) { _, reason in
-                    Text(reason).font(.caption).foregroundStyle(.orange)
+                    Text(L(reason)).font(.caption).foregroundStyle(.orange)
                 }
                 ForEach(Array(preview.skipped.enumerated()), id: \.offset) { _, reason in
-                    Text(reason).font(.caption).foregroundStyle(.orange)
+                    Text(L(reason)).font(.caption).foregroundStyle(.orange)
                 }
             }.frame(height: 300)
-            if let error { Text(error).foregroundStyle(.red) }
+            if let error { Text(L(error)).foregroundStyle(.red) }
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }

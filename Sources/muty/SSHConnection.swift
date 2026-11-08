@@ -333,11 +333,11 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     func startLogging() {
         guard running, !isLogging else { return }
         let panel = NSSavePanel()
-        panel.title = "Start Session Logging"
+        panel.title = L("Start Session Logging")
         let name = (tabName ?? profile.name).map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? String($0) : "_" }.joined()
         let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         panel.nameFieldStringValue = String(name.prefix(80)) + "-" + timestamp + ".log"
-        panel.message = "Records terminal output from now on, including ANSI escape sequences."
+        panel.message = L("Records terminal output from now on, including ANSI escape sequences.")
         guard panel.runModal() == .OK, let url = panel.url, running else { return }
         do { try beginLogging(to: url) }
         catch { self.error = "Cannot start logging: " + error.localizedDescription }
@@ -355,7 +355,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     func showLogFile() { if let logURL { NSWorkspace.shared.activateFileViewerSelecting([logURL]) } }
 
     func showFind() {
-        let item = NSMenuItem(title: "Find", action: nil, keyEquivalent: "")
+        let item = NSMenuItem(title: L("Find"), action: nil, keyEquivalent: "")
         item.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
         terminal.performFindPanelAction(item)
     }

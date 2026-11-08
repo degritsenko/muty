@@ -147,7 +147,7 @@ struct SavedSessionSearchField: NSViewRepresentable {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(profile.folder.map { $0 + "/" + profile.name } ?? profile.name)
                                             .lineLimit(1)
-                                        Text(profile.connectionType == .localShell ? "Local shell" : profile.endpoint)
+                                        Text(profile.connectionType == .localShell ? L("Local shell") : profile.endpoint)
                                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                     }
                                     .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)

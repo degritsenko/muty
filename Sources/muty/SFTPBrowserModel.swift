@@ -189,7 +189,7 @@ struct SFTPProgress {
             while !Task.isCancelled, !disconnected, !transferQueue.paused, transferQueue.owner == id,
                   let index = transferQueue.items.firstIndex(where: { $0.state == .waiting }) {
                 let transfer = transferQueue.items[index]
-                transferQueue.items[index].state = .copying; status = "Copying " + (transfer.source as NSString).lastPathComponent
+                transferQueue.items[index].state = .copying; status = LF("Copying %@", (transfer.source as NSString).lastPathComponent)
                 do {
                     let upload = transfer.kind == .upload || transfer.kind == .uploadDirectory
                     let directory = transfer.kind == .uploadDirectory || transfer.kind == .downloadDirectory
@@ -209,10 +209,10 @@ struct SFTPProgress {
                     if exists && !directory {
                         if let allChoice { choice = allChoice }
                         else {
-                            let alert = NSAlert(); alert.messageText = "File already exists"
+                            let alert = NSAlert(); alert.messageText = L("File already exists")
                             alert.informativeText = transfer.destination
-                            alert.addButton(withTitle: "Replace"); alert.addButton(withTitle: "Skip"); alert.addButton(withTitle: "Keep Both"); alert.addButton(withTitle: "Cancel Queue")
-                            alert.showsSuppressionButton = true; alert.suppressionButton?.title = "Apply to all conflicts in this batch"
+                            alert.addButton(withTitle: L("Replace")); alert.addButton(withTitle: L("Skip")); alert.addButton(withTitle: L("Keep Both")); alert.addButton(withTitle: L("Cancel Queue"))
+                            alert.showsSuppressionButton = true; alert.suppressionButton?.title = L("Apply to all conflicts in this batch")
                             choice = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
                             if alert.suppressionButton?.state == .on { allChoice = choice }
                         }

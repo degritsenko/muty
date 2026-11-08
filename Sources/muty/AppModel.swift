@@ -356,7 +356,7 @@ final class AppModel: ObservableObject {
         }
         if hasSecrets { tabs.forEach { $0.revokeAuthentication() } }
         profiles = updated; emptyFolders = folders
-        operationStatus = "Import complete: \(plan.profiles.count) sessions added, \(restored) session passwords and \(processedShared) shared credentials processed."
+        operationStatus = LF("Import complete: %ld sessions added, %ld session passwords and %ld shared credentials processed.", plan.profiles.count, restored, processedShared)
     }
 
     func importSessions(_ imported: [SessionProfile], folders: [String]) throws {
@@ -370,7 +370,7 @@ final class AppModel: ObservableObject {
         try store.save(updated, folders: updatedFolders)
         let added = updated.count - profiles.count
         profiles = updated; emptyFolders = updatedFolders
-        operationStatus = "Import complete: \(added) sessions added, \(imported.count - added) duplicates skipped."
+        operationStatus = LF("Import complete: %ld sessions added, %ld duplicates skipped.", added, imported.count - added)
     }
 
     private func validateJumpHost(_ p: SessionProfile) throws {
@@ -909,7 +909,7 @@ final class AppModel: ObservableObject {
             if selectedProfile.map(ids.contains) == true { selectedProfile = nil }
             if inSelectedFolder(selectedFolder) { selectedFolder = nil }
             persistWorkspace()
-            operationStatus = "Deleted \(affected.count) sessions and \(removedFolders.count) folders."
+            operationStatus = LF("Deleted %ld sessions and %ld folders.", affected.count, removedFolders.count)
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -951,8 +951,8 @@ final class AppModel: ObservableObject {
     }
 
     func confirm(_ title: String, text: String, action: String = "Continue", cancel: String = "Cancel") -> Bool {
-        let alert = NSAlert(); alert.messageText = title; alert.informativeText = text
-        alert.addButton(withTitle: action); alert.addButton(withTitle: cancel)
+        let alert = NSAlert(); alert.messageText = L(title); alert.informativeText = L(text)
+        alert.addButton(withTitle: L(action)); alert.addButton(withTitle: L(cancel))
         return alert.runModal() == .alertFirstButtonReturn
     }
 }

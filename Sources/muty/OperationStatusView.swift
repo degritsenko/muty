@@ -6,7 +6,7 @@ struct OperationStatusView: View {
         if let status = model.operationStatus {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                Text(status).font(.callout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                Text(L(status)).font(.callout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
                 Button { model.operationStatus = nil } label: { Image(systemName: "xmark") }
                     .buttonStyle(.plain).help("Dismiss status")

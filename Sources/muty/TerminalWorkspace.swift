@@ -53,7 +53,7 @@ struct TerminalWorkspace<Pane: View>: View {
                         if index >= slots.count || !model.tabs.contains(where: { $0.id == slots[index] }) {
                             let frame = layout.frames[index]
                             VStack(spacing: 12) {
-                                Text("Pane \(index + 1)").foregroundStyle(.secondary)
+                                Text(LF("Pane %ld", index + 1)).foregroundStyle(.secondary)
                                 Menu("Choose Session") {
                                     ForEach(model.tabs) { tab in
                                         Button(tab.tabName ?? tab.profile.name) { model.assignSplitTab(tab.id, to: index) }

@@ -7,8 +7,8 @@ struct SFTPBrowserView: View {
     var body: some View {
         VStack(spacing: 0) {
             HSplitView {
-                SFTPFilePane(browser: browser, remote: false, title: "Local")
-                SFTPFilePane(browser: browser, remote: true, title: "Remote · " + endpoint)
+                SFTPFilePane(browser: browser, remote: false, title: L("Local"))
+                SFTPFilePane(browser: browser, remote: true, title: L("Remote") + " · " + endpoint)
             }
             SFTPTransfersView(queue: browser.transferQueue, browser: browser)
             Divider()
@@ -22,15 +22,15 @@ struct SFTPBrowserView: View {
                             ProgressView(value: min(Double(progress.bytes) / Double(total), 1)).frame(width: 110)
                             Text(Self.bytes(progress.bytes) + " / " + Self.bytes(total)).monospacedDigit()
                         } else { ProgressView().controlSize(.small) }
-                    } else { ProgressView().controlSize(.small); Text(browser.status) }
+                    } else { ProgressView().controlSize(.small); Text(L(browser.status)) }
                     Spacer(minLength: 4)
                     Button("Cancel") { browser.cancel() }
-                } else { Text(browser.status).foregroundStyle(.secondary); Spacer(minLength: 0) }
+                } else { Text(L(browser.status)).foregroundStyle(.secondary); Spacer(minLength: 0) }
             }.font(.system(size: 11)).padding(.horizontal, 10).frame(height: 34)
             if let error = browser.error {
                 HStack {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
-                    Text(error).font(.caption).textSelection(.enabled)
+                    Text(L(error)).font(.caption).textSelection(.enabled)
                     Spacer()
                     Button { browser.error = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
                 }.padding(8).background(Color.orange.opacity(0.1))
@@ -147,7 +147,7 @@ private struct SFTPFilePane: View {
                 guard !unavailable, ids.count == 1, let file = rows.first(where: { ids.contains($0.id) }), file.isDirectory || file.isSymlink else { return }
                 navigate(file.path)
             }
-            Text("\(files.count) items").font(.system(size: 10)).foregroundStyle(.secondary)
+            Text(LF("%ld items", files.count)).font(.system(size: 10)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(8).frame(minWidth: 260, maxWidth: .infinity, maxHeight: .infinity)

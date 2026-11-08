@@ -4,9 +4,9 @@ import AppKit
 extension AppModel {
     func chooseConfigurationImport(restoringBackup: Bool = false) {
         let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
-        panel.title = restoringBackup ? "Restore Backup" : "Import Configuration"
-        panel.prompt = restoringBackup ? "Open Backup" : "Import"
-        panel.message = restoringBackup ? "Choose a muty backup. You can review sessions and passwords before restoring." : "Choose a muty configuration file."
+        panel.title = restoringBackup ? L("Restore Backup") : L("Import Configuration")
+        panel.prompt = restoringBackup ? L("Open Backup") : L("Import")
+        panel.message = restoringBackup ? L("Choose a muty backup. You can review sessions and passwords before restoring.") : L("Choose a muty configuration file.")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task {
             do {
@@ -50,11 +50,11 @@ struct ConfigurationImportView: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text((backup.restoredPasswords.isEmpty && backup.restoredCredentials.isEmpty) ? "Import muty Configuration" : "Restore muty Backup").font(.title2.bold())
-            Text("\(plan.profiles.count) ready · \(plan.existingIDs.count) already exist · \(selected.count - plan.profiles.count - plan.existingIDs.count) need attention")
+            Text((backup.restoredPasswords.isEmpty && backup.restoredCredentials.isEmpty) ? L("Import muty Configuration") : L("Restore muty Backup")).font(.title2.bold())
+            Text(LF("%ld ready · %ld already exist · %ld need attention", plan.profiles.count, plan.existingIDs.count, selected.count - plan.profiles.count - plan.existingIDs.count))
             Text("Existing session settings stay unchanged. Private keys are not imported. No connections will start.").font(.caption).foregroundStyle(.secondary)
             if !backup.restoredPasswords.isEmpty || !backup.restoredCredentials.isEmpty {
-                Toggle("Restore passwords (\(backup.restoredPasswords.count) session passwords, \(backup.restoredCredentials.count) shared credentials)", isOn: $restorePasswords)
+                Toggle(LF("Restore passwords (%ld session passwords, %ld shared credentials)", backup.restoredPasswords.count, backup.restoredCredentials.count), isOn: $restorePasswords)
                 if restorePasswords {
                     Toggle("Replace existing passwords", isOn: $replacePasswords)
                     Text("By default, existing password storage passwords are kept. Partial selection restores only shared credentials referenced by selected sessions. All credentials, including unused ones, are restored when all sessions are selected.")
@@ -62,7 +62,7 @@ struct ConfigurationImportView: View {
                 }
             }
             if let buttonBar = backup.buttonBar {
-                Toggle("Restore Button Bar (\(buttonBar.sets.count) sets, \(buttonBar.buttons.count) buttons)", isOn: $restoreButtonBar)
+                Toggle(LF("Restore Button Bar (%ld sets, %ld buttons)", buttonBar.sets.count, buttonBar.buttons.count), isOn: $restoreButtonBar)
                 Text("Replaces current button sets, commands and folder assignments.").font(.caption).foregroundStyle(.secondary)
             }
             HStack {
@@ -87,11 +87,11 @@ struct ConfigurationImportView: View {
                                 ForEach(keys) { Text($0.name).tag(Optional($0.id)) }
                             }
                         }
-                        if let note = plan.notes[entry.id] { Text(note).font(.caption).foregroundStyle(.secondary) }
+                        if let note = plan.notes[entry.id] { Text(L(note)).font(.caption).foregroundStyle(.secondary) }
                     }
                 }.padding(.vertical, 3)
             }.frame(height: 300)
-            if let error { Text(error).foregroundStyle(.red).font(.caption) }
+            if let error { Text(L(error)).foregroundStyle(.red).font(.caption) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)

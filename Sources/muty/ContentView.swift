@@ -157,7 +157,7 @@ struct ContentView: View {
         .alert("muty", isPresented: Binding(get: { model.errorMessage != nil },
                                             set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK") { model.errorMessage = nil }
-        } message: { Text(model.errorMessage ?? "") }
+        } message: { Text(L(model.errorMessage ?? "")) }
         .onAppear { fontSize = min(30, max(9, fontSize.isFinite ? fontSize : 13)) }
     }
     private func toggleSessionManager() {
@@ -231,8 +231,8 @@ struct ContentView: View {
                             Button {
                                 managerFontSize = size
                             } label: {
-                                if size == managerTextSize { Label("\(size) pt", systemImage: "checkmark") }
-                                else { Text("\(size) pt") }
+                                if size == managerTextSize { Label(LF("%ld pt", size), systemImage: "checkmark") }
+                                else { Text(LF("%ld pt", size)) }
                             }
                         }
                     } label: { Image(systemName: "textformat.size") }
@@ -567,18 +567,18 @@ private struct SessionPane: View {
             }
             if let tunnels = connection.activeTunnels, tunnels.entries.contains(where: { $0.active }) {
                 HStack {
-                    Button("Active Tunnels (\(tunnels.entries.filter { $0.active }.count))…") { tunnelsVisible = true }
+                    Button(LF("Active Tunnels (%ld)…", tunnels.entries.filter { $0.active }.count)) { tunnelsVisible = true }
                     Spacer()
                 }.font(.caption).padding(.horizontal, 8).frame(height: 26)
             }
 
             if connection.profile.tunnelOnly {
                 VStack(alignment: .leading, spacing: 4) {
-                    Label("Tunnel only · " + connection.status, systemImage: "network")
+                    Label(L("Tunnel only") + " · " + L(connection.status), systemImage: "network")
                     Text("No shell is started. Closing or disconnecting this tab stops the forwards.")
                         .font(.caption).foregroundStyle(.secondary)
                     ForEach(connection.profile.forwards.filter { $0.enabled != false }) { rule in
-                        Text("\(rule.kind.title): \(rule.bindAddress):\(rule.listenPort)" + (rule.kind == .socks ? "" : " → \(rule.destinationHost):\(rule.destinationPort)"))
+                        Text(L(rule.kind.title) + ": " + rule.bindAddress + ":" + String(rule.listenPort) + (rule.kind == .socks ? "" : " → " + rule.destinationHost + ":" + String(rule.destinationPort)))
                             .font(.caption.monospaced())
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
@@ -610,15 +610,15 @@ private struct SessionPane: View {
                 Divider()
                 HStack(spacing: 8) {
                     if let error = connection.error {
-                        Label(error, systemImage: "exclamationmark.triangle")
+                        Label(L(error), systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.orange)
                             .textSelection(.enabled)
                     } else {
-                        Text(connection.status).foregroundStyle(.secondary)
+                        Text(L(connection.status)).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 4)
                     if !connection.running {
-                        Text(connection.profile.connectionType == .localShell ? "Press Enter to restart shell" : "Press Enter to reconnect")
+                        Text(connection.profile.connectionType == .localShell ? L("Press Enter to restart shell") : L("Press Enter to reconnect"))
                             .foregroundStyle(.secondary)
                     }
                 }
