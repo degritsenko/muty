@@ -942,6 +942,19 @@ final class RegressionTests {
         result = rebuild(priorityTransformer.process(Array("FAILED\n".utf8)[...], ruleSet: prioritySet))
         assert(result.1.count == 1 && result.1[0].0 == "FAILED" && result.1[0].1 == "Green")
 
+        // Longer matches win over shorter overlapping ones, and identical spans resolve to the
+        // rule listed later (keeps specific rules ahead of broad ones).
+        let shortRule = OutputHighlightRule(pattern: "ERROR", color: "Blue")
+        let longRule = OutputHighlightRule(pattern: "ERROR CODE", color: "Green", wholeWord: true)
+        var overlapTransformer = OutputHighlightTransformer()
+        result = rebuild(overlapTransformer.process(Array("ERROR CODE\n".utf8)[...], ruleSet: compile([shortRule, longRule])))
+        assert(result.1.count == 1 && result.1[0].0 == "ERROR CODE" && result.1[0].1 == "Green")
+        let firstOK = OutputHighlightRule(pattern: "OK", color: "Red")
+        let secondOK = OutputHighlightRule(pattern: "OK", color: "Green")
+        var tieTransformer = OutputHighlightTransformer()
+        result = rebuild(tieTransformer.process(Array("OK\n".utf8)[...], ruleSet: compile([firstOK, secondOK])))
+        assert(result.1.count == 1 && result.1[0].1 == "Green")
+
         // A very broad rule is capped instead of producing unbounded work.
         let broad = compile([OutputHighlightRule(pattern: "a", color: "Red")])
         var broadTransformer = OutputHighlightTransformer()
@@ -1006,6 +1019,51 @@ final class RegressionTests {
         assert(secondLine[1].attribute.fg == .ansi256(code: 10))
         assert(secondLine[3].attribute.fg == .ansi256(code: 2))
         assert(second.terminal.currentAttribute.fg == .ansi256(code: 2))
+    }
+    @MainActor func testOutputHighlightLegacyRuleMigration() throws {
+        let suiteName = "muty-output-highlight-legacy-" + UUID().uuidString
+        guard let suite = UserDefaults(suiteName: suiteName) else { fatalError("Cannot create defaults suite") }
+        defer { suite.removePersistentDomain(forName: suiteName) }
+        let legacyRules: [[String: Any]] = [
+            ["id": UUID().uuidString, "pattern": "ERROR", "color": "Red", "enabled": true, "patternType": "Whole Word"],
+            ["id": UUID().uuidString, "pattern": "OK", "color": "Green", "enabled": true, "patternType": "Whole Word"],
+            ["id": UUID().uuidString, "pattern": "failed", "color": "Red", "enabled": true, "patternType": "Whole Word"],
+            ["id": UUID().uuidString, "pattern": "\\b\\d{1,3}(?:\\.\\d{1,3}){3}\\b", "color": "Magenta", "enabled": true, "patternType": "Regex"],
+            ["id": UUID().uuidString, "pattern": "(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}", "color": "Magenta", "enabled": true, "patternType": "Regex"],
+            ["id": UUID().uuidString, "pattern": "\\d{2}:\\d{2}:\\d{2}", "color": "Orange", "enabled": true, "patternType": "Regex"]
+        ]
+        suite.set(try JSONSerialization.data(withJSONObject: legacyRules), forKey: "outputHighlightRules")
+        let store = OutputHighlightStore(defaults: suite)
+
+        assert(store.rules.count == legacyRules.count)
+        assert(store.rules[0].wholeWord == true && store.rules[0].isRegex == nil)
+        assert(store.rules[3].isRegex == true && store.rules[3].wholeWord == nil)
+        assert(store.ruleSet.regexRules.count == 3)
+
+        // The stored JSON is rewritten in the current schema exactly once.
+        let normalized = try JSONSerialization.jsonObject(with: suite.data(forKey: "outputHighlightRules")!) as! [[String: Any]]
+        assert(normalized.allSatisfy { $0["patternType"] == nil })
+        assert(normalized[0]["wholeWord"] as? Bool == true)
+        assert(normalized[3]["isRegex"] as? Bool == true)
+
+        // End-to-end with migrated rules: whole words only, IPs from regex rules, stable
+        // timestamp colour, and no "ok" inside "token"/"invoke".
+        var transformer = OutputHighlightTransformer()
+        let line = "token invoke ok failed 10.0.0.1 192.168.1.44 12:00:02 fe80::1a2b:3cff:fe4d:5e6f\n"
+        let segments = transformer.process(Array(line.utf8)[...], ruleSet: store.ruleSet)
+        var highlighted: [(String, String)] = []
+        for segment in segments {
+            if case .highlighted(let bytes, let color) = segment {
+                highlighted.append((String(decoding: bytes, as: UTF8.self), color))
+            }
+        }
+        assert(highlighted.map(\.0) == ["ok", "failed", "10.0.0.1", "192.168.1.44", "12:00:02", "fe80::1a2b:3cff:fe4d:5e6f"])
+        assert(highlighted[0].1 == "Green")
+        assert(highlighted[1].1 == "Red")
+        assert(highlighted[2].1 == "Magenta" && highlighted[3].1 == "Magenta")
+        assert(highlighted[4].1 == "Orange")
+        assert(highlighted[5].1 == "Magenta")
+        assert(OutputHighlightColorStyle.sgr(for: "Orange") == "\u{1B}[38;2;255;165;0m")
     }
     @MainActor func testOutputHighlightTerminalWiring() {
         let suiteName = "muty-output-highlight-wiring-" + UUID().uuidString
@@ -1072,6 +1130,7 @@ final class RegressionTests {
             ("terminal.outputHighlightRewriter", tests.testOutputHighlightRewriter),
             ("terminal.outputHighlightForegroundOnly", tests.testOutputHighlightForegroundOnly),
             ("terminal.outputHighlightBoundaries", tests.testOutputHighlightBoundaries),
+            ("terminal.outputHighlightLegacyMigration", tests.testOutputHighlightLegacyRuleMigration),
             ("terminal.outputHighlightWiring", tests.testOutputHighlightTerminalWiring)
         ]
         if CommandLine.arguments.dropFirst().first == "integration.blackhole" {

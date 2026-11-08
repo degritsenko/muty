@@ -2,12 +2,66 @@ import SwiftUI
 import AppKit
 
 struct OutputHighlightRule: Codable, Identifiable {
+    /// Rule format written by an earlier highlighting attempt (`patternType` instead of the
+    /// `wholeWord`/`isRegex` pair). Loaded and migrated so saved rules keep their meaning.
+    private enum LegacyPatternType: String, Codable {
+        case wholeWord = "Whole Word"
+        case literal = "Literal"
+        case regex = "Regex"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, pattern, color, enabled, wholeWord, isRegex, patternType
+    }
+
     var id = UUID()
     var pattern: String
     var color = "Red"
     var enabled = true
     var wholeWord: Bool?
     var isRegex: Bool?
+
+    init(pattern: String, color: String = "Red", enabled: Bool = true,
+         wholeWord: Bool? = nil, isRegex: Bool? = nil) {
+        self.pattern = pattern
+        self.color = color
+        self.enabled = enabled
+        self.wholeWord = wholeWord
+        self.isRegex = isRegex
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        pattern = try container.decodeIfPresent(String.self, forKey: .pattern) ?? ""
+        color = try container.decodeIfPresent(String.self, forKey: .color) ?? "Red"
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        wholeWord = try container.decodeIfPresent(Bool.self, forKey: .wholeWord)
+        isRegex = try container.decodeIfPresent(Bool.self, forKey: .isRegex)
+        if let legacy = try container.decodeIfPresent(LegacyPatternType.self, forKey: .patternType) {
+            switch legacy {
+            case .wholeWord:
+                wholeWord = true
+                isRegex = nil
+            case .literal:
+                wholeWord = nil
+                isRegex = nil
+            case .regex:
+                wholeWord = nil
+                isRegex = true
+            }
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(pattern, forKey: .pattern)
+        try container.encode(color, forKey: .color)
+        try container.encode(enabled, forKey: .enabled)
+        try container.encodeIfPresent(wholeWord, forKey: .wholeWord)
+        try container.encodeIfPresent(isRegex, forKey: .isRegex)
+    }
 }
 
 @MainActor final class OutputHighlightStore: ObservableObject {
@@ -106,8 +160,18 @@ struct OutputHighlightRule: Codable, Identifiable {
         // An absent key means the feature was never deliberately disabled, so
         // highlighting starts enabled and only an explicit opt-out turns it off.
         enabled = defaults.object(forKey: Keys.enabled) as? Bool ?? true
-        rules = defaults.data(forKey: Keys.rules).flatMap { try? JSONDecoder().decode([OutputHighlightRule].self, from: $0) }
-            ?? Self.commonRules
+        if let data = defaults.data(forKey: Keys.rules),
+           let decoded = try? JSONDecoder().decode([OutputHighlightRule].self, from: data) {
+            rules = decoded
+            // Rules saved by an earlier implementation used a `patternType` schema. The
+            // decoder migrates them; rewrite the stored JSON once so the old shape is gone.
+            if data.range(of: Data("\"patternType\"".utf8)) != nil,
+               let normalized = try? JSONEncoder().encode(decoded) {
+                defaults.set(normalized, forKey: Keys.rules)
+            }
+        } else {
+            rules = Self.commonRules
+        }
         rebuildRuleSet()
     }
 
@@ -150,7 +214,7 @@ struct OutputHighlightSettings: View {
                             Toggle("Enabled", isOn: $rule.enabled).labelsHidden()
                             TextField("Text or regular expression", text: $rule.pattern)
                             Picker("Color", selection: $rule.color) {
-                                ForEach(["Red", "Yellow", "Green", "Cyan", "Blue", "Magenta", "Purple"], id: \.self) { Text($0).tag($0) }
+                                ForEach(["Red", "Yellow", "Green", "Cyan", "Blue", "Magenta", "Purple", "Orange"], id: \.self) { Text($0).tag($0) }
                             }.labelsHidden().frame(width: 100)
                             Button { store.rules.removeAll { $0.id == rule.id } } label: { Image(systemName: "minus") }
                         }

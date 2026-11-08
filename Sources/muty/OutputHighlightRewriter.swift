@@ -113,8 +113,8 @@ extension OutputHighlightRuleSet {
         let color: String
     }
 
-    /// Finds non-overlapping matches in one run of plain terminal text. Earlier rules win,
-    /// which mirrors MobaXterm's colour-bucket ordering.
+    /// Finds non-overlapping matches in one run of plain terminal text. Longer matches win;
+    /// for identical spans the rule listed later wins.
     ///
     /// `leadingBoundary`/`trailingBoundary` describe whether a word boundary exists at the
     /// run edges: the run may continue a word rendered before an escape sequence or in the
@@ -189,9 +189,10 @@ extension OutputHighlightRuleSet {
         }
         guard !candidates.isEmpty else { return [] }
 
-        // Earlier rules take precedence; within a rule, earlier matches are kept.
+        // Longer matches win over shorter ones; for identical spans the rule listed later wins.
         candidates.sort { lhs, rhs in
-            lhs.order == rhs.order ? lhs.range.lowerBound < rhs.range.lowerBound : lhs.order < rhs.order
+            if lhs.range.count != rhs.range.count { return lhs.range.count > rhs.range.count }
+            return lhs.order > rhs.order
         }
         var accepted: [(range: Range<Int>, color: String)] = []
         for candidate in candidates {
@@ -482,13 +483,15 @@ enum OutputHighlightColorStyle {
         case "Magenta": return 95
         case "Cyan": return 96
         case "Purple": return 35
-        case "Orange": return 33
         default: return 91
         }
     }
 
     static func sgr(for name: String) -> String {
-        "\u{1B}[\(sgrForegroundCode(for: name))m"
+        // The legacy rule schema used an "Orange" colour that a 16/256-colour palette cannot
+        // represent well; use a true-colour foreground for it.
+        if name == "Orange" { return "\u{1B}[38;2;255;165;0m" }
+        return "\u{1B}[\(sgrForegroundCode(for: name))m"
     }
 
     /// Restores the foreground colour that was active before a highlighted run.
