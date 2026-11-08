@@ -774,6 +774,117 @@ final class RegressionTests {
         assert(preview.sessions[1].host == "db.example" && preview.sessions[1].port == 2222)
         assert(preview.sessions.allSatisfy { !$0.savePassword && $0.credentialID == nil })
     }
+    private static func repositoryRoot() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
+    private static func unescapeStringsLiteral(_ raw: String) -> String {
+        var result = ""
+        var index = raw.startIndex
+        while index < raw.endIndex {
+            let character = raw[index]
+            guard character == "\\" else { result.append(character); index = raw.index(after: index); continue }
+            let next = raw.index(after: index)
+            guard next < raw.endIndex else { break }
+            switch raw[next] {
+            case "n": result.append("\n")
+            case "t": result.append("\t")
+            case "r": result.append("\r")
+            default: result.append(raw[next])
+            }
+            index = raw.index(after: next)
+        }
+        return result
+    }
+
+    private static func parseStringsFile(_ text: String) -> [String: String] {
+        let pattern = try! NSRegularExpression(pattern: "^\"((?:[^\"\\\\]|\\\\.)*)\"\\s*=\\s*\"((?:[^\"\\\\]|\\\\.)*)\"\\s*;\\s*$",
+                                               options: [.anchorsMatchLines])
+        var entries: [String: String] = [:]
+        let range = NSRange(text.startIndex..., in: text)
+        for match in pattern.matches(in: text, range: range) {
+            guard let keyRange = Range(match.range(at: 1), in: text),
+                  let valueRange = Range(match.range(at: 2), in: text) else { continue }
+            let key = unescapeStringsLiteral(String(text[keyRange]))
+            let value = unescapeStringsLiteral(String(text[valueRange]))
+            assert(entries[key] == nil, "Duplicate localization key: \(key)")
+            assert(!value.isEmpty, "Empty translation for: \(key)")
+            entries[key] = value
+        }
+        return entries
+    }
+
+    private static func formatPlaceholders(_ string: String) -> [String] {
+        let pattern = "%(?:\\d+\\$)?[-+ 0#]*\\d*(?:\\.\\d+)?(?:ll|l|h|z|j|t)?[@dDiuUxXoOfeEgGcCsSpaA]"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(string.startIndex..., in: string)
+        return regex.matches(in: string, range: range).compactMap { match in
+            Range(match.range, in: string).map { String(string[$0]) }
+        }
+    }
+
+    func testRussianLocalizationResources() throws {
+        let root = Self.repositoryRoot()
+        let resources = root.appendingPathComponent("Sources/muty/Resources")
+        let russian = try String(contentsOf: resources.appendingPathComponent("ru.lproj/Localizable.strings"), encoding: .utf8)
+        assert(FileManager.default.fileExists(atPath: resources.appendingPathComponent("en.lproj/Localizable.strings").path))
+        let entries = Self.parseStringsFile(russian)
+        assert(entries.count > 500, "Expected a substantial Russian translation, got \(entries.count) entries")
+        assert(entries["Cancel"] == "Отмена")
+        assert(entries["Save"] == "Сохранить")
+        assert(entries["Language"] == "Язык")
+        assert(entries["SSH Key"] != nil && entries["SSH Key"] != "SSH Key")
+        for (key, value) in entries {
+            assert(Self.formatPlaceholders(key).sorted() == Self.formatPlaceholders(value).sorted(),
+                   "Format placeholders differ for: \(key)")
+        }
+
+        // Every runtime L()/LF() lookup must have a translation entry.
+        var lookupKeys = Set<String>()
+        let literal = "\"((?:[^\"\\\\]|\\\\.)*)\""
+        let patterns = ["\\bL\\(" + literal + "\\)", "\\bLF\\(" + literal]
+        let regexes = try patterns.map { try NSRegularExpression(pattern: $0) }
+        for file in try FileManager.default.contentsOfDirectory(at: resources.deletingLastPathComponent(),
+                                                                includingPropertiesForKeys: nil) where file.pathExtension == "swift" {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            let range = NSRange(source.startIndex..., in: source)
+            for regex in regexes {
+                for match in regex.matches(in: source, range: range) {
+                    guard let keyRange = Range(match.range(at: 1), in: source) else { continue }
+                    lookupKeys.insert(Self.unescapeStringsLiteral(String(source[keyRange])))
+                }
+            }
+        }
+        assert(!lookupKeys.isEmpty)
+        let missing = lookupKeys.subtracting(entries.keys)
+        assert(missing.isEmpty, "Missing Russian translations for L/LF keys: \(missing.sorted())")
+    }
+
+    @MainActor func testLanguageStorePersistence() {
+        let suiteName = "muty-language-tests-" + UUID().uuidString
+        guard let suite = UserDefaults(suiteName: suiteName) else { fatalError("Cannot create defaults suite") }
+        defer { suite.removePersistentDomain(forName: suiteName) }
+        let store = LanguageStore(defaults: suite)
+        assert(store.language == .system)
+        store.language = .russian
+        assert(suite.string(forKey: "appLanguage") == "ru")
+        func domainValue(_ key: String) -> Any? {
+            UserDefaults.standard.persistentDomain(forName: suiteName)?[key]
+        }
+        assert((domainValue("AppleLanguages") as? [String]) == ["ru"])
+        assert((domainValue("AppleLocale") as? String) == "ru_RU")
+        assert(LanguageStore(defaults: suite).language == .russian)
+        store.language = .english
+        assert((domainValue("AppleLanguages") as? [String]) == ["en"])
+        assert((domainValue("AppleLocale") as? String) == "en_US")
+        store.language = .system
+        assert(domainValue("AppleLanguages") == nil)
+        assert(domainValue("AppleLocale") == nil)
+    }
+
     func testInvalidEndpointRejected() {
         var p = SessionProfile(); p.host = "-oProxyCommand=bad"; p.user = "tester"
         do { _ = try p.validated(); fatalError("Expected validation failure") } catch {}
@@ -1131,7 +1242,9 @@ final class RegressionTests {
             ("terminal.outputHighlightForegroundOnly", tests.testOutputHighlightForegroundOnly),
             ("terminal.outputHighlightBoundaries", tests.testOutputHighlightBoundaries),
             ("terminal.outputHighlightLegacyMigration", tests.testOutputHighlightLegacyRuleMigration),
-            ("terminal.outputHighlightWiring", tests.testOutputHighlightTerminalWiring)
+            ("terminal.outputHighlightWiring", tests.testOutputHighlightTerminalWiring),
+            ("localization.russianResources", tests.testRussianLocalizationResources),
+            ("localization.languageStore", tests.testLanguageStorePersistence)
         ]
         if CommandLine.arguments.dropFirst().first == "integration.blackhole" {
             try tests.testServerTermination(blackhole: true)
