@@ -168,12 +168,21 @@ extension OutputHighlightRuleSet {
         }
 
         let asciiOnly = bytes.allSatisfy { $0 < 0x80 }
+        let regexDeadline = ProcessInfo.processInfo.systemUptime + 0.002
         for rule in regexRules {
-            guard candidates.count < Self.maxCandidatesPerRun else { break }
+            guard candidates.count < Self.maxCandidatesPerRun,
+                  ProcessInfo.processInfo.systemUptime < regexDeadline else { break }
+            let candidateStart = candidates.count
+            var timedOut = false
             var cursor = text.startIndex
             var byteCursor = 0
-            rule.expression.enumerateMatches(in: text, options: [],
+            rule.expression.enumerateMatches(in: text, options: [.reportProgress],
                                              range: NSRange(location: 0, length: text.utf16.count)) { result, _, stop in
+                guard ProcessInfo.processInfo.systemUptime < regexDeadline else {
+                    timedOut = true
+                    stop.pointee = true
+                    return
+                }
                 guard let range = result?.range, range.length > 0 else { return }
                 if asciiOnly {
                     candidates.append((range.location..<NSMaxRange(range), rule.color, rule.order))
@@ -185,6 +194,10 @@ extension OutputHighlightRuleSet {
                     byteCursor = end
                 }
                 if candidates.count >= Self.maxCandidatesPerRun { stop.pointee = true }
+            }
+            if timedOut {
+                candidates.removeSubrange(candidateStart...)
+                break
             }
         }
         guard !candidates.isEmpty else { return [] }

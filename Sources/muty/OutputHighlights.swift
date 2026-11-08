@@ -207,6 +207,8 @@ struct OutputHighlightSettings: View {
             Toggle("Highlight terminal output", isOn: $store.enabled)
             Text("Case-insensitive matches. Only the foreground colour of new output changes; background, copied text and session logs are untouched. Turning highlighting off affects new output only. Regular expressions are case-insensitive; invalid ones are ignored.")
                 .font(.caption).foregroundStyle(.secondary)
+            Text("Slow regular expressions are skipped when the processing time budget is exhausted.")
+                .font(.caption).foregroundStyle(.secondary)
             List {
                 ForEach($store.rules) { $rule in
                     VStack(alignment: .leading, spacing: 4) {
