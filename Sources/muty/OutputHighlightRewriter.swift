@@ -306,14 +306,6 @@ struct OutputHighlightTransformer {
     private var outputSegments: [OutputHighlightSegment] = []
     private var rawBytes: [UInt8] = []
 
-    mutating func reset() {
-        state = .ground
-        text.removeAll(keepingCapacity: true)
-        lastRenderedWasWord = false
-        rawBytes.removeAll(keepingCapacity: true)
-        outputSegments.removeAll(keepingCapacity: true)
-    }
-
     mutating func process(_ bytes: ArraySlice<UInt8>, ruleSet: OutputHighlightRuleSet) -> [OutputHighlightSegment] {
         guard !bytes.isEmpty else { return [] }
         scan(bytes, ruleSet: ruleSet)
@@ -448,21 +440,28 @@ struct OutputHighlightTransformer {
         }
     }
 
-    /// Looks ahead past the escape sequence starting at `index` (the ESC byte) and reports
-    /// whether the next rendered character is a word character. `nil` means the chunk ends
-    /// before that character is known.
-    private static func nextRenderedCharacterIsWord(from index: Int, in bytes: ArraySlice<UInt8>) -> Bool? {
+    /// Looks ahead past the escape sequence starting at `offset` (relative to the start of
+    /// `bytes`) and reports whether the next rendered character is a word character. `nil`
+    /// means the chunk ends before that character is known.
+    private static func nextRenderedCharacterIsWord(from offset: Int, in bytes: ArraySlice<UInt8>) -> Bool? {
         var state = ParserState.escape
-        var position = index + 1
+        var position = offset + 1
+        let base = bytes.startIndex
         while position < bytes.count {
-            let byte = bytes[position]
+            let absolute = base + position
+            let byte = bytes[absolute]
             if state == .ground {
                 if byte == 0x1B {
                     state = .escape
                 } else if byte < 0x20 || byte == 0x7F {
                     return false
+                } else if byte < 0x80 {
+                    return OutputHighlightRuleSet.isWordByte(byte)
                 } else {
-                    return byte < 0x80 ? OutputHighlightRuleSet.isWordByte(byte) : true
+                    var end = absolute + 1
+                    while end < bytes.endIndex && bytes[end] >= 0x80 && bytes[end] < 0xC0 { end += 1 }
+                    guard let character = String(bytes: bytes[absolute..<end], encoding: .utf8)?.first else { return true }
+                    return OutputHighlightRuleSet.isWordCharacter(character)
                 }
             } else {
                 advanceSequence(&state, byte)

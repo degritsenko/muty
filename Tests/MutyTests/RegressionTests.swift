@@ -931,6 +931,8 @@ final class RegressionTests {
         assert(result.1.map(\.0) == ["ERROR"])
         result = rebuild(transformer.process(Array("ERROR\u{044B}\n".utf8)[...], ruleSet: redSet))
         assert(result.1.isEmpty)
+        result = rebuild(transformer.process(Array("ERROR\u{1B}[0m\u{FF1A}\n".utf8)[...], ruleSet: redSet))
+        assert(result.1.map(\.0) == ["ERROR"])
 
         // Earlier rules win on overlapping matches.
         let fail = OutputHighlightRule(pattern: "FAIL", color: "Red", wholeWord: true)
