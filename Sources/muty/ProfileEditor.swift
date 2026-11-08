@@ -24,7 +24,7 @@ struct ProfileEditor: View {
         VStack(alignment: .leading, spacing: 12) {
             Form {
                 Picker("Protocol", selection: $profile.connectionType) {
-                    ForEach(ConnectionType.allCases) { Text($0.title).tag($0) }
+                    ForEach(ConnectionType.allCases) { Text(L($0.title)).tag($0) }
                 }
                 TextField("Name", text: $profile.name)
                 Toggle("Favorite", isOn: $profile.favorite)
@@ -61,12 +61,12 @@ struct ProfileEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(draft.original == nil ? "New Session" : "Session Settings — " + draft.profile.name).font(.title2.bold())
+            Text(draft.original == nil ? L("New Session") : LF("Session Settings — %@", draft.profile.name)).font(.title2.bold())
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(profile.connectionType == .ssh ? ["General", "SSH", "Port Forwarding"] : ["General"], id: \.self) { item in
                         Button { page = item } label: {
-                            Text(item).frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                            Text(L(item)).frame(maxWidth: .infinity, alignment: .leading).padding(8)
                                 .background(page == item ? Color.accentColor.opacity(0.2) : .clear, in: RoundedRectangle(cornerRadius: 5))
                                 .contentShape(Rectangle())
                         }.buttonStyle(.plain)
@@ -88,7 +88,7 @@ struct ProfileEditor: View {
                             }
                             Section("Authentication") {
                                 Picker("Method", selection: $profile.authentication) {
-                                    ForEach(AuthenticationMode.selectable) { Text($0.title).tag($0) }
+                                    ForEach(AuthenticationMode.selectable) { Text(L($0.title)).tag($0) }
                                 }
                                 if profile.authentication == .password {
                                     CredentialSelectionView(vault: model.vault, credentialID: $profile.credentialID)
@@ -123,7 +123,7 @@ struct ProfileEditor: View {
                     }
                 }
             }.frame(height: 430)
-            if let error { Text(error).foregroundStyle(.red).font(.callout).textSelection(.enabled) }
+            if let error { Text(L(error)).foregroundStyle(.red).font(.callout).textSelection(.enabled) }
             HStack {
                 Text("Changes apply on the next connection.").font(.caption).foregroundStyle(.secondary)
                 Spacer()

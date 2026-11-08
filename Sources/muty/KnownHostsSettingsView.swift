@@ -164,14 +164,14 @@ struct KnownHostsSettingsView: View {
                             Text(entry.displayHost).lineLimit(1).help(entry.hosts)
                             Spacer()
                             Text(entry.keyType).font(.caption).foregroundStyle(.secondary)
-                            if let marker = entry.marker { Text(marker).font(.caption).foregroundStyle(.orange) }
+                            if let marker = entry.marker { Text(L(marker)).font(.caption).foregroundStyle(.orange) }
                         }
                         Text(entry.fingerprint).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
                     }.tag(entry.id)
                 }
             }
             HStack {
-                Text("\(store.entries.count) stored keys").font(.caption).foregroundStyle(.secondary)
+                Text(LF("%ld stored keys", store.entries.count)).font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Show File") { NSWorkspace.shared.activateFileViewerSelecting([store.file]) }
                 Button("Remove Selected…", role: .destructive, action: remove)
@@ -179,7 +179,7 @@ struct KnownHostsSettingsView: View {
             }
             Text("Hashed hosts can be found by their exact name. Removed entries are commented out and backed up; muty may ask to verify the server again.")
                 .font(.caption).foregroundStyle(.secondary)
-            if let error = store.error { Text(error).font(.caption).foregroundStyle(.red) }
+            if let error = store.error { Text(L(error)).font(.caption).foregroundStyle(.red) }
         }.padding()
         .onChange(of: query) { _, _ in selection = [] }
     }
@@ -191,7 +191,7 @@ struct KnownHostsSettingsView: View {
             let source = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh/known_hosts")
             let count = try store.importFrom(source)
             selection = []
-            model.operationStatus = "\(count) host keys imported into muty."
+            model.operationStatus = LF("%ld host keys imported into muty.", count)
         } catch { model.errorMessage = error.localizedDescription }
     }
     private func remove() {
@@ -199,7 +199,7 @@ struct KnownHostsSettingsView: View {
         do {
             let backup = try store.remove(selection)
             selection = []
-            model.operationStatus = "Host keys removed. Backup: " + backup.path
+            model.operationStatus = L("Host keys removed. Backup:") + " " + backup.path
         } catch { model.errorMessage = error.localizedDescription }
     }
 }

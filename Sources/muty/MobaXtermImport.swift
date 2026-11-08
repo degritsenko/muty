@@ -85,7 +85,7 @@ struct MobaXtermImport: Identifiable, Sendable {
 extension AppModel {
     func chooseMobaXtermImport() {
         let panel = NSOpenPanel()
-        panel.title = "Import MobaXterm Sessions"
+        panel.title = L("Import MobaXterm Sessions")
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         if let type = UTType(filenameExtension: "mxtsessions") { panel.allowedContentTypes = [type] }
@@ -141,21 +141,21 @@ struct MobaXtermImportView: View {
 
         return VStack(alignment: .leading, spacing: 12) {
             Text("Import MobaXterm Sessions").font(.title2.bold())
-            Text("\(ready.count) ready · \(candidates.count - ready.count) duplicate names in the same folder · \(preview.skipped) invalid or unsupported")
+            Text(LF("%ld ready · %ld duplicate names in the same folder · %ld invalid or unsupported", ready.count, candidates.count - ready.count, preview.skipped))
             if missingUsernames > 0 {
-                TextField("Username for \(missingUsernames) sessions", text: $username)
-                Text(validFallback ? "Leave blank to skip sessions without a username." : "Enter a valid SSH username.")
+                TextField(LF("Username for %ld sessions", missingUsernames), text: $username)
+                Text(validFallback ? L("Leave blank to skip sessions without a username.") : L("Enter a valid SSH username."))
                     .font(.caption).foregroundStyle(validFallback ? Color.secondary : .red)
             }
             List(preview.sessions) { profile in
                 VStack(alignment: .leading) {
                     Text([profile.folder, profile.name].compactMap { $0 }.joined(separator: "/"))
-                    Text("\(profile.host):\(profile.port) · " + (profile.user.isEmpty ? (fallbackUsername.isEmpty ? "Username missing" : fallbackUsername) : profile.user))
+                    Text(profile.host + ":" + String(profile.port) + " · " + (profile.user.isEmpty ? (fallbackUsername.isEmpty ? L("Username missing") : fallbackUsername) : profile.user))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 .foregroundStyle(readyIDs.contains(profile.id) ? Color.primary : .secondary)
             }.frame(height: 300)
-            if let error { Text(error).foregroundStyle(.red) }
+            if let error { Text(L(error)).foregroundStyle(.red) }
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }

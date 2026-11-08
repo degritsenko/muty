@@ -20,7 +20,7 @@ struct QuickConnectView: View {
             Label("Quick Connect", systemImage: "bolt.horizontal").font(.title2.bold())
             Form {
                 Picker("Protocol", selection: $connectionType) {
-                    ForEach(ConnectionType.allCases) { Text($0.title).tag($0) }
+                    ForEach(ConnectionType.allCases) { Text(L($0.title)).tag($0) }
                 }
                 if connectionType == .ssh {
                     HStack(spacing: 20) {
@@ -34,7 +34,7 @@ struct QuickConnectView: View {
                     TextField("Username", text: $user).disabled(credentialID != nil && authentication == .password)
                     if authentication == .password { CredentialSelectionView(vault: model.vault, credentialID: $credentialID) }
                     Picker("Authentication", selection: $authentication) {
-                        ForEach(AuthenticationMode.selectable) { Text($0.title).tag($0) }
+                        ForEach(AuthenticationMode.selectable) { Text(L($0.title)).tag($0) }
                     }
                     if authentication == .identityFile {
                         KeySelectionView(library: model.keyLibrary, keyID: $keyID, legacyPath: $identityFile)
@@ -43,9 +43,9 @@ struct QuickConnectView: View {
                     Text("Starts your default login shell in your home directory.")
                 }
             }.formStyle(.grouped).frame(maxHeight: 560)
-            Text(connectionType == .ssh ? "No profile or password is saved. Passwords and OTP are entered in the terminal; choose SSH Key to use a private key." : "No profile is saved.")
+            Text(connectionType == .ssh ? L("No profile or password is saved. Passwords and OTP are entered in the terminal; choose SSH Key to use a private key.") : L("No profile is saved."))
                 .font(.caption).foregroundStyle(.secondary)
-            if let error { Text(error).foregroundStyle(.red).font(.callout).textSelection(.enabled) }
+            if let error { Text(L(error)).foregroundStyle(.red).font(.callout).textSelection(.enabled) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)

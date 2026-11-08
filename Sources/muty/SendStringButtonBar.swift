@@ -296,7 +296,7 @@ struct SendStringButtonBar: View {
                             catch { model.errorMessage = error.localizedDescription; return false }
                         }
                     }
-                    if let error = store.loadError { Text("Button Bar unavailable").foregroundStyle(.red).help(error) }
+                    if let error = store.loadError { Text("Button Bar unavailable").foregroundStyle(.red).help(L(error)) }
                     Spacer(minLength: 0)
                 }
             }.scrollIndicators(.hidden)

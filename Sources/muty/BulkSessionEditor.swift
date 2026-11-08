@@ -33,7 +33,7 @@ struct BulkSessionEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Bulk Edit Sessions").font(.title2)
-            Text("\(request.folder ?? "Sessions") · \(request.profiles.count) SSH sessions, including subfolders")
+            Text(LF("%@ · %ld SSH sessions, including subfolders", request.folder ?? L("Sessions"), request.profiles.count))
                 .foregroundStyle(.secondary)
             Form {
                 Toggle("Change SSH / SFTP", isOn: $changeModes)
@@ -68,15 +68,15 @@ struct BulkSessionEditor: View {
             }.formStyle(.grouped)
             Text("Only checked fields change. Local Shell sessions are excluded. Active connections keep their current settings until reconnect.")
                 .font(.caption).foregroundStyle(.secondary)
-            if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+            if let error { Text(L(error)).foregroundStyle(.red).textSelection(.enabled) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Apply…") { confirming = true }.disabled(!enabled).keyboardShortcut(.defaultAction)
             }
         }.padding(20).frame(width: 510, height: 560)
-        .confirmationDialog("Apply changes to \(request.profiles.count) SSH sessions?", isPresented: $confirming) {
-            Button("Apply to All \(request.profiles.count) Sessions") {
+        .confirmationDialog(LF("Apply changes to %ld SSH sessions?", request.profiles.count), isPresented: $confirming) {
+            Button(LF("Apply to All %ld Sessions", request.profiles.count)) {
                 do {
                     try model.applyBulkEdit(request, user: changeUser ? user : nil,
                         keyID: changeKey ? UUID(uuidString: key) : nil,

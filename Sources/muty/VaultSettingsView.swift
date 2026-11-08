@@ -56,7 +56,7 @@ struct CredentialsSettingsView: View {
                 if vault.needsSetup || vault.isLocked {
                     Button(vault.needsSetup ? "Set Up…" : "Unlock…") { action { try vault.ensureAvailable() } }
                 } else {
-                    Label(vault.isProtected ? "Unlocked" : "Automatic unlock", systemImage: "lock.open")
+                    Label(vault.isProtected ? L("Unlocked") : L("Automatic unlock"), systemImage: "lock.open")
                         .font(.caption).foregroundStyle(vault.isProtected ? Color.secondary : Color.orange)
                     Menu {
                         Button("Change Protection…") { _ = vault.showAccessDialog(mode: .change) }
@@ -67,7 +67,7 @@ struct CredentialsSettingsView: View {
                         .help("Password storage protection")
                 }
             }
-            if let problem = vault.loadError { Text(problem).foregroundStyle(.red).textSelection(.enabled) }
+            if let problem = vault.loadError { Text(L(problem)).foregroundStyle(.red).textSelection(.enabled) }
             else if vault.needsSetup { Text("New local password storage. Existing Keychain passwords are not imported.").foregroundStyle(.secondary) }
             else if vault.isLocked { Text("Locked. Unlock to access saved credentials.").foregroundStyle(.secondary) }
             else {
@@ -81,7 +81,7 @@ struct CredentialsSettingsView: View {
                 HStack(alignment: .top, spacing: 0) {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Text("\(visibleEntries.count) entries").font(.caption).foregroundStyle(.secondary)
+                            Text(LF("%ld entries", visibleEntries.count)).font(.caption).foregroundStyle(.secondary)
                             Spacer()
                             Button {
                                 editing = SavedCredential(title: "", username: NSUserName(), password: "")
@@ -103,7 +103,7 @@ struct CredentialsSettingsView: View {
                         }.listStyle(.inset)
                         .overlay {
                             if visibleEntries.isEmpty {
-                                Text(search.isEmpty ? "No saved credentials." : "No matches.")
+                                Text(search.isEmpty ? L("No saved credentials.") : L("No matches."))
                                     .foregroundStyle(.secondary).allowsHitTesting(false)
                             }
                         }
@@ -111,7 +111,7 @@ struct CredentialsSettingsView: View {
                     Divider().padding(.horizontal, 14)
                     VStack(alignment: .leading, spacing: 16) {
                         if let selection {
-                            Label(selection.shared ? "Shared Credential" : "Session Password",
+                            Label(selection.shared ? L("Shared Credential") : L("Session Password"),
                                   systemImage: selection.shared ? "person.2" : "terminal")
                                 .font(.caption).foregroundStyle(.secondary)
                             Text(selection.title).font(.title3.bold()).textSelection(.enabled)
@@ -154,7 +154,7 @@ struct CredentialsSettingsView: View {
                     .frame(width: 250, alignment: .topLeading)
                 }.frame(maxHeight: .infinity)
             }
-            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+            if let error { Text(L(error)).font(.caption).foregroundStyle(.red) }
         }.padding(16)
         .sheet(item: $editing) { CredentialEditor(model: model, credential: $0) }
         .sheet(item: $editingSession) { ProfileEditor(model: model, draft: $0) }
@@ -184,7 +184,7 @@ private struct CredentialEditor: View {
             SecureField("Password", text: $value.password)
             SecureField("Confirm password", text: $confirmation)
             Text("Changes apply to all linked sessions on their next connection.").font(.caption).foregroundStyle(.secondary)
-            if let error { Text(error).foregroundStyle(.red).font(.caption) }
+            if let error { Text(L(error)).foregroundStyle(.red).font(.caption) }
             HStack {
                 Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save") {
@@ -252,7 +252,7 @@ struct SavedPasswordView: View {
         .alert("Could Not Show Password", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK") { error = nil }
         } message: {
-            Text(error ?? "")
+            Text(L(error ?? ""))
         }
     }
 }
@@ -263,7 +263,7 @@ struct CredentialSelectionView: View {
     var body: some View {
         if vault.isLocked || vault.needsSetup {
             HStack {
-                Text(credentialID == nil ? "Session credentials" : "Shared credential selected")
+                Text(credentialID == nil ? L("Session credentials") : L("Shared credential selected"))
                 Spacer()
                 Button(vault.needsSetup ? "Set Up Credentials…" : "Unlock Credentials…") { try? vault.ensureAvailable() }
             }

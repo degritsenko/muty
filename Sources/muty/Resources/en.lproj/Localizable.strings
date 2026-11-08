@@ -1,0 +1,4 @@
+/*
+ English interface strings are used as their own keys. This file only declares the English
+ localization to the bundle; untranslated keys fall back to the English text.
+*/

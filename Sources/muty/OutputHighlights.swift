@@ -216,7 +216,7 @@ struct OutputHighlightSettings: View {
                             Toggle("Enabled", isOn: $rule.enabled).labelsHidden()
                             TextField("Text or regular expression", text: $rule.pattern)
                             Picker("Color", selection: $rule.color) {
-                                ForEach(["Red", "Yellow", "Green", "Cyan", "Blue", "Magenta", "Purple", "Orange"], id: \.self) { Text($0).tag($0) }
+                                ForEach(["Red", "Yellow", "Green", "Cyan", "Blue", "Magenta", "Purple", "Orange"], id: \.self) { Text(L($0)).tag($0) }
                             }.labelsHidden().frame(width: 100)
                             Button { store.rules.removeAll { $0.id == rule.id } } label: { Image(systemName: "minus") }
                         }

@@ -8,14 +8,14 @@ struct KeySelectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Picker("SSH Key", selection: $keyID) {
-                Text(legacyPath == nil ? "Select a key" : "Existing file: \(URL(fileURLWithPath: legacyPath!).lastPathComponent)").tag(nil as UUID?)
+                Text(legacyPath == nil ? L("Select a key") : LF("Existing file: %@", URL(fileURLWithPath: legacyPath!).lastPathComponent)).tag(nil as UUID?)
                 ForEach(library.keys) { key in Text(key.name).tag(Optional(key.id)) }
                 if let keyID, !library.keys.contains(where: { $0.id == keyID }) {
                     Text("Missing key").tag(Optional(keyID))
                 }
             }
             if let loadError = library.loadError {
-                Text(loadError).foregroundStyle(.red).font(.caption)
+                Text(L(loadError)).foregroundStyle(.red).font(.caption)
             } else if library.keys.isEmpty {
                 Text("Add keys in Settings → SSH Keys (⌘,).")
                     .font(.caption).foregroundStyle(.secondary)
@@ -80,7 +80,7 @@ struct AppSettingsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Tab.allCases, id: \.self) { tab in
                     Button { selectedTab = tab } label: {
-                        Label(tab.rawValue, systemImage: tab.icon)
+                        Label(L(tab.rawValue), systemImage: tab.icon)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(8)
                             .background(selectedTab == tab ? Color.accentColor.opacity(0.2) : .clear,
@@ -111,10 +111,19 @@ struct AppSettingsView: View {
 
 private struct GeneralSettingsView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var language = LanguageStore.shared
     @AppStorage("restoreTabsOnLaunch") private var restoreTabs = false
     @AppStorage("startupSessionID") private var startupSessionID = ""
+    @ViewState private var languageRestartPrompt = false
     var body: some View {
         Form {
+            Picker("Language", selection: $language.language) {
+                Text("System").tag(AppLanguage.system)
+                Text("English").tag(AppLanguage.english)
+                Text("Русский").tag(AppLanguage.russian)
+            }
+            Text("Restart muty to apply a different language.")
+                .font(.caption).foregroundStyle(.secondary)
             Picker("Startup session", selection: $startupSessionID) {
                 Text("None").tag("")
                 ForEach(model.profiles.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) { profile in
@@ -128,6 +137,13 @@ private struct GeneralSettingsView: View {
                 .font(.caption).foregroundStyle(.secondary)
 
         }.formStyle(.grouped).padding()
+        .onChange(of: language.language) { _, _ in languageRestartPrompt = true }
+        .alert("Restart muty to apply the language?", isPresented: $languageRestartPrompt) {
+            Button("Restart Now") { language.relaunch() }
+            Button("Later", role: .cancel) {}
+        } message: {
+            Text("The interface language changes after muty restarts.")
+        }
         .onChange(of: restoreTabs) { _, value in model.workspacePreferenceChanged(value) }
         .onChange(of: model.profiles.map(\.id), initial: true) { _, ids in
             guard !model.readOnly, !startupSessionID.isEmpty,
@@ -151,10 +167,10 @@ private struct TerminalSettingsView: View {
                 Text("Monaco").tag("Monaco"); Text("SF Mono").tag("SFMono-Regular")
             }
             Slider(value: $size, in: 9...30, step: 1) { Text("Font size") }
-            Text("\(Int(size.isFinite ? max(9, min(30, size)) : 13)) pt")
+            Text(LF("%ld pt", Int(size.isFinite ? max(9, min(30, size)) : 13)))
             Picker("Theme", selection: $theme) { Text("Dark").tag("Dark"); Text("Light").tag("Light") }
             Slider(value: $scrollback, in: 1000...50000, step: 1000) { Text("Scrollback") }
-            Text("\(Int(scrollback.isFinite ? max(1000, min(50000, scrollback)) : 10000)) lines")
+            Text(LF("%ld lines", Int(scrollback.isFinite ? max(1000, min(50000, scrollback)) : 10000)))
             Toggle("Confirm multi-line paste", isOn: $confirmPaste)
             Toggle("Option as Meta", isOn: $meta)
             Text("Sends Alt/Meta shortcuts to the shell. Turn off to type macOS Option characters.")
@@ -185,7 +201,7 @@ private struct KeyLibraryView: View {
                             Text("Deletion pending — retry Remove").font(.caption).foregroundStyle(.orange)
                         }
                         Text(key.fingerprint).font(.caption.monospaced()).textSelection(.enabled)
-                        Text(key.imported ? "Stored in muty" : key.path).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Text(key.imported ? L("Stored in muty") : key.path).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }.tag(key.id)
                 }
             }
@@ -198,7 +214,7 @@ private struct KeyLibraryView: View {
             }
             Text("Imported files are copied unchanged into a private local directory. Removing a reference never deletes its source file.")
                 .font(.caption).foregroundStyle(.secondary)
-            if let error = error ?? library.loadError { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
+            if let error = error ?? library.loadError { Text(L(error)).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
         }.disabled(library.busy).padding().onChange(of: selected) { _, id in name = library.keys.first { $0.id == id }?.name ?? "" }
     }
     private func perform(_ body: () throws -> Void) {

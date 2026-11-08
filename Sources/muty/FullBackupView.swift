@@ -25,7 +25,7 @@ struct FullBackupExportView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Back Up").font(.title2)
             Toggle("Include passwords", isOn: $includePasswords)
-            Text(includePasswords ? "Includes configuration, Button Bar, session passwords and shared credentials. Private keys are excluded." : "Includes sessions, folders and Button Bar. Passwords, shared credentials and private keys are excluded.")
+            Text(includePasswords ? L("Includes configuration, Button Bar, session passwords and shared credentials. Private keys are excluded.") : L("Includes sessions, folders and Button Bar. Passwords, shared credentials and private keys are excluded."))
                 .font(.callout).foregroundStyle(.secondary)
             Text("Button commands are included. Use encryption if commands contain sensitive values.")
                 .font(.caption).foregroundStyle(.secondary)
@@ -42,7 +42,7 @@ struct FullBackupExportView: View {
                     .font(.callout)
             }
             if busy { ProgressView(model.backupProgress ?? "Writing backup…") }
-            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+            if let error { Text(L(error)).font(.caption).foregroundStyle(.red) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(busy)
@@ -66,7 +66,7 @@ struct FullBackupExportView: View {
                     let data = try BackupArchive.encode(backup, masterPassword: master)
                     try BackupArchive.write(data, to: url)
                 }.value
-                model.operationStatus = "Backup complete: \(backup.configuration.sessions.count) sessions and \(count) passwords saved to \(url.path)"
+                model.operationStatus = LF("Backup complete: %ld sessions and %ld passwords saved to %@", backup.configuration.sessions.count, count, url.path)
                 password = ""; confirmation = ""; busy = false; dismiss()
             } catch { self.error = error.localizedDescription; busy = false }
         }
@@ -85,7 +85,7 @@ struct BackupUnlockView: View {
             Text("Unlock Backup").font(.title2)
             SecureField("Master password", text: $password)
             if busy { ProgressView("Decrypting…") }
-            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+            if let error { Text(L(error)).font(.caption).foregroundStyle(.red) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(busy)

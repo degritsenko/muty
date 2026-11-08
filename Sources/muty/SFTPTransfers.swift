@@ -24,7 +24,7 @@ struct SFTPTransfersView: View {
         if !queue.items.isEmpty {
         VStack(spacing: 4) {
             HStack {
-                Text("Transfers: \(queue.items.filter { $0.state == .done }.count)/\(queue.items.count)").font(.caption)
+                Text(LF("Transfers: %ld/%ld", queue.items.filter { $0.state == .done }.count, queue.items.count)).font(.caption)
                 Spacer()
                 Button("Resume / Retry Failed") { browser.retryTransfers() }.disabled(browser.busy || browser.disconnected)
                 Button("Clear Completed") { queue.items.removeAll { $0.state == .done || $0.state == .skipped } }.disabled(browser.busy)
@@ -34,8 +34,8 @@ struct SFTPTransfersView: View {
                     Image(systemName: item.kind == .upload || item.kind == .uploadDirectory ? "arrow.up" : "arrow.down")
                     Text((item.source as NSString).lastPathComponent).lineLimit(1).help(item.source + " → " + item.destination)
                     Spacer()
-                    Text(item.state.rawValue).font(.caption)
-                    if let error = item.error { Image(systemName: "exclamationmark.triangle").help(error) }
+                    Text(L(item.state.rawValue)).font(.caption)
+                    if let error = item.error { Image(systemName: "exclamationmark.triangle").help(L(error)) }
                     if item.state == .failed || item.state == .cancelled {
                         Button("Retry") { browser.retryTransfers(id: item.id) }.disabled(browser.busy || browser.disconnected)
                     }

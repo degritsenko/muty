@@ -107,10 +107,10 @@ final class AskpassBroker {
         if (initial || HostKeyQuestion.isRetry(request.prompt)) && (request.kind.isEmpty || request.kind == "confirm") {
             if initial { lastHostKeyQuestion = request.prompt }
             let alert = NSAlert()
-            alert.messageText = "Trust Server Key?"
-            alert.informativeText = "Verify the server fingerprint before trusting this host.\n\n" + (lastHostKeyQuestion ?? "The fingerprint is displayed in the SSH terminal output.")
-            alert.addButton(withTitle: "Trust and Connect")
-            alert.addButton(withTitle: "Cancel")
+            alert.messageText = L("Trust Server Key?")
+            alert.informativeText = L("Verify the server fingerprint before trusting this host.") + "\n\n" + (lastHostKeyQuestion ?? L("The fingerprint is displayed in the SSH terminal output."))
+            alert.addButton(withTitle: L("Trust and Connect"))
+            alert.addButton(withTitle: L("Cancel"))
             let approved = alert.runModal() == .alertFirstButtonReturn
             return .init(accepted: active && approved, value: approved ? "yes" : "no")
         }

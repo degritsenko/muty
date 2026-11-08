@@ -120,15 +120,15 @@ struct RemoteTextSnapshot: Equatable {
     static func allowTermination() -> Bool {
         if let saving = openEditors.values.first(where: { $0.saving }) {
             saving.window?.makeKeyAndOrderFront(nil)
-            let alert = NSAlert(); alert.messageText = "A file is being saved."
-            alert.informativeText = "Wait for saving to finish before quitting."; alert.runModal()
+            let alert = NSAlert(); alert.messageText = L("A file is being saved.")
+            alert.informativeText = L("Wait for saving to finish before quitting."); alert.runModal()
             return false
         }
         guard let dirty = openEditors.values.first(where: { $0.dirty }) else { return true }
         dirty.window?.makeKeyAndOrderFront(nil)
-        let alert = NSAlert(); alert.messageText = "Remote files have unsaved changes."
-        alert.informativeText = "Review the editor windows before quitting, or discard all unsaved changes."
-        alert.addButton(withTitle: "Review Changes"); alert.addButton(withTitle: "Discard Changes and Quit"); alert.addButton(withTitle: "Cancel")
+        let alert = NSAlert(); alert.messageText = L("Remote files have unsaved changes.")
+        alert.informativeText = L("Review the editor windows before quitting, or discard all unsaved changes.")
+        alert.addButton(withTitle: L("Review Changes")); alert.addButton(withTitle: L("Discard Changes and Quit")); alert.addButton(withTitle: L("Cancel"))
         return alert.runModal() == .alertSecondButtonReturn
     }
     override func showWindow(_ sender: Any?) { Self.openEditors[editorID] = self; super.showWindow(sender) }
@@ -185,10 +185,10 @@ struct RemoteTextSnapshot: Equatable {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard !saving else { return false }
         guard dirty else { return true }
-        let alert = NSAlert(); alert.messageText = "Save changes before closing?"
-        alert.informativeText = "Unsaved changes will be lost."
-        if !disconnected { alert.addButton(withTitle: "Save") }
-        alert.addButton(withTitle: "Discard"); alert.addButton(withTitle: "Cancel")
+        let alert = NSAlert(); alert.messageText = L("Save changes before closing?")
+        alert.informativeText = L("Unsaved changes will be lost.")
+        if !disconnected { alert.addButton(withTitle: L("Save")) }
+        alert.addButton(withTitle: L("Discard")); alert.addButton(withTitle: L("Cancel"))
         let result = alert.runModal()
         if disconnected { return result == .alertFirstButtonReturn }
         if result == .alertFirstButtonReturn { save(closeAfter: true); return false }

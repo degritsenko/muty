@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "muty",
+    defaultLocalization: "en",
     platforms: [.macOS(.v14)],
     products: [.executable(name: "muty", targets: ["muty"]),
                .executable(name: "muty-askpass", targets: ["muty-askpass"]),
@@ -11,7 +12,7 @@ let package = Package(
     targets: [
         .target(name: "MutyIPC"),
         .target(name: "SecureCRTSupport", exclude: ["README.md", "LICENSE"], publicHeadersPath: "include", cSettings: [.headerSearchPath(".")]),
-        .executableTarget(name: "muty", dependencies: ["MutyIPC", "SecureCRTSupport", .product(name: "SwiftTerm", package: "SwiftTerm")]),
+        .executableTarget(name: "muty", dependencies: ["MutyIPC", "SecureCRTSupport", .product(name: "SwiftTerm", package: "SwiftTerm")], resources: [.process("Resources")]),
         .executableTarget(name: "muty-askpass", dependencies: ["MutyIPC"]),
         .executableTarget(name: "muty-ssh-proxy")
     ]

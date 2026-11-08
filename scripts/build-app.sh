@@ -23,6 +23,12 @@ for bundle in "$bin"/*.bundle; do
     [[ -d "$bundle" ]] || continue
     ditto "$bundle" "$app/Contents/Resources/$(basename "$bundle")"
 done
+# Bundle.main resolves SwiftUI/AppKit localizations from .lproj directories at the app's
+# resource root, so copy them there in addition to the SwiftPM resource bundle.
+for lproj in "$PWD/Sources/muty/Resources"/*.lproj; do
+    [[ -d "$lproj" ]] || continue
+    ditto "$lproj" "$app/Contents/Resources/$(basename "$lproj")"
+done
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -35,6 +41,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleVersion</key><string>1</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
 <key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleDevelopmentRegion</key><string>en</string>
+<key>CFBundleLocalizations</key><array><string>en</string><string>ru</string></array>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>

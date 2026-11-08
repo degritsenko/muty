@@ -96,10 +96,10 @@ import AppKit
         if mode != .unlock && protected.state == .off {
             let alert = NSAlert()
             alert.alertStyle = .warning
-            alert.messageText = mode == .change ? "Disable Master Password?" : "Save Without a Master Password?"
+            alert.messageText = mode == .change ? L("Disable Master Password?") : L("Save Without a Master Password?")
             alert.informativeText = hint.stringValue
-            alert.addButton(withTitle: "Cancel")
-            alert.addButton(withTitle: mode == .change ? "Disable" : "Save Without Master Password")
+            alert.addButton(withTitle: L("Cancel"))
+            alert.addButton(withTitle: mode == .change ? L("Disable") : L("Save Without Master Password"))
             guard alert.runModal() == .alertSecondButtonReturn else { return }
         }
         do {
