@@ -20,15 +20,24 @@ struct SFTPTransfer: Identifiable {
 struct SFTPTransfersView: View {
     @ObservedObject var queue: SFTPTransferQueue
     @ObservedObject var browser: SFTPBrowserModel
+    @ViewState private var expanded = false
+    private var active: Bool { queue.items.contains { $0.state == .waiting || $0.state == .copying } }
+    private var failures: [UUID] { queue.items.filter { $0.state == .failed || $0.state == .cancelled }.map(\.id) }
     var body: some View {
         if !queue.items.isEmpty {
         VStack(spacing: 4) {
             HStack {
-                Text("Transfers: \(queue.items.filter { $0.state == .done }.count)/\(queue.items.count)").font(.caption)
+                Text(active ? "Transfers: \(queue.items.filter { $0.state == .done }.count)/\(queue.items.count)" :
+                     "\(queue.items.filter { $0.state == .done }.count) transferred").font(.caption)
                 Spacer()
-                Button("Resume / Retry Failed") { browser.retryTransfers() }.disabled(browser.busy || browser.disconnected)
-                Button("Clear Completed") { queue.items.removeAll { $0.state == .done || $0.state == .skipped } }.disabled(browser.busy)
+                if !failures.isEmpty || queue.paused {
+                    Button("Resume / Retry Failed") { browser.retryTransfers() }.disabled(browser.busy || browser.disconnected)
+                }
+                Button(expanded || active ? "Hide" : "Show") { expanded.toggle() }
+                    .disabled(active)
+                Button("Clear") { queue.items.removeAll { $0.state == .done || $0.state == .skipped } }.disabled(browser.busy)
             }
+            if expanded || active {
             List(queue.items) { item in
                 HStack {
                     Image(systemName: item.kind == .upload || item.kind == .uploadDirectory ? "arrow.up" : "arrow.down")
@@ -41,7 +50,13 @@ struct SFTPTransfersView: View {
                     }
                 }
             }.frame(height: 100)
+            }
         }.padding(6)
+        .onChange(of: active) { _, value in
+            if !value { expanded = !failures.isEmpty }
+        }
+        .onChange(of: failures) { _, value in if !value.isEmpty { expanded = true } }
+        .onAppear { expanded = !failures.isEmpty }
         }
     }
 }

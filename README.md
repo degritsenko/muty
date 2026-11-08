@@ -22,9 +22,9 @@ Use **Find saved session** next to the terminal search field to find saved sessi
 
 Remote files open as tabs in one editor window per SFTP session. Long lines wrap to fit the window; Tab inserts spaces in YAML files. Escape closes the current editor or viewer tab, with a confirmation for unsaved changes. If a file has changed on the server, saving is refused and your unsaved text stays in the open tab.
 
-Use **Clear Completed** to remove completed transfers; the transfer panel disappears when the queue is empty. The button-set selector is on the right of the Button Bar, after the **+** button.
+Completed SFTP transfers collapse to a summary. Use **Show** to reopen the list or **Clear** to remove completed transfers. The list opens automatically when a transfer fails. The button-set selector is on the right of the Button Bar, after the **+** button.
 
-SSH/SFTP switching sits on the right of the compact session-tab row. The optional status bar shows the connection state, destination, negotiated SSH cipher and jump host; use **View → Status Bar** to show or hide it.
+SSH/SFTP switching sits on the right of the compact session-tab row. Use ⌘1–9 to select a numbered session tab or Ctrl+Tab and Ctrl+Shift+Tab to cycle through tabs. The optional status bar shows the connection state, destination, negotiated SSH cipher and jump host; use **View → Status Bar** to show or hide it.
 
 Open **File → Settings…** (⌘,) to configure muty. Quick Connect can use either a key from the library or a private-key file selected for that connection only. The source file is not copied or modified, and its permissions are checked before connecting.
 

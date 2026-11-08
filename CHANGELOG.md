@@ -2,6 +2,14 @@
 
 All notable public changes will be documented in this file.
 
+## 0.7.8
+
+- Select one of the first nine session tabs with ⌘1–9, or cycle through tabs with Ctrl+Tab and Ctrl+Shift+Tab. The selected tab scrolls into view.
+- Collapse completed SFTP transfers to a summary with Show and Clear. Expand the queue automatically when a transfer fails.
+- Keep authentication controls in a consistent order in Quick Connect. Choose a library key or private-key file from one menu, or choose between entering a password when prompted and using shared credentials.
+- Keep connection state on the left of the status bar and fit destination, jump host and SSH details on the right as space allows.
+- Show Disconnected when an SSH session ends or is stopped. Remove the generic error banner for SSH process exits while retaining specific errors.
+
 ## 0.7.7
 
 ### Added

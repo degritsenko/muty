@@ -126,6 +126,7 @@ struct ContentView: View {
                 }.controlSize(.small)
             }
         }
+        .background(TabKeyboardShortcuts(model: model).frame(width: 0, height: 0))
         .onChange(of: terminalQuery) { _, _ in matchFound = true }
         .onChange(of: model.selectedTab) { _, id in
             matchFound = true
@@ -363,6 +364,7 @@ struct ContentView: View {
                     Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     HStack(spacing: 8) {
+                    ScrollViewReader { proxy in
                     ScrollView(.horizontal) {
                         HStack(spacing: 2) {
                             ForEach(model.tabs) { connection in
@@ -370,6 +372,7 @@ struct ContentView: View {
                                            selected: model.selectedTab == connection.id,
                                            select: { model.selectTab(connection.id) },
                                            close: { model.close(connection) })
+                                .id(connection.id)
                                 .onDrag { NSItemProvider(object: connection.id.uuidString as NSString) }
                                 .dropDestination(for: String.self) { items, _ in
                                     guard let value = items.first, let source = UUID(uuidString: value) else { return false }
@@ -379,6 +382,13 @@ struct ContentView: View {
                             }
                         }.padding(.horizontal, 6).padding(.vertical, 2)
                     }.scrollIndicators(.hidden)
+                    .onChange(of: model.selectedTab) { _, id in
+                        if let id { proxy.scrollTo(id) }
+                    }
+                    .onChange(of: model.tabs.map(\.id)) { _, _ in
+                        if let id = model.selectedTab { proxy.scrollTo(id) }
+                    }
+                    }
                     if let connection = model.selectedConnection,
                        connection.profile.connectionType == .ssh, !connection.profile.tunnelOnly,
                        connection.profile.sshEnabled, connection.profile.sftpEnabled {
@@ -498,6 +508,9 @@ private struct SessionTab: View {
             Button(action: select) {
                 HStack(spacing: 7) {
                     connectionIndicator.frame(width: 6, height: 6)
+                    if let index = model.tabs.firstIndex(where: { $0.id == connection.id }), index < 9 {
+                        Text("\(index + 1)").font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
                     if connection.isLogging { Image(systemName: "record.circle.fill").foregroundStyle(.red).help("Logging session output") }
                     Text(connection.tabName ?? connection.profile.name).lineLimit(1)
                     if let color = connection.profile.color {
@@ -623,36 +636,7 @@ private struct SessionPane: View {
             }
             if showStatusBar && (connection.profile.connectionType == .ssh || connection.error != nil || (!connection.running && connection.status != "Not Started")) {
                 Divider()
-                HStack(spacing: 8) {
-                    if let error = connection.error {
-                        Label(error, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.orange)
-                            .textSelection(.enabled)
-                    } else {
-                        Text(connection.status).foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 4)
-                    if connection.profile.connectionType == .ssh {
-                        Text(connection.profile.endpoint).lineLimit(1).textSelection(.enabled)
-                        if let jump = connection.connectedJumpProfile {
-                            Text("via \(jump.host):\(jump.port)")
-                                .lineLimit(1).foregroundStyle(.secondary)
-                                .help("Jump host: " + jump.endpoint)
-                        }
-                        if connection.transportReady {
-                            Text(connection.negotiatedCipher.map { "SSH2 · " + $0 } ?? "SSH2")
-                                .lineLimit(1).foregroundStyle(.secondary)
-                        }
-                    }
-                    if !connection.running {
-                        Text(connection.profile.connectionType == .localShell ? "Press Enter to restart shell" : "Press Enter to reconnect")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .font(.caption)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(.bar)
+                ConnectionStatusBar(connection: connection)
             }
         }.sheet(isPresented: $tunnelsVisible) {
             if let tunnels = connection.activeTunnels { ActiveTunnelsView(manager: tunnels, model: model, profile: connection.profile) }

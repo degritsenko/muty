@@ -260,16 +260,18 @@ struct SavedPasswordView: View {
 struct CredentialSelectionView: View {
     @ObservedObject var vault: VaultStore
     @Binding var credentialID: UUID?
+    var sessionCredentialsTitle = "Session credentials"
+
     var body: some View {
         if vault.isLocked || vault.needsSetup {
             HStack {
-                Text(credentialID == nil ? "Session credentials" : "Shared credential selected")
+                Text(credentialID == nil ? sessionCredentialsTitle : "Shared credential selected")
                 Spacer()
                 Button(vault.needsSetup ? "Set Up Credentials…" : "Unlock Credentials…") { try? vault.ensureAvailable() }
             }
         } else {
             Picker("Credentials", selection: $credentialID) {
-                Text("Session credentials").tag(nil as UUID?)
+                Text(sessionCredentialsTitle).tag(nil as UUID?)
                 ForEach(vault.credentials) { Text($0.title).tag(Optional($0.id)) }
                 if let credentialID, !vault.credentials.contains(where: { $0.id == credentialID }) { Text("Missing credential").tag(Optional(credentialID)) }
             }

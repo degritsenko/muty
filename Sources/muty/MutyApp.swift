@@ -110,8 +110,14 @@ struct MutyApp: App {
                 Button("4 Panes — Grid") { model.split("four") }.disabled(model.tabs.isEmpty)
                 Button("Single Pane") { model.split("none") }.disabled(model.splitMode == "none")
                 Divider()
-                Button("Next Tab") { cycle(1) }.keyboardShortcut("]", modifiers: [.command, .shift])
-                Button("Previous Tab") { cycle(-1) }.keyboardShortcut("[", modifiers: [.command, .shift])
+                Button("Next Tab") { cycle(1) }.keyboardShortcut(.tab, modifiers: .control)
+                Button("Previous Tab") { cycle(-1) }.keyboardShortcut(.tab, modifiers: [.control, .shift])
+                ForEach(1...9, id: \.self) { number in
+                    Button("Select Tab \(number)") {
+                        if model.tabs.indices.contains(number - 1) { model.selectTab(model.tabs[number - 1].id) }
+                    }.keyboardShortcut(KeyEquivalent(Character(String(number))), modifiers: .command)
+                        .disabled(model.tabs.count < number)
+                }
                 Divider()
             }
         }

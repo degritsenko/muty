@@ -16,6 +16,13 @@ struct QuickConnectView: View {
     @ViewState private var keyID: UUID?
     @ViewState private var identityFile: String?
 
+    private var connectionHint: String {
+        if connectionType == .ssh, authentication == .password, credentialID == nil {
+            return "Click Connect to enter the password when prompted. No profile or password is saved."
+        }
+        return "No profile is saved."
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Label("Quick Connect", systemImage: "bolt.horizontal").font(.title2.bold())
@@ -33,13 +40,24 @@ struct QuickConnectView: View {
                     TextField("Host", text: $host)
                     TextField("Port", text: $port)
                     TextField("Username", text: $user).disabled(credentialID != nil && authentication == .password)
-                    if authentication == .password { CredentialSelectionView(vault: model.vault, credentialID: $credentialID) }
                     Picker("Authentication", selection: $authentication) {
                         ForEach(AuthenticationMode.selectable) { Text($0.title).tag($0) }
                     }
-                    if authentication == .identityFile {
-                        KeySelectionView(library: model.keyLibrary, keyID: $keyID, legacyPath: $identityFile)
-                        Button("Choose Key File…") {
+                    if authentication == .password {
+                        CredentialSelectionView(vault: model.vault, credentialID: $credentialID,
+                                                sessionCredentialsTitle: "Enter password when prompted")
+                    } else if authentication == .identityFile {
+                        LabeledContent("SSH Key") {
+                            Menu {
+                                ForEach(model.keyLibrary.keys) { key in
+                                    Button(key.name) {
+                                        keyID = key.id
+                                        identityFile = nil
+                                        error = nil
+                                    }
+                                }
+                                Divider()
+                                Button("Choose File…") {
                             let panel = NSOpenPanel()
                             panel.canChooseDirectories = false
                             panel.allowsMultipleSelection = false
@@ -53,13 +71,20 @@ struct QuickConnectView: View {
                                     error = nil
                                 } catch { self.error = error.localizedDescription }
                             }
+                                }
+                            } label: {
+                                Text(model.keyLibrary.keys.first(where: { $0.id == keyID })?.name ??
+                                     identityFile.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Select a key")
+                                    .lineLimit(1)
+                            }
+                            .help(identityFile ?? model.keyLibrary.keys.first(where: { $0.id == keyID })?.path ?? "Choose a library key or a private-key file")
                         }
                     }
                 } else {
                     Text("Starts your default login shell in your home directory.")
                 }
-            }.formStyle(.grouped).frame(maxHeight: 560)
-            Text(connectionType == .ssh ? "No profile or password is saved. Passwords and OTP are entered in the terminal; choose SSH Key to use a private key." : "No profile is saved.")
+            }.formStyle(.grouped).frame(height: connectionType == .ssh ? 430 : 150)
+            Text(connectionHint)
                 .font(.caption).foregroundStyle(.secondary)
             if let error { Text(error).foregroundStyle(.red).font(.callout).textSelection(.enabled) }
             HStack {

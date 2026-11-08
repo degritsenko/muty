@@ -67,7 +67,7 @@ final class RegressionTests {
         queue.items.removeAll { $0.state == .done }
         _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
         view.layoutSubtreeIfNeeded()
-        assert(before > 100 && view.fittingSize.height < 10)
+        assert(before > 10 && before < 70 && view.fittingSize.height < 10)
         let snapshot = try RemoteTextSnapshot(bytes: Data("test\n".utf8), attributes: SFTPAttributes())
         let editor = RemoteTextEditor(path: "/test.txt", snapshot: snapshot, readOnly: false, tabGroupID: UUID()) { _, expected in
             fatalError("Escape must not save an unchanged file")
@@ -613,7 +613,7 @@ final class RegressionTests {
             _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
         }
         guard !stop.isRunning, stop.terminationStatus == 0 else { throw MutyError("Could not stop disposable server") }
-        assert(!c.running && c.error != nil)
+        assert(!c.running && c.error == nil && c.status == "Disconnected")
         assert(pid > 0 && kill(pid, 0) == -1 && errno == ESRCH)
     }
 

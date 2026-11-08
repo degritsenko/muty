@@ -434,12 +434,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         broker?.stop(); broker = nil; stopJumpResources(); running = false; childPID = 0
         statusTimer?.invalidate(); statusTimer = nil
         guard !stopping else { status = profile.connectionType == .localShell ? "Shell Stopped" : "Disconnected"; return }
-        // SwiftTerm 1.20 passes raw waitpid status on the forkpty backend.
-        let code = exitCode.map { $0 > 255 ? ($0 >> 8) & 255 : $0 }
-        status = code == 0 ? "Session Ended" : "Connection Ended (\(code.map(String.init) ?? "signal"))"
-        if code != 0 && error == nil {
-            error = profile.connectionType == .localShell ? "Shell exited with an error. See terminal output." : "SSH session ended with an error. See terminal output."
-        }
+        status = profile.connectionType == .localShell ? "Shell Stopped" : "Disconnected"
     }
 }
 
