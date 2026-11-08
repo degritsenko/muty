@@ -5,6 +5,7 @@ Native SSH and SFTP client for macOS. Built with SwiftUI and SwiftTerm, powered 
 ![Active SSH terminal session connected to a demo Alpine Linux server](docs/ssh-session.png)
 
 - SSH and local shell tabs with split layouts.
+- Keyword highlighting in terminal output: matched words change foreground colour only. Enabled by default; configure rules in Settings → Syntax Highlighting or toggle with View → Highlight Output (⇧⌘H).
 - Two-pane SFTP browser, transfer queue and tabbed remote text editor.
 - Saved sessions, folders, shared credentials and quick session search in the toolbar.
 - Jump hosts, port forwarding and tunnel-only sessions.

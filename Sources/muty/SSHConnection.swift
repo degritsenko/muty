@@ -434,7 +434,9 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
 }
 
 final class ReconnectTerminalView: LocalProcessTerminalView {
-    var highlightVisible = false
+    private var highlightTransformer = OutputHighlightTransformer()
+    /// Overridable in tests; the app always uses the shared store.
+    var highlightStore: OutputHighlightStore?
     var onFindRequested: (() -> Void)?
     override func performFindPanelAction(_ sender: Any?) {
         if let item = sender as? NSMenuItem, item.tag == Int(NSFindPanelAction.showFindPanel.rawValue), let onFindRequested {
@@ -445,7 +447,22 @@ final class ReconnectTerminalView: LocalProcessTerminalView {
     var onOutput: ((Data) -> Void)?
     override func dataReceived(slice: ArraySlice<UInt8>) {
         onOutput?(Data(slice))
-        super.dataReceived(slice: slice)
+        // SwiftTerm delivers process output on LocalProcess's dispatch queue, which defaults to
+        // the main queue; the highlight store is main-actor isolated.
+        MainActor.assumeIsolated {
+            let store = highlightStore ?? OutputHighlightStore.shared
+            guard store.enabled, !store.ruleSet.isEmpty else {
+                // Keep the parser state in sync while disabled, so enabling in the middle of
+                // an escape sequence cannot inject SGR bytes into it.
+                highlightTransformer.consume(slice)
+                super.dataReceived(slice: slice)
+                return
+            }
+            let segments = highlightTransformer.process(slice, ruleSet: store.ruleSet)
+            OutputHighlightApplier.feed(segments,
+                currentForeground: { self.getTerminal().currentAttribute.fg },
+                feed: { self.feed(byteArray: $0[...]) })
+        }
     }
     var reconnectOnReturn: (() -> Bool)?
     private var keyMonitor: Any?

@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct MutyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel()
+    @ObservedObject private var highlights = OutputHighlightStore.shared
     @ViewState private var showingSettings = false
     @AppStorage("showButtonBar") private var showButtonBar = true
     @AppStorage("terminalFontSize") private var fontSize = 13.0
@@ -82,6 +83,9 @@ struct MutyApp: App {
                 }.keyboardShortcut("f", modifiers: .command).disabled(showingSettings || model.selectedConnection == nil)
             }
             CommandGroup(after: .toolbar) {
+                Toggle("Highlight Output", isOn: $highlights.enabled)
+                    .keyboardShortcut("h", modifiers: [.command, .shift])
+                Divider()
                 Toggle("Button Bar", isOn: $showButtonBar)
                 Divider()
                 Button("Increase Terminal Font Size") { resizeFont(1) }.keyboardShortcut("=", modifiers: .command)

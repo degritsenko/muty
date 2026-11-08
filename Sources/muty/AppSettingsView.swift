@@ -57,7 +57,7 @@ struct AppSettingsView: View {
 
     private enum Tab: String, CaseIterable {
         case general = "General"
-        case highlights = "Highlights"
+        case highlights = "Syntax Highlighting"
         case terminal = "Terminal"
         case keys = "SSH Keys"
         case hostKeys = "Host Keys"
@@ -90,7 +90,7 @@ struct AppSettingsView: View {
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
                 }
-            }.frame(width: 145)
+            }.frame(width: 170)
             Divider()
             settingsPage.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding()

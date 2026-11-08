@@ -378,11 +378,11 @@ struct ContentView: View {
                         }.padding(.horizontal, 6).padding(.vertical, 3)
                     }.scrollIndicators(.hidden).frame(height: 34).background(.bar)
                     Divider()
-                    TerminalWorkspace(model: model) { connection, visible, index in
+                    TerminalWorkspace(model: model) { connection, index in
                         SessionPane(connection: connection, model: model, fontSize: fontSize,
                             scrollback: Int(scrollback.isFinite ? max(1000, min(50000, scrollback)) : 10000), theme: theme,
                             optionAsMetaKey: optionAsMetaKey, fontName: fontName,
-                            selected: model.selectedTab == connection.id, visible: visible, showPaneTitle: index != nil, paneIndex: index)
+                            selected: model.selectedTab == connection.id, showPaneTitle: index != nil, paneIndex: index)
                     }
 
                 }
@@ -535,7 +535,6 @@ private struct SessionPane: View {
     let optionAsMetaKey: Bool
     let fontName: String
     let selected: Bool
-    var visible = true
     var showPaneTitle = false
     var paneIndex: Int?
     @ViewState private var tunnelsVisible = false
@@ -598,7 +597,7 @@ private struct SessionPane: View {
                 Divider()
             }
             ZStack {
-                TerminalPane(connection: connection, fontSize: fontSize, selected: selected && !connection.showingSFTP, visible: visible && !connection.showingSFTP)
+                TerminalPane(connection: connection, fontSize: fontSize, selected: selected && !connection.showingSFTP)
                     .opacity(connection.showingSFTP ? 0 : 1)
                     .allowsHitTesting(!connection.showingSFTP)
                     .accessibilityHidden(connection.showingSFTP)
