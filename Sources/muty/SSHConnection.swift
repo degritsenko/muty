@@ -35,6 +35,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     var transportReady: Bool { sharedTransport?.isReady == true }
     private var sharedTransport: SSHSharedTransport?
     @Published private(set) var status = "Not Started"
+    @Published private(set) var negotiatedCipher: String?
     @Published private(set) var running = false
     @Published private(set) var error: String?
     @Published private(set) var remoteTitle: String?
@@ -308,6 +309,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         stopChildProcess()
         statusTimer?.invalidate(); statusTimer = nil
         running = false; status = profile.connectionType == .localShell ? "Shell Stopped" : "Disconnected"
+        negotiatedCipher = nil
     }
 
     private func stopChildProcess() {
@@ -401,7 +403,10 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
             activeTunnels = transport.tunnelManager
         }
         canOpenSFTP = profile.sftpEnabled && !profile.tunnelOnly && transportReady
-        if Date().timeIntervalSince(startTime) > 1 { status = profile.tunnelOnly ? "Tunnel Process Running" : "SSH Running" }
+        if transportReady {
+            negotiatedCipher = sharedTransport?.negotiatedCipher
+            status = "Connected"
+        }
     }
 
     nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
@@ -414,6 +419,11 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     }
 
     private func didTerminate(exitCode: Int32?) {
+        if let transport = sharedTransport {
+            let diagnostics = transport.diagnosticOutput
+            if !diagnostics.isEmpty { terminal.feed(byteArray: Array(diagnostics.utf8)[...]) }
+        }
+        negotiatedCipher = nil
         fileBrowser?.disconnect()
         // Keep the writer until Stop/Disconnect/tab close: SwiftTerm may deliver
         // queued PTY output after the child exit notification.

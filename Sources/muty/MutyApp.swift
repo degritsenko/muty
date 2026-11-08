@@ -37,6 +37,7 @@ struct MutyApp: App {
     @ObservedObject private var highlights = OutputHighlightStore.shared
     @ViewState private var showingSettings = false
     @AppStorage("showButtonBar") private var showButtonBar = true
+    @AppStorage("showStatusBar") private var showStatusBar = true
     @AppStorage("terminalFontSize") private var fontSize = 13.0
     var body: some Scene {
         Window("muty", id: "main") {
@@ -48,6 +49,7 @@ struct MutyApp: App {
         .defaultSize(width: 1150, height: 740)
         .commands {
             CommandGroup(replacing: .appSettings) {}
+            CommandGroup(replacing: .systemServices) {}
             CommandGroup(replacing: .newItem) {
                 Button("Quick Connect…") { model.quickConnect = true }
                     .keyboardShortcut("k")
@@ -87,6 +89,7 @@ struct MutyApp: App {
                     .keyboardShortcut("h", modifiers: [.command, .shift])
                 Divider()
                 Toggle("Button Bar", isOn: $showButtonBar)
+                Toggle("Status Bar", isOn: $showStatusBar)
                 Divider()
                 Button("Increase Terminal Font Size") { resizeFont(1) }.keyboardShortcut("=", modifiers: .command)
                 Button("Decrease Terminal Font Size") { resizeFont(-1) }.keyboardShortcut("-", modifiers: .command)

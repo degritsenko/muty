@@ -111,6 +111,7 @@ struct ContentView: View {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 10) {
                     SavedSessionSearchField(model: model).frame(width: 190, height: 22)
+                    Divider().frame(height: 18).padding(.horizontal, 6)
                     HStack(spacing: 4) {
                         TerminalSearchField(text: $terminalQuery, request: model.terminalFindRequest) {
                             findInTerminal(backward: false)
@@ -361,6 +362,7 @@ struct ContentView: View {
                 if model.tabs.isEmpty {
                     Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
+                    HStack(spacing: 8) {
                     ScrollView(.horizontal) {
                         HStack(spacing: 2) {
                             ForEach(model.tabs) { connection in
@@ -375,8 +377,15 @@ struct ContentView: View {
                                     return true
                                 }
                             }
-                        }.padding(.horizontal, 6).padding(.vertical, 3)
-                    }.scrollIndicators(.hidden).frame(height: 34).background(.bar)
+                        }.padding(.horizontal, 6).padding(.vertical, 2)
+                    }.scrollIndicators(.hidden)
+                    if let connection = model.selectedConnection,
+                       connection.profile.connectionType == .ssh, !connection.profile.tunnelOnly,
+                       connection.profile.sshEnabled, connection.profile.sftpEnabled {
+                        SessionModePicker(connection: connection, model: model)
+                            .padding(.trailing, 8)
+                    }
+                    }.frame(height: 26).background(.bar)
                     Divider()
                     TerminalWorkspace(model: model) { connection, index in
                         SessionPane(connection: connection, model: model, fontSize: fontSize,
@@ -442,6 +451,28 @@ private struct SessionButtonBar: View {
     }
 }
 
+private struct SessionModePicker: View {
+    @ObservedObject var connection: SSHConnection
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Button("SSH") {
+                connection.showingSFTP = false
+                connection.terminal.window?.makeFirstResponder(connection.terminal)
+            }
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(connection.showingSFTP ? Color.clear : Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
+            Button("SFTP") { connection.openFileBrowser(app: model) }
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(connection.showingSFTP ? Color.accentColor.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 4))
+                .disabled(!connection.canOpenSFTP && connection.fileBrowser == nil)
+        }
+        .buttonStyle(.plain).font(.system(size: 11))
+        .fixedSize()
+    }
+}
+
 private struct SessionTab: View {
     @ObservedObject var connection: SSHConnection
     @ObservedObject var model: AppModel
@@ -454,34 +485,30 @@ private struct SessionTab: View {
 
     @ViewBuilder private var connectionIndicator: some View {
         if !connection.running && connection.status != "Not Started" {
-            Image(systemName: "minus.circle.fill").symbolRenderingMode(.palette)
-                .foregroundStyle(.white, .red).font(.system(size: 14, weight: .bold))
-                .help("Disconnected")
+            Circle().fill(.red).help("Disconnected").accessibilityLabel("Disconnected")
         } else if connection.running && (connection.profile.connectionType == .localShell || connection.transportReady) {
-            Image(systemName: "checkmark").foregroundStyle(.green).font(.system(size: 14, weight: .heavy))
-                .help("Session active")
+            Circle().fill(.green).help("Session active").accessibilityLabel("Session active")
         } else {
-            Image(systemName: "hourglass").foregroundStyle(.yellow).font(.system(size: 13, weight: .semibold))
-                .help("Connecting / waiting for SSH transport")
+            Circle().fill(.yellow).help("Connecting / waiting for SSH transport").accessibilityLabel("Connecting")
         }
     }
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Button(action: select) {
                 HStack(spacing: 7) {
-                    connectionIndicator.frame(width: 14, height: 14)
+                    connectionIndicator.frame(width: 6, height: 6)
                     if connection.isLogging { Image(systemName: "record.circle.fill").foregroundStyle(.red).help("Logging session output") }
                     Text(connection.tabName ?? connection.profile.name).lineLimit(1)
                     if let color = connection.profile.color {
                         Circle().fill(sessionColor(color)).frame(width: 8, height: 8).help(color)
                     }
-                }.padding(.vertical, 5)
+                }.padding(.vertical, 1)
             }.buttonStyle(.plain)
             Button(action: close) { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)) }
                 .buttonStyle(.borderless).help("Close tab")
         }
-        .padding(.horizontal, 12).frame(minWidth: 120, maxWidth: 240)
+        .padding(.horizontal, 9).frame(minWidth: 100, maxWidth: 240)
         .background(selected ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
         .contentShape(Rectangle())
         .contextMenu {
@@ -527,6 +554,7 @@ private struct SessionTab: View {
 }
 
 private struct SessionPane: View {
+    @AppStorage("showStatusBar") private var showStatusBar = true
     @ObservedObject var connection: SSHConnection
     @ObservedObject var model: AppModel
     let fontSize: Double
@@ -583,19 +611,6 @@ private struct SessionPane: View {
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
             }
-            if connection.profile.connectionType == .ssh && !connection.profile.tunnelOnly && connection.profile.sshEnabled && connection.profile.sftpEnabled {
-                HStack(spacing: 4) {
-                    Button("SSH") {
-                        connection.showingSFTP = false
-                        connection.terminal.window?.makeFirstResponder(connection.terminal)
-                    }.padding(.horizontal, 6).background(connection.showingSFTP ? Color.clear : Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
-                    Button("SFTP") { connection.openFileBrowser(app: model) }
-                        .padding(.horizontal, 6).background(connection.showingSFTP ? Color.accentColor.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 4))
-                        .disabled(!connection.canOpenSFTP && connection.fileBrowser == nil)
-                    Spacer()
-                }.buttonStyle(.plain).font(.system(size: 12)).padding(.horizontal, 8).frame(height: 28).background(.bar)
-                Divider()
-            }
             ZStack {
                 TerminalPane(connection: connection, fontSize: fontSize, selected: selected && !connection.showingSFTP)
                     .opacity(connection.showingSFTP ? 0 : 1)
@@ -606,7 +621,7 @@ private struct SessionPane: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(nsColor: .windowBackgroundColor))
                 }
             }
-            if connection.error != nil || (!connection.running && connection.status != "Not Started") {
+            if showStatusBar && (connection.profile.connectionType == .ssh || connection.error != nil || (!connection.running && connection.status != "Not Started")) {
                 Divider()
                 HStack(spacing: 8) {
                     if let error = connection.error {
@@ -617,6 +632,18 @@ private struct SessionPane: View {
                         Text(connection.status).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 4)
+                    if connection.profile.connectionType == .ssh {
+                        Text(connection.profile.endpoint).lineLimit(1).textSelection(.enabled)
+                        if let jump = connection.connectedJumpProfile {
+                            Text("via \(jump.host):\(jump.port)")
+                                .lineLimit(1).foregroundStyle(.secondary)
+                                .help("Jump host: " + jump.endpoint)
+                        }
+                        if connection.transportReady {
+                            Text(connection.negotiatedCipher.map { "SSH2 · " + $0 } ?? "SSH2")
+                                .lineLimit(1).foregroundStyle(.secondary)
+                        }
+                    }
                     if !connection.running {
                         Text(connection.profile.connectionType == .localShell ? "Press Enter to restart shell" : "Press Enter to reconnect")
                             .foregroundStyle(.secondary)

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct QuickConnectView: View {
     @Environment(\.dismiss) private var dismiss
@@ -29,7 +30,7 @@ struct QuickConnectView: View {
                         Toggle("SFTP", isOn: $sftpEnabled).disabled(sftpEnabled && !sshEnabled)
                         Spacer()
                     }.toggleStyle(.switch).controlSize(.small)
-                    TextField("Host or user@host:port", text: $host)
+                    TextField("Host", text: $host)
                     TextField("Port", text: $port)
                     TextField("Username", text: $user).disabled(credentialID != nil && authentication == .password)
                     if authentication == .password { CredentialSelectionView(vault: model.vault, credentialID: $credentialID) }
@@ -38,6 +39,21 @@ struct QuickConnectView: View {
                     }
                     if authentication == .identityFile {
                         KeySelectionView(library: model.keyLibrary, keyID: $keyID, legacyPath: $identityFile)
+                        Button("Choose Key File…") {
+                            let panel = NSOpenPanel()
+                            panel.canChooseDirectories = false
+                            panel.allowsMultipleSelection = false
+                            panel.showsHiddenFiles = true
+                            panel.message = "Choose a private SSH key for this connection. It will not be added to the key library."
+                            if panel.runModal() == .OK, let file = panel.url {
+                                do {
+                                    try SSHKeyLibrary.validateConnectionKey(file)
+                                    identityFile = file.path
+                                    keyID = nil
+                                    error = nil
+                                } catch { self.error = error.localizedDescription }
+                            }
+                        }
                     }
                 } else {
                     Text("Starts your default login shell in your home directory.")
@@ -66,6 +82,9 @@ struct QuickConnectView: View {
                             profile.authentication = authentication
                             profile.credentialID = authentication == .password ? credentialID : nil
                             profile.keyID = keyID; profile.identityFile = identityFile
+                            if authentication == .identityFile, keyID == nil, let identityFile {
+                                try SSHKeyLibrary.validateConnectionKey(URL(fileURLWithPath: identityFile))
+                            }
                         }
                         model.connect(try profile.validated(), temporary: true)
                         dismiss()

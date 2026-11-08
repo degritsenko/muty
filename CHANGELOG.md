@@ -2,6 +2,25 @@
 
 All notable public changes will be documented in this file.
 
+## 0.7.7
+
+### Added
+
+- Foreground keyword highlighting with configurable literal and regex rules, legacy-rule migration, and View → Highlight Output (⇧⌘H). Thanks to @zurkiryy for [PR #1](https://github.com/degritsenko/muty/pull/1).
+- Optional status bar showing connection state, destination, negotiated SSH cipher and jump host. Toggle it with View → Status Bar.
+- Choose a private-key file directly in Quick Connect without adding it to the key library, with permission checks before connecting.
+
+### Fixed
+
+- Interrupt slow highlight regular expressions with a processing-time budget to keep the interface responsive.
+
+### Changed
+
+- Move Settings to File and remove Services from the application menu.
+- Move SSH/SFTP switching into the session-tab row and reduce tab height and padding.
+- Replace large session-state icons with compact green, yellow and red dots.
+- Separate saved-session and terminal search fields with additional spacing and a divider.
+
 ## 0.7.6
 
 ### Added

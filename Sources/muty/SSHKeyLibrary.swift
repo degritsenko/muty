@@ -39,6 +39,18 @@ final class SSHKeyLibrary: ObservableObject {
         return path
     }
 
+    static func validateConnectionKey(_ file: URL) throws {
+        let path = file.resolvingSymlinksInPath().path
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular,
+              FileManager.default.isReadableFile(atPath: path) else {
+            throw MutyError("Choose a readable private-key file.")
+        }
+        guard let mode = attributes[.posixPermissions] as? NSNumber, mode.intValue & 0o077 == 0 else {
+            throw MutyError("Private-key permissions are too open. Set permissions to 600 (owner read/write only), then select the key again.")
+        }
+    }
+
     @discardableResult
     func add(file: URL, copy: Bool) throws -> SSHKeyRecord {
         guard loadError == nil else { throw MutyError(loadError!) }

@@ -17,7 +17,30 @@ final class SSHSharedTransport {
     }
     var isReady: Bool { !closed && FileManager.default.fileExists(atPath: socketPath) }
     var masterArguments: [String] {
-        ["-M", "-S", socketPath, "-o", profile.sshEnabled && !profile.tunnelOnly ? "ControlPersist=60" : "ControlPersist=no"]
+        ["-M", "-S", socketPath, "-v", "-E", directory.appendingPathComponent("transport.log").path,
+         "-o", profile.sshEnabled && !profile.tunnelOnly ? "ControlPersist=60" : "ControlPersist=no"]
+    }
+    var negotiatedCipher: String? {
+        guard isReady,
+              let handle = try? FileHandle(forReadingFrom: directory.appendingPathComponent("transport.log")) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 131072) else { return nil }
+        let lines = String(decoding: data, as: UTF8.self).components(separatedBy: "\n")
+        func cipher(_ direction: String) -> String? {
+            guard let line = lines.last(where: { $0.hasPrefix("debug1: kex: " + direction + " cipher: ") }),
+                  let range = line.range(of: " cipher: ") else { return nil }
+            let value = String(line[range.upperBound...].prefix(while: { !$0.isWhitespace }))
+            guard !value.isEmpty, value.count < 100,
+                  value.utf8.allSatisfy({ (45...57).contains($0) || (64...90).contains($0) || (97...122).contains($0) }) else { return nil }
+            return value
+        }
+        guard let incoming = cipher("server->client"), let outgoing = cipher("client->server") else { return nil }
+        return incoming == outgoing ? incoming : "↓ \(incoming) · ↑ \(outgoing)"
+    }
+    var diagnosticOutput: String {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("transport.log")) else { return "" }
+        return String(decoding: data.prefix(131072), as: UTF8.self)
+            .components(separatedBy: "\n").filter { !$0.hasPrefix("debug") }.joined(separator: "\r\n")
     }
     func close() {
         guard !closed else { return }
