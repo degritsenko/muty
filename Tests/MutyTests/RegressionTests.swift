@@ -778,6 +778,266 @@ final class RegressionTests {
         var p = SessionProfile(); p.host = "-oProxyCommand=bad"; p.user = "tester"
         do { _ = try p.validated(); fatalError("Expected validation failure") } catch {}
     }
+    func testOutputHighlightRewriter() {
+        func compile(_ rules: [OutputHighlightRule]) -> OutputHighlightRuleSet {
+            OutputHighlightRuleSet(rules: rules)
+        }
+        func rebuild(_ segments: [OutputHighlightSegment]) -> (Data, [(String, String)]) {
+            var data = Data()
+            var highlighted: [(String, String)] = []
+            for segment in segments {
+                switch segment {
+                case .raw(let bytes):
+                    data.append(contentsOf: bytes)
+                case .highlighted(let bytes, let color):
+                    data.append(contentsOf: bytes)
+                    highlighted.append((String(decoding: bytes, as: UTF8.self), color))
+                }
+            }
+            return (data, highlighted)
+        }
+        let error = OutputHighlightRule(pattern: "ERROR", color: "Red", wholeWord: true)
+        let warning = OutputHighlightRule(pattern: "warning", color: "Yellow", wholeWord: true)
+        let ip = OutputHighlightRule(pattern: "\\b\\d{1,3}(?:\\.\\d{1,3}){3}\\b", color: "Magenta", isRegex: true)
+        var transformer = OutputHighlightTransformer()
+
+        var result = rebuild(transformer.process(Array("start ERROR end\n".utf8)[...], ruleSet: compile([error, warning, ip])))
+        assert(result.0 == Data("start ERROR end\n".utf8))
+        assert(result.1.count == 1 && result.1[0].0 == "ERROR" && result.1[0].1 == "Red")
+
+        result = rebuild(transformer.process(Array("errors and ERROR\n".utf8)[...], ruleSet: compile([error, warning, ip])))
+        assert(result.0 == Data("errors and ERROR\n".utf8))
+        assert(result.1.map(\.0) == ["ERROR"])
+
+        result = rebuild(transformer.process(Array("Warning: warning\n".utf8)[...], ruleSet: compile([error, warning, ip])))
+        assert(result.1.map(\.0) == ["Warning", "warning"])
+
+        result = rebuild(transformer.process(Array("host 10.20.30.40 up\n".utf8)[...], ruleSet: compile([error, warning, ip])))
+        assert(result.0 == Data("host 10.20.30.40 up\n".utf8))
+        assert(result.1.count == 1 && result.1[0].0 == "10.20.30.40" && result.1[0].1 == "Magenta")
+
+        let escapeInput = "\u{1B}[31mERROR\u{1B}[0m\n"
+        result = rebuild(transformer.process(Array(escapeInput.utf8)[...], ruleSet: compile([error])))
+        assert(result.0 == Data(escapeInput.utf8))
+        assert(result.1.map(\.0) == ["ERROR"])
+
+        let oscInput = "\u{1B}]0;ERROR\u{07}ERROR\n"
+        result = rebuild(transformer.process(Array(oscInput.utf8)[...], ruleSet: compile([error])))
+        assert(result.0 == Data(oscInput.utf8))
+        assert(result.1.map(\.0) == ["ERROR"])
+
+        // No rules means a byte-for-byte pass-through.
+        result = rebuild(transformer.process(Array("ERROR\n".utf8)[...], ruleSet: compile([])))
+        assert(result.0 == Data("ERROR\n".utf8) && result.1.isEmpty)
+
+        // A word split across two terminal reads must not be highlighted or corrupted.
+        var split = OutputHighlightTransformer()
+        let first = rebuild(split.process(Array("ERRO".utf8)[...], ruleSet: compile([error])))
+        let second = rebuild(split.process(Array("R\n".utf8)[...], ruleSet: compile([error])))
+        assert(first.1.isEmpty && second.1.isEmpty)
+        assert(first.0 + second.0 == Data("ERROR\n".utf8))
+
+        // Whole word never fires inside a longer word at a read boundary.
+        let short = OutputHighlightRule(pattern: "ERR", color: "Red", wholeWord: true)
+        var boundary = OutputHighlightTransformer()
+        let boundaryFirst = rebuild(boundary.process(Array("ERRO".utf8)[...], ruleSet: compile([short])))
+        assert(boundaryFirst.1.isEmpty && boundaryFirst.0 == Data("ERRO".utf8))
+    }
+    func testOutputHighlightBoundaries() {
+        func compile(_ rules: [OutputHighlightRule]) -> OutputHighlightRuleSet {
+            OutputHighlightRuleSet(rules: rules)
+        }
+        func rebuild(_ segments: [OutputHighlightSegment]) -> (Data, [(String, String)]) {
+            var data = Data()
+            var highlighted: [(String, String)] = []
+            for segment in segments {
+                switch segment {
+                case .raw(let bytes):
+                    data.append(contentsOf: bytes)
+                case .highlighted(let bytes, let color):
+                    data.append(contentsOf: bytes)
+                    highlighted.append((String(decoding: bytes, as: UTF8.self), color))
+                }
+            }
+            return (data, highlighted)
+        }
+        let error = OutputHighlightRule(pattern: "ERROR", color: "Red", wholeWord: true)
+        let def = OutputHighlightRule(pattern: "def", color: "Cyan", wholeWord: true)
+        let redSet = compile([error])
+
+        // A word rendered next to SGR changes keeps its real word boundaries.
+        var transformer = OutputHighlightTransformer()
+        var input = "\u{1B}[31mERROR\u{1B}[0mS\n"
+        var result = rebuild(transformer.process(Array(input.utf8)[...], ruleSet: redSet))
+        assert(result.0 == Data(input.utf8) && result.1.isEmpty)
+        input = "\u{1B}[31mERROR\u{1B}[0m next\n"
+        result = rebuild(transformer.process(Array(input.utf8)[...], ruleSet: redSet))
+        assert(result.0 == Data(input.utf8) && result.1.map(\.0) == ["ERROR"])
+
+        // Text before an escape sequence joins the word, colour change or not.
+        var defTransformer = OutputHighlightTransformer()
+        let defSet = compile([def])
+        input = "abc\u{1B}[0mdef\n"
+        result = rebuild(defTransformer.process(Array(input.utf8)[...], ruleSet: defSet))
+        assert(result.0 == Data(input.utf8) && result.1.isEmpty)
+        input = "abc\u{1B}[0m def\n"
+        result = rebuild(defTransformer.process(Array(input.utf8)[...], ruleSet: defSet))
+        assert(result.0 == Data(input.utf8) && result.1.map(\.0) == ["def"])
+
+        // Leading boundary is carried across reads and across escape sequences.
+        var chunked = OutputHighlightTransformer()
+        let first = rebuild(chunked.process(Array("x\u{1B}".utf8)[...], ruleSet: redSet))
+        let second = rebuild(chunked.process(Array("[0mERROR\n".utf8)[...], ruleSet: redSet))
+        assert(first.1.isEmpty && second.1.isEmpty)
+        assert(first.0 + second.0 == Data("x\u{1B}[0mERROR\n".utf8))
+        var spaced = OutputHighlightTransformer()
+        let spacedFirst = rebuild(spaced.process(Array("x ".utf8)[...], ruleSet: redSet))
+        let spacedSecond = rebuild(spaced.process(Array("ERROR\n".utf8)[...], ruleSet: redSet))
+        assert(spacedFirst.1.isEmpty && spacedSecond.1.map(\.0) == ["ERROR"])
+
+        // An escape sequence split across reads is still passed through and state is kept.
+        var escapeSplit = OutputHighlightTransformer()
+        let escapeFirst = rebuild(escapeSplit.process(Array("\u{1B}[3".utf8)[...], ruleSet: redSet))
+        let escapeSecond = rebuild(escapeSplit.process(Array("1mERROR\n".utf8)[...], ruleSet: redSet))
+        assert(escapeFirst.1.isEmpty && escapeSecond.1.map(\.0) == ["ERROR"])
+        assert(escapeFirst.0 + escapeSecond.0 == Data("\u{1B}[31mERROR\n".utf8))
+
+        // OSC payload split across reads is not treated as terminal text.
+        var oscSplit = OutputHighlightTransformer()
+        let oscFirst = rebuild(oscSplit.process(Array("\u{1B}]0;ER".utf8)[...], ruleSet: redSet))
+        let oscSecond = rebuild(oscSplit.process(Array("ROR\u{07}ERROR\n".utf8)[...], ruleSet: redSet))
+        assert(oscFirst.1.isEmpty && oscSecond.1.map(\.0) == ["ERROR"])
+        assert(oscFirst.0 + oscSecond.0 == Data("\u{1B}]0;ERROR\u{07}ERROR\n".utf8))
+
+        // CAN aborts a CSI sequence, matching SwiftTerm's parser.
+        input = "\u{1B}[31\u{18}ERROR\n"
+        result = rebuild(transformer.process(Array(input.utf8)[...], ruleSet: redSet))
+        assert(result.0 == Data(input.utf8) && result.1.map(\.0) == ["ERROR"])
+
+        // A restarted escape sequence stays an escape sequence.
+        input = "\u{1B}\u{1B}[31mERROR\n"
+        result = rebuild(transformer.process(Array(input.utf8)[...], ruleSet: redSet))
+        assert(result.0 == Data(input.utf8) && result.1.map(\.0) == ["ERROR"])
+
+        // Whole words ending exactly at a read boundary are skipped conservatively.
+        var boundaryEnd = OutputHighlightTransformer()
+        let endFirst = rebuild(boundaryEnd.process(Array("ERROR".utf8)[...], ruleSet: redSet))
+        let endSecond = rebuild(boundaryEnd.process(Array(" again\n".utf8)[...], ruleSet: redSet))
+        assert(endFirst.1.isEmpty && endSecond.1.isEmpty)
+        assert(endFirst.0 + endSecond.0 == Data("ERROR again\n".utf8))
+
+        // Non-ASCII neighbours: full-width punctuation is a boundary, letters are not.
+        result = rebuild(transformer.process(Array("ERROR\u{FF1A}\n".utf8)[...], ruleSet: redSet))
+        assert(result.1.map(\.0) == ["ERROR"])
+        result = rebuild(transformer.process(Array("ERROR\u{044B}\n".utf8)[...], ruleSet: redSet))
+        assert(result.1.isEmpty)
+
+        // Earlier rules win on overlapping matches.
+        let fail = OutputHighlightRule(pattern: "FAIL", color: "Red", wholeWord: true)
+        let failed = OutputHighlightRule(pattern: "FAILED", color: "Green", wholeWord: true)
+        let prioritySet = compile([fail, failed])
+        var priorityTransformer = OutputHighlightTransformer()
+        result = rebuild(priorityTransformer.process(Array("FAILED\n".utf8)[...], ruleSet: prioritySet))
+        assert(result.1.count == 1 && result.1[0].0 == "FAILED" && result.1[0].1 == "Green")
+
+        // A very broad rule is capped instead of producing unbounded work.
+        let broad = compile([OutputHighlightRule(pattern: "a", color: "Red")])
+        var broadTransformer = OutputHighlightTransformer()
+        let broadResult = rebuild(broadTransformer.process(Array(String(repeating: "a", count: 20000).utf8)[...], ruleSet: broad))
+        assert(!broadResult.1.isEmpty && broadResult.1.count <= OutputHighlightRuleSet.maxCandidatesPerRun)
+        assert(broadResult.0 == Data(String(repeating: "a", count: 20000).utf8))
+
+        // Disabled, empty and invalid rules compile to an empty rule set.
+        assert(compile([]).isEmpty)
+        assert(compile([OutputHighlightRule(pattern: "ERROR", enabled: false)]).isEmpty)
+        assert(compile([OutputHighlightRule(pattern: "(", isRegex: true)]).isEmpty)
+        let effective = compile([OutputHighlightRule(pattern: "(", isRegex: true), error])
+        assert(effective.regexRules.isEmpty && effective.literalRules.count == 1)
+    }
+    @MainActor func testOutputHighlightForegroundOnly() {
+        let suiteName = "muty-output-highlight-tests-" + UUID().uuidString
+        guard let suite = UserDefaults(suiteName: suiteName) else { fatalError("Cannot create defaults suite") }
+        defer { suite.removePersistentDomain(forName: suiteName) }
+
+        let store = OutputHighlightStore(defaults: suite)
+        assert(store.enabled)
+        assert(!store.ruleSet.isEmpty)
+        assert(store.rules.contains { $0.pattern == "ERROR" && $0.color == "Red" })
+        assert(store.rules.contains { $0.isRegex == true && $0.color == "Magenta" })
+        assert(!store.ruleSet.regexRules.isEmpty)
+
+        suite.set(false, forKey: "outputHighlightsEnabled")
+        assert(OutputHighlightStore(defaults: suite).enabled == false)
+
+        // Rules persisted by the previous version decode unchanged.
+        let legacy = try! JSONEncoder().encode([OutputHighlightRule(pattern: "legacy", color: "Cyan", wholeWord: true)])
+        suite.set(legacy, forKey: "outputHighlightRules")
+        let migrated = OutputHighlightStore(defaults: suite)
+        assert(migrated.rules.count == 1 && migrated.rules[0].pattern == "legacy" && migrated.rules[0].isRegex == nil)
+
+        // End-to-end: the terminal buffer keeps the background/style and gets the new foreground.
+        let red = OutputHighlightRuleSet(rules: [OutputHighlightRule(pattern: "ERROR", color: "Red", wholeWord: true)])
+        var transformer = OutputHighlightTransformer()
+        let headless = HeadlessTerminal { _ in }
+        OutputHighlightApplier.feed(transformer.process(Array("ERROR tail\n".utf8)[...], ruleSet: red), currentForeground: { headless.terminal.currentAttribute.fg }, feed: { headless.terminal.feed(byteArray: $0) })
+        let line = headless.terminal.getLine(row: 0)!
+        assert(line[0].attribute.fg == .ansi256(code: 9))
+        assert(line[0].attribute.bg == .defaultColor)
+        assert(line[0].attribute.style == .none)
+        assert(line[6].attribute.fg == .defaultColor)
+
+        // A coloured background is preserved: only the foreground is rewritten.
+        var colouredBackground = OutputHighlightTransformer()
+        let third = HeadlessTerminal { _ in }
+        OutputHighlightApplier.feed(colouredBackground.process(Array("\u{1B}[44mERROR\u{1B}[0m\n".utf8)[...], ruleSet: red), currentForeground: { third.terminal.currentAttribute.fg }, feed: { third.terminal.feed(byteArray: $0) })
+        let thirdLine = third.terminal.getLine(row: 0)!
+        assert(thirdLine[0].attribute.fg == .ansi256(code: 9))
+        assert(thirdLine[0].attribute.bg == .ansi256(code: 4))
+
+        // The remote's own foreground colour is restored after the highlighted word.
+        let green = OutputHighlightRuleSet(rules: [OutputHighlightRule(pattern: "OK", color: "Green", wholeWord: true)])
+        var coloured = OutputHighlightTransformer()
+        let second = HeadlessTerminal { _ in }
+        OutputHighlightApplier.feed(coloured.process(Array("\u{1B}[32mOK then\n".utf8)[...], ruleSet: green), currentForeground: { second.terminal.currentAttribute.fg }, feed: { second.terminal.feed(byteArray: $0) })
+        let secondLine = second.terminal.getLine(row: 0)!
+        assert(secondLine[0].attribute.fg == .ansi256(code: 10))
+        assert(secondLine[1].attribute.fg == .ansi256(code: 10))
+        assert(secondLine[3].attribute.fg == .ansi256(code: 2))
+        assert(second.terminal.currentAttribute.fg == .ansi256(code: 2))
+    }
+    @MainActor func testOutputHighlightTerminalWiring() {
+        let suiteName = "muty-output-highlight-wiring-" + UUID().uuidString
+        guard let suite = UserDefaults(suiteName: suiteName) else { fatalError("Cannot create defaults suite") }
+        defer { suite.removePersistentDomain(forName: suiteName) }
+        let store = OutputHighlightStore(defaults: suite)
+        let view = ReconnectTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 400))
+        view.highlightStore = store
+
+        view.dataReceived(slice: Array("\rERROR tail\n".utf8)[...])
+        let first = view.getTerminal().getLine(row: 0)!
+        assert(first[0].attribute.fg == .ansi256(code: 9))
+        assert(first[6].attribute.fg == .defaultColor)
+
+        // Disabling through the store makes the terminal receive raw output again.
+        store.enabled = false
+        view.dataReceived(slice: Array("\rERROR\n".utf8)[...])
+        let second = view.getTerminal().getLine(row: 1)!
+        assert(second[0].attribute.fg == .defaultColor)
+
+        // Re-enabling resumes highlighting.
+        store.enabled = true
+        view.dataReceived(slice: Array("\rERROR\n".utf8)[...])
+        let third = view.getTerminal().getLine(row: 2)!
+        assert(third[0].attribute.fg == .ansi256(code: 9))
+
+        // Enabling in the middle of an OSC must not inject SGR bytes into the OSC payload.
+        store.enabled = false
+        view.dataReceived(slice: Array("\u{1B}]0;".utf8)[...])
+        store.enabled = true
+        view.dataReceived(slice: Array("ERROR\u{07}\rERROR\n".utf8)[...])
+        let fourth = view.getTerminal().getLine(row: 3)!
+        assert(fourth[0].attribute.fg == .ansi256(code: 9))
+    }
 }
 
 @main struct Runner {
@@ -806,7 +1066,11 @@ final class RegressionTests {
             ("credentials.saveAsNeverOverwrites", tests.testRepeatedSaveAsNeverOverwritesProfile),
             ("ipc.realBrokerHelperSingleUseAndCleanup", tests.testRealBrokerAndHelper),
             ("ipc.restartRevokesSocketAndCapability", tests.testBrokerRestartRevokesSocket),
-            ("keys.encryptedImportReferenceAndPermissions", tests.testManagedKeysPreserveEncryptionAndPermissions)
+            ("keys.encryptedImportReferenceAndPermissions", tests.testManagedKeysPreserveEncryptionAndPermissions),
+            ("terminal.outputHighlightRewriter", tests.testOutputHighlightRewriter),
+            ("terminal.outputHighlightForegroundOnly", tests.testOutputHighlightForegroundOnly),
+            ("terminal.outputHighlightBoundaries", tests.testOutputHighlightBoundaries),
+            ("terminal.outputHighlightWiring", tests.testOutputHighlightTerminalWiring)
         ]
         if CommandLine.arguments.dropFirst().first == "integration.blackhole" {
             try tests.testServerTermination(blackhole: true)
