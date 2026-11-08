@@ -60,6 +60,7 @@
 "Back Up…" = "Создать резервную копию…";
 "Backup complete: %ld sessions and %ld passwords saved to %@" = "Резервная копия создана: сессий — %ld, паролей — %ld, файл: %@";
 "Backup exceeds 64 MB." = "Резервная копия превышает 64 МБ.";
+"Blue" = "Синий";
 "Bulk Edit Selected Sessions…" = "Массовое редактирование выбранных сессий…";
 "Bulk Edit Sessions" = "Массовое редактирование сессий";
 "Bulk Edit Sessions…" = "Массовое редактирование сессий…";
@@ -77,6 +78,7 @@
 "Cannot inspect this key. Select an OpenSSH key; encrypted PEM may need conversion to OpenSSH first." = "Невозможно проверить этот ключ. Выберите ключ OpenSSH; зашифрованный PEM может потребовать предварительного преобразования в OpenSSH.";
 "Cannot read key fingerprint." = "Не удалось прочитать отпечаток ключа.";
 "Case-insensitive literal matches. Highlights affect display only; copied text and session logs remain unchanged." = "Совпадения литералов без учёта регистра. Подсветка влияет только на отображение; скопированный текст и журналы сессий остаются без изменений.";
+"Case-insensitive matches. Only the foreground colour of new output changes; background, copied text and session logs are untouched. Turning highlighting off affects new output only. Regular expressions are case-insensitive; invalid ones are ignored." = "Совпадения не учитывают регистр. Меняется только цвет шрифта нового вывода; фон, скопированный текст и журналы сессий не затрагиваются. Отключение подсветки влияет только на новый вывод. Регулярные выражения не учитывают регистр; некорректные игнорируются.";
 "Change Jump Host" = "Изменить промежуточный хост";
 "Change Protection…" = "Изменить защиту…";
 "Change SSH / SFTP" = "Изменить SSH / SFTP";
@@ -133,6 +135,7 @@
 "Credentials" = "Учётные данные";
 "Current button sets, commands and folder assignments will be replaced by this backup." = "Текущие наборы кнопок, команды и назначения папок будут заменены этой резервной копией.";
 "Cut" = "Вырезать";
+"Cyan" = "Голубой";
 "Dark" = "Тёмная";
 "Decrease Terminal Font Size" = "Уменьшить размер шрифта терминала";
 "Decrypting…" = "Расшифровка…";
@@ -218,6 +221,7 @@
 "For a new destination, enter a password or explicitly allow reusing the current password." = "Для нового назначения введите пароль или явно разрешите повторное использование текущего пароля.";
 "Forget Saved Password…" = "Забыть сохранённый пароль…";
 "General" = "Основные";
+"Green" = "Зелёный";
 "Hashed hosts can be found by their exact name. Removed entries are commented out and backed up; muty may ask to verify the server again." = "Хешированные хосты можно найти по точному имени. Удалённые записи закомментированы и сохранены в резервной копии; muty может снова запросить проверку сервера.";
 "Hidden files" = "Скрытые файлы";
 "Hide password" = "Скрыть пароль";
@@ -319,6 +323,7 @@
 "Lock" = "Заблокировать";
 "Locked. Unlock to access saved credentials." = "Заблокировано. Разблокируйте, чтобы получить доступ к сохранённым учётным данным.";
 "Logging session output" = "Журналирование вывода сессии";
+"Magenta" = "Пурпурный";
 "Malformed SFTP response." = "Некорректный ответ SFTP.";
 "Manage Tunnels…" = "Управление туннелями…";
 "Mark sessions with a star to add them here." = "Отметьте сессии звёздочкой, чтобы добавить их сюда.";
@@ -378,6 +383,7 @@
 "Open:" = "Открыть:";
 "OpenSSH known_hosts was not found." = "Файл OpenSSH known_hosts не найден.";
 "Option as Meta" = "Option как Meta";
+"Orange" = "Оранжевый";
 "Overlapping session and shared credential IDs." = "Пересекающиеся идентификаторы сессий и общих учётных данных.";
 "Pane %ld" = "Панель %ld";
 "Password" = "Пароль";
@@ -403,6 +409,7 @@
 "Profiles are read-only; credential references cannot be verified." = "Профили доступны только для чтения; ссылки на учётные данные невозможно проверить.";
 "Protocol" = "Протокол";
 "Provided by selected credential" = "Предоставляется выбранными учётными данными";
+"Purple" = "Фиолетовый";
 "Quick Connect" = "Быстрое подключение";
 "Quick Connect…" = "Быстрое подключение…";
 "Quit" = "Выйти";
@@ -412,6 +419,7 @@
 "Reconnect" = "Переподключить";
 "Reconnect / Restart Shell" = "Переподключить / Перезапустить оболочку";
 "Records terminal output from now on, including ANSI escape sequences." = "Записывает вывод терминала с этого момента, включая управляющие последовательности ANSI.";
+"Red" = "Красный";
 "Refresh" = "Обновить";
 "Regular expression" = "Регулярное выражение";
 "Reload the host-key file before removing entries." = "Перезагрузите файл ключа хоста перед удалением записей.";
@@ -542,6 +550,7 @@
 "Single Pane" = "Одна панель";
 "Skip" = "Пропустить";
 "Skipped" = "Пропущено";
+"Slow regular expressions are skipped when the processing time budget is exhausted." = "Медленные регулярные выражения пропускаются, когда исчерпан бюджет времени обработки.";
 "SOCKS" = "SOCKS";
 "Some cut items no longer exist. Select them again." = "Некоторые вырезанные элементы больше не существуют. Выберите их снова.";
 "Some dropped files could not be read." = "Некоторые перетащённые файлы не удалось прочитать.";
@@ -584,6 +593,7 @@
 "System Monospaced" = "Системный моноширинный";
 "Tab name" = "Имя вкладки";
 "Terminal" = "Терминал";
+"Text or regular expression" = "Текст или регулярное выражение";
 "Text Size" = "Размер текста";
 "Text to highlight" = "Текст для подсветки";
 "The destination folder no longer exists." = "Папка назначения больше не существует.";
@@ -651,4 +661,5 @@
 "Wrong master password or damaged backup." = "Неверный мастер-пароль или повреждённая резервная копия.";
 "Wrong master password or damaged password vault." = "Неверный мастер-пароль или повреждённое хранилище паролей.";
 "XML backup exceeds 50 MB." = "Резервная копия XML превышает 50 МБ.";
+"Yellow" = "Жёлтый";
 "Русский" = "Русский";
