@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct MutyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel()
+    @ObservedObject private var highlights = OutputHighlightStore.shared
     @ViewState private var showingSettings = false
     @AppStorage("showButtonBar") private var showButtonBar = true
     @AppStorage("terminalFontSize") private var fontSize = 13.0
@@ -46,10 +47,7 @@ struct MutyApp: App {
         .windowToolbarStyle(.unifiedCompact)
         .defaultSize(width: 1150, height: 740)
         .commands {
-            CommandGroup(replacing: .appSettings) {
-                Button("Settings…") { openSettings() }
-                    .keyboardShortcut(",", modifiers: .command)
-            }
+            CommandGroup(replacing: .appSettings) {}
             CommandGroup(replacing: .newItem) {
                 Button("Quick Connect…") { model.quickConnect = true }
                     .keyboardShortcut("k")
@@ -60,6 +58,9 @@ struct MutyApp: App {
                     profile.connectionType = .localShell; profile.name = "Local Shell"
                     model.connect(profile, temporary: true)
                 }.keyboardShortcut("l", modifiers: .command)
+                Divider()
+                Button("Settings…") { openSettings() }
+                    .keyboardShortcut(",", modifiers: .command)
             }
             CommandGroup(replacing: .saveItem) {
                 Button(showingSettings ? "Close Settings" : "Close Tab") {
@@ -82,6 +83,9 @@ struct MutyApp: App {
                 }.keyboardShortcut("f", modifiers: .command).disabled(showingSettings || model.selectedConnection == nil)
             }
             CommandGroup(after: .toolbar) {
+                Toggle("Highlight Output", isOn: $highlights.enabled)
+                    .keyboardShortcut("h", modifiers: [.command, .shift])
+                Divider()
                 Toggle("Button Bar", isOn: $showButtonBar)
                 Divider()
                 Button("Increase Terminal Font Size") { resizeFont(1) }.keyboardShortcut("=", modifiers: .command)

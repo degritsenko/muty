@@ -5,7 +5,6 @@ struct TerminalPane: NSViewRepresentable {
     @ObservedObject var connection: SSHConnection
     var fontSize: Double
     var selected: Bool
-    var visible = true
 
     final class Coordinator { var selected = false }
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -21,12 +20,6 @@ struct TerminalPane: NSViewRepresentable {
             terminal.topAnchor.constraint(equalTo: container.topAnchor),
             terminal.bottomAnchor.constraint(equalTo: container.bottomAnchor)
         ])
-        let overlay = OutputHighlightOverlay(); overlay.terminal = terminal; overlay.wantsLayer = true
-        overlay.translatesAutoresizingMaskIntoConstraints = false; container.addSubview(overlay)
-        NSLayoutConstraint.activate([
-            overlay.leadingAnchor.constraint(equalTo: terminal.leadingAnchor), overlay.trailingAnchor.constraint(equalTo: terminal.trailingAnchor),
-            overlay.topAnchor.constraint(equalTo: terminal.topAnchor), overlay.bottomAnchor.constraint(equalTo: terminal.bottomAnchor)
-        ])
         connection.setFontSize(fontSize)
         DispatchQueue.main.async { connection.start() }
         return container
@@ -34,7 +27,6 @@ struct TerminalPane: NSViewRepresentable {
 
     func updateNSView(_ view: NSView, context: Context) {
         connection.setFontSize(fontSize)
-        connection.terminal.highlightVisible = visible
         let becameSelected = selected && !context.coordinator.selected
         context.coordinator.selected = selected
         if becameSelected {

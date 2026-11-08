@@ -31,7 +31,7 @@ struct TerminalPaneLayout {
 
 struct TerminalWorkspace<Pane: View>: View {
     @ObservedObject var model: AppModel
-    let pane: (SSHConnection, Bool, Int?) -> Pane
+    let pane: (SSHConnection, Int?) -> Pane
     @ViewState private var columnFraction: CGFloat = 0.5
     @ViewState private var rowFraction: CGFloat = 0.5
     var body: some View {
@@ -42,7 +42,7 @@ struct TerminalWorkspace<Pane: View>: View {
                 ForEach(model.tabs) { connection in
                     let index = slots.firstIndex(where: { $0 == connection.id })
                     let frame = layout.frames[min(index ?? 0, layout.frames.count - 1)]
-                    pane(connection, index != nil, model.splitMode == "none" ? nil : index)
+                    pane(connection, model.splitMode == "none" ? nil : index)
                         .frame(width: frame.width, height: frame.height)
                         .offset(x: frame.minX, y: frame.minY)
                         .opacity(index != nil ? 1 : 0).allowsHitTesting(index != nil).accessibilityHidden(index == nil)
