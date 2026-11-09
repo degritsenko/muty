@@ -2,6 +2,12 @@
 
 All notable public changes will be documented in this file. Group release notes under Added, Fixed, and Changed.
 
+## Unreleased
+
+### Added
+
+- Choose from 15 built-in terminal color schemes, applied to open and new sessions.
+
 ## 0.7.9
 
 ### Added

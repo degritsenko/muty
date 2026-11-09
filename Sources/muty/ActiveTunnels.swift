@@ -90,7 +90,11 @@ struct ActiveTunnelsView: View {
                         Button("Edit…") { editing = entry.rule }
                         Button("Save to Session") { var rule = entry.rule; rule.enabled = entry.active; save(rule) }.disabled(model.readOnly || !model.profiles.contains(where: { $0.id == profile.id }))
                     }
-                    Text(entry.rule.bindAddress + ":" + String(entry.rule.listenPort) + " → " + (entry.rule.kind == .socks ? "SOCKS" : entry.rule.destinationHost + ":" + String(entry.rule.destinationPort))).font(.system(size: 11, design: .monospaced))
+                    let destination = entry.rule.kind == .socks
+                        ? "SOCKS"
+                        : "\(entry.rule.destinationHost):\(entry.rule.destinationPort)"
+                    let address = "\(entry.rule.bindAddress):\(entry.rule.listenPort) → \(destination)"
+                    Text(address).font(.system(size: 11, design: .monospaced))
                     Text(entry.state).font(.caption).foregroundStyle(entry.active ? .green : .secondary).textSelection(.enabled)
                 }.padding(.vertical, 4).disabled(manager.busy || manager.ended)
             }

@@ -169,7 +169,7 @@ private struct GeneralSettingsView: View {
 private struct TerminalSettingsView: View {
     @AppStorage("terminalFontSize") private var size = 13.0
     @AppStorage("terminalFontName") private var font = ""
-    @AppStorage("terminalTheme") private var theme = "Dark"
+    @AppStorage("terminalTheme") private var theme = TerminalColorScheme.mutyDark.rawValue
     @AppStorage("terminalScrollback") private var scrollback = 10000.0
     @AppStorage("optionAsMetaKey") private var meta = true
     @AppStorage("confirmMultilinePaste") private var confirmPaste = true
@@ -181,7 +181,18 @@ private struct TerminalSettingsView: View {
             }
             Slider(value: $size, in: 9...30, step: 1) { Text("Font size") }
             Text("\(Int(size.isFinite ? max(9, min(30, size)) : 13)) pt")
-            Picker("Theme", selection: $theme) { Text("Dark").tag("Dark"); Text("Light").tag("Light") }
+            Picker("Color scheme", selection: $theme) {
+                ForEach(TerminalColorScheme.allCases) { scheme in
+                    HStack(spacing: 8) {
+                        Text(scheme.name)
+                        HStack(spacing: 2) {
+                            ForEach(Array(scheme.previewColors.enumerated()), id: \.offset) { item in
+                                RoundedRectangle(cornerRadius: 2).fill(Color(nsColor: item.element)).frame(width: 9, height: 9)
+                            }
+                        }
+                    }.tag(scheme.rawValue)
+                }
+            }
             Slider(value: $scrollback, in: 1000...50000, step: 1000) { Text("Scrollback") }
             Text("\(Int(scrollback.isFinite ? max(1000, min(50000, scrollback)) : 10000)) lines")
             Toggle("Confirm multi-line paste", isOn: $confirmPaste)
@@ -189,6 +200,10 @@ private struct TerminalSettingsView: View {
             Text("Sends Alt/Meta shortcuts to the shell. Turn off to type macOS Option characters.")
                 .font(.caption).foregroundStyle(.secondary)
         }.formStyle(.grouped).padding()
+            .onAppear {
+                let resolved = TerminalColorScheme.resolve(theme).rawValue
+                if resolved != theme { theme = resolved }
+            }
     }
 }
 
