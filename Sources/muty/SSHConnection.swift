@@ -72,8 +72,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
             catch { self.stopLogging(); self.error = "Logging stopped: " + error.localizedDescription }
         }
         terminal.optionAsMetaKey = UserDefaults.standard.object(forKey: "optionAsMetaKey") as? Bool ?? true
-        terminal.nativeBackgroundColor = NSColor(calibratedRed: 0.055, green: 0.065, blue: 0.085, alpha: 1)
-        terminal.nativeForegroundColor = NSColor(calibratedWhite: 0.9, alpha: 1)
+        applyColorScheme(TerminalColorScheme.resolve(UserDefaults.standard.string(forKey: "terminalTheme") ?? TerminalColorScheme.mutyDark.rawValue))
         terminal.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
     }
 
@@ -377,13 +376,13 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     }
 
     func setTheme(_ theme: String) {
-        if theme == "Light" {
-            terminal.nativeBackgroundColor = NSColor(calibratedWhite: 0.98, alpha: 1)
-            terminal.nativeForegroundColor = NSColor(calibratedWhite: 0.08, alpha: 1)
-        } else {
-            terminal.nativeBackgroundColor = NSColor(calibratedRed: 0.055, green: 0.065, blue: 0.085, alpha: 1)
-            terminal.nativeForegroundColor = NSColor(calibratedWhite: 0.9, alpha: 1)
-        }
+        applyColorScheme(TerminalColorScheme.resolve(theme))
+    }
+
+    private func applyColorScheme(_ scheme: TerminalColorScheme) {
+        terminal.nativeBackgroundColor = scheme.background
+        terminal.nativeForegroundColor = scheme.foreground
+        terminal.installColors(scheme.ansiColors)
     }
 
     func setOptionAsMeta(_ enabled: Bool) {

@@ -29,6 +29,14 @@ private final class PTYObserver: NSObject, LocalProcessTerminalViewDelegate {
 }
 
 final class RegressionTests {
+    func testTerminalColorSchemeCatalog() {
+        assert(TerminalColorScheme.allCases.count == 15)
+        assert(TerminalColorScheme.allCases.allSatisfy { $0.ansiColors.count == 16 })
+        assert(TerminalColorScheme.resolve("Dark") == .mutyDark)
+        assert(TerminalColorScheme.resolve("Light") == .solarizedLight)
+        assert(TerminalColorScheme.resolve("unknown") == .mutyDark)
+    }
+
     func testSavedSessionSearch() {
         var first = SessionProfile(); first.name = "ASA edge"; first.host = "10.0.0.1"; first.folder = "Cisco/KOR"
         var second = SessionProfile(); second.name = "Backup"; second.host = "asa-backup.invalid"
@@ -1109,6 +1117,7 @@ final class RegressionTests {
             return
         }
         let cases: [(String, () throws -> Void)] = [
+            ("terminal.colorSchemeCatalog", tests.testTerminalColorSchemeCatalog),
             ("sessions.savedSessionSearch", tests.testSavedSessionSearch),
             ("ui.editorEscapeAndCompletedTransfers", tests.testEditorEscapeAndCompletedTransfers),
             ("hosts.independentStorageAndImport", tests.testIndependentKnownHosts),

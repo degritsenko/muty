@@ -26,7 +26,7 @@ struct ContentView: View {
     @AppStorage("terminalFontSize") private var fontSize = 13.0
     @AppStorage("terminalScrollback") private var scrollback = 10000.0
     @AppStorage("optionAsMetaKey") private var optionAsMetaKey = true
-    @AppStorage("terminalTheme") private var theme = "Dark"
+    @AppStorage("terminalTheme") private var theme = TerminalColorScheme.mutyDark.rawValue
     @AppStorage("terminalFontName") private var fontName = ""
 
     private var filtered: [SessionProfile] {
