@@ -16,17 +16,21 @@ Native SSH and SFTP client for macOS. Built with SwiftUI and SwiftTerm, powered 
 
 ## Sessions and remote files
 
-Use **Find saved session** next to the terminal search field to find saved sessions by name or host address. Choose a suggestion with the arrow keys and press Enter, or click it, to open a new connection. Folder names are shown for context but are not included in the search. The Session Manager uses the same search rules.
+Use **Find saved session** next to the terminal search field to find saved sessions by name or host address. Choose a suggestion with the arrow keys and press Enter, or click it, to open a new connection. Folder names are shown for context but are not included in the search. The Session Manager uses the same search rules and displays matching sessions in their folder tree. Pin it to keep it open alongside the terminal; unpinning hides it.
 
 ![Saved-session search suggestions alongside terminal search](docs/session-search.png)
 
-Remote files open as tabs in one editor window per SFTP session. Long lines wrap to fit the window; Tab inserts spaces in YAML files. Escape closes the current editor or viewer tab, with a confirmation for unsaved changes. If a file has changed on the server, saving is refused and your unsaved text stays in the open tab.
+Remote files open as tabs in one editor window per SFTP session, with the server and file path displayed. Long lines wrap to fit the window; Tab inserts spaces in YAML files. Escape closes the current editor or viewer tab, with a confirmation for unsaved changes. If a file has changed on the server, saving is refused and your unsaved text stays in the open tab.
 
-Completed SFTP transfers collapse to a summary. Use **Show** to reopen the list or **Clear** to remove completed transfers. The list opens automatically when a transfer fails. The button-set selector is on the right of the Button Bar, after the **+** button.
+Completed SFTP transfers collapse to a summary. Use **Show** to reopen the list or **Clear** to remove completed, failed and cancelled transfers. **Pause** stops the current transfer between data blocks, **Resume** continues it, and **Cancel** interrupts it. Cancelled jobs can be retried with **Retry Failed**. You can hide the list during copying. Hidden files are always visible. The list opens automatically when a transfer fails. The button-set selector is on the right of the Button Bar, after the **+** button.
 
 SSH/SFTP switching sits on the right of the compact session-tab row. Use ⌘1–9 to select a numbered session tab or Ctrl+Tab and Ctrl+Shift+Tab to cycle through tabs. The optional status bar shows the connection state, destination, negotiated SSH cipher and jump host; use **View → Status Bar** to show or hide it.
 
 Open **File → Settings…** (⌘,) to configure muty. Quick Connect can use either a key from the library or a private-key file selected for that connection only. The source file is not copied or modified, and its permissions are checked before connecting.
+
+In **Settings → General**, search for a startup session or choose what to open when no tabs are restored: an empty window, Local Shell or Quick Connect. Startup sessions connect automatically; other restored SSH tabs wait for Enter or Reconnect.
+
+Use **Import & Backup → Back Up… / Restore Backup…** for portable backups. Backup filenames include the local date. Operation logs remain open after completion, and restore confirmation summarizes the sessions, folders and passwords that will change. In **Settings → Credentials**, use the eye button in master-password dialogs to check your input, or **Disable Master Password…** to switch to automatic unlock.
 
 ## Download
 

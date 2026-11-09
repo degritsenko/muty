@@ -62,21 +62,21 @@ struct RemoteTextSnapshot: Equatable {
     var onClose: (() -> Void)?
     private var dirty: Bool { editor.string != snapshot.text }
 
-    init(path: String, snapshot: RemoteTextSnapshot, readOnly: Bool, tabGroupID: UUID,
+    init(path: String, endpoint: String? = nil, snapshot: RemoteTextSnapshot, readOnly: Bool, tabGroupID: UUID,
          save: @escaping (Data, RemoteTextSnapshot) async throws -> RemoteTextSnapshot) {
         self.snapshot = snapshot; self.readOnly = readOnly; self.saveDocument = save
         usesYAMLIndentation = ["yaml", "yml"].contains((path as NSString).pathExtension.lowercased())
         let window = RemoteEditorWindow(contentRect: NSRect(x: 0, y: 0, width: 850, height: 580),
                                         styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         super.init(window: window)
-        window.title = (readOnly ? "View — " : "Edit — ") + (path as NSString).lastPathComponent
+        window.title = (readOnly ? "View — " : "Edit — ") + (path as NSString).lastPathComponent + (endpoint.map { " — " + $0 } ?? "")
         window.tabbingIdentifier = "muty.sftp.editor." + tabGroupID.uuidString
         window.tabbingMode = .preferred
         window.minSize = NSSize(width: 500, height: 320); window.delegate = self
         window.isReleasedWhenClosed = false
         window.saveAction = { [weak self] in self?.save() }
         window.findAction = { [weak self] in self?.findText() }
-        let pathLabel = NSTextField(wrappingLabelWithString: path)
+        let pathLabel = NSTextField(wrappingLabelWithString: (endpoint.map { $0 + " · " } ?? "") + path)
         pathLabel.isSelectable = true; pathLabel.font = .systemFont(ofSize: 12); pathLabel.lineBreakMode = .byTruncatingMiddle
         let scroll = NSScrollView(); scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder

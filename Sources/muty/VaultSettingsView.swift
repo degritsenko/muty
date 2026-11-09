@@ -57,10 +57,19 @@ struct CredentialsSettingsView: View {
                     Button(vault.needsSetup ? "Set Up…" : "Unlock…") { action { try vault.ensureAvailable() } }
                 } else {
                     Label(vault.isProtected ? "Unlocked" : "Automatic unlock", systemImage: "lock.open")
-                        .font(.caption).foregroundStyle(vault.isProtected ? Color.secondary : Color.orange)
+                        .font(.body).foregroundStyle(vault.isProtected ? Color.secondary : Color.orange)
                     Menu {
-                        Button("Change Protection…") { _ = vault.showAccessDialog(mode: .change) }
-                        if vault.isProtected { Button("Lock") { model.lockPasswordStorage() } }
+                        Button("Change Master Password…") { _ = vault.showAccessDialog(mode: .change) }
+                        if vault.isProtected {
+                            Button("Disable Master Password…") {
+                                guard model.confirm("Disable Master Password?",
+                                    text: "Saved passwords will remain available with automatic unlock. Anyone who copies the vault file will be able to recover them.",
+                                    action: "Disable") else { return }
+                                action { try vault.changeProtection(masterPassword: nil) }
+                            }.disabled(model.readOnly)
+                            Divider()
+                            Button("Lock") { model.lockPasswordStorage() }
+                        }
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }.menuStyle(.borderlessButton).fixedSize()

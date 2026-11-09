@@ -139,7 +139,18 @@ final class AppModel: ObservableObject {
         guard !readOnly,
               let value = UserDefaults.standard.string(forKey: "startupSessionID"),
               let id = UUID(uuidString: value),
-              let profile = profiles.first(where: { $0.id == id }) else { return }
+              let profile = profiles.first(where: { $0.id == id }) else {
+            guard !readOnly, tabs.isEmpty else { return }
+            switch UserDefaults.standard.string(forKey: "startupEmptyAction") {
+            case "localShell":
+                var profile = SessionProfile()
+                profile.connectionType = .localShell; profile.name = "Local Shell"
+                connect(profile, temporary: true)
+            case "quickConnect": quickConnect = true
+            default: break
+            }
+            return
+        }
         if let tab = tabs.first(where: { $0.profile.id == id }) {
             if tab.running { selectedTab = tab.id }
             else { reconnect(tab) }
@@ -240,12 +251,16 @@ final class AppModel: ObservableObject {
         tab.tabName = name; persistWorkspace()
     }
 
-    func makeFullBackup(includePasswords: Bool = true) async throws -> FullBackup {
+    func makeFullBackup(includePasswords: Bool = true, progress: ((String) -> Void)? = nil) async throws -> FullBackup {
+        progress?("Reading sessions and folders…")
+        await Task.yield()
         if !includePasswords {
             let configuration = ConfigurationBackup(sessions: profiles.map { profile in
                 let key = keyLibrary.keys.first { $0.id == profile.keyID }
                 return PortableSession(profile, keyName: key?.name, keyFingerprint: key?.fingerprint)
             }, folders: configurationFolders, buttonBar: try SendStringButtonStore.shared.snapshot())
+            for profile in profiles { progress?("Exporting session: " + profile.name) }
+            progress?("Exporting \(configuration.folders.count) folders and Button Bar.")
             return FullBackup(configuration: configuration, passwords: [])
         }
         try preparePasswordStorage()
@@ -256,27 +271,40 @@ final class AppModel: ObservableObject {
             let key = keyLibrary.keys.first { $0.id == profile.keyID }
             return PortableSession(profile, keyName: key?.name, keyFingerprint: key?.fingerprint, includeCredentialLink: true)
         }, folders: configurationFolders, buttonBar: try SendStringButtonStore.shared.snapshot())
+        for profile in snapshot { progress?("Exporting session: " + profile.name) }
+        progress?("Exporting \(configuration.folders.count) folders and Button Bar.")
+        await Task.yield()
         var passwords: [BackupPassword] = []
         let saved = snapshot.filter { $0.connectionType == .ssh && $0.authentication == .password && $0.credentialID == nil && $0.savePassword }
         for (index, profile) in saved.enumerated() {
             try Task.checkCancellation()
             backupProgress = "Reading password \(index + 1) of \(saved.count): \(profile.name)"
+            progress?("Exporting password \(index + 1)/\(saved.count): " + [profile.folder, profile.name].compactMap { $0 }.joined(separator: "/"))
+            await Task.yield()
             guard let secret = try passwordStore.read(id: profile.id) else { throw MutyError("Saved password is missing for " + profile.name) }
             passwords.append(BackupPassword(sessionID: profile.id, password: secret))
         }
         try Task.checkCancellation()
-        return FullBackup(configuration: configuration, passwords: passwords, credentials: try vault.snapshot().credentials)
+        let credentials = try vault.snapshot().credentials
+        for credential in credentials { progress?("Exporting shared credential: " + credential.title) }
+        return FullBackup(configuration: configuration, passwords: passwords, credentials: credentials)
     }
 
-    func importConfiguration(_ backup: ConfigurationBackup, selected: Set<UUID>, keyBindings: [UUID: UUID], restorePasswords: Bool = false, replacePasswords: Bool = false, linkExistingCredentials: Bool = false, restoreButtonBar: Bool = false) throws {
+    @discardableResult
+    func importConfiguration(_ backup: ConfigurationBackup, selected: Set<UUID>, keyBindings: [UUID: UUID], restorePasswords: Bool = false, replacePasswords: Bool = false, linkExistingCredentials: Bool = false, restoreButtonBar: Bool = false, progress: ((String) -> Void)? = nil, previewOnly: Bool = false) throws -> String {
         guard !readOnly else { throw MutyError("Profiles are read-only.") }
+        progress?("Validating backup…")
         _ = try backup.validated()
+        var credentialResults: [String] = []
         var prepared = backup
         let hasSecrets = restorePasswords && (!backup.restoredPasswords.isEmpty || !backup.restoredCredentials.isEmpty)
         var before: VaultDocument?
         var candidate: VaultDocument?
         var mapping: [UUID: UUID] = [:]
         var processedShared = 0
+        var addedPasswords = 0
+        var replacedPasswords = 0
+        var keptPasswords = 0
         if hasSecrets {
             try vault.ensureAvailable()
             before = try vault.snapshot(); candidate = before
@@ -288,10 +316,16 @@ final class AppModel: ObservableObject {
                 if let existing = candidate!.credentials.first(where: { $0.id == incoming.id || $0.title.caseInsensitiveCompare(incoming.title) == .orderedSame }) {
                     guard existing.username == incoming.username else { throw MutyError("Shared credential conflict: " + incoming.title + ". Username differs; rename or remove the existing credential first.") }
                     mapping[incoming.id] = existing.id
+                    if replacePasswords { replacedPasswords += 1 } else { keptPasswords += 1 }
                     if replacePasswords, let index = candidate!.credentials.firstIndex(where: { $0.id == existing.id }) {
                         var value = incoming; value.id = existing.id; candidate!.credentials[index] = value
                     }
-                } else { candidate!.credentials.append(incoming); mapping[incoming.id] = incoming.id }
+                    credentialResults.append(replacePasswords ? "Updated shared credential: " + incoming.title : "Kept shared credential: " + incoming.title)
+                } else {
+                    addedPasswords += 1
+                    candidate!.credentials.append(incoming); mapping[incoming.id] = incoming.id
+                    credentialResults.append("Added shared credential: " + incoming.title)
+                }
             }
         }
         for index in prepared.sessions.indices {
@@ -334,19 +368,39 @@ final class AppModel: ObservableObject {
                 }
                 let id = updated[index].id.uuidString
                 if linkExistingCredentials && replacePasswords { updated[index].credentialID = nil }
-                if candidate!.sessionPasswords[id] == nil || replacePasswords { candidate!.sessionPasswords[id] = secret; restored += 1 }
+                if candidate!.sessionPasswords[id] == nil || replacePasswords {
+                    if candidate!.sessionPasswords[id] == nil { addedPasswords += 1 }
+                    else { replacedPasswords += 1 }
+                    candidate!.sessionPasswords[id] = secret; restored += 1
+                } else { keptPasswords += 1 }
                 updated[index].savePassword = true
             }
         }
+        let passwordSummary = "\(addedPasswords) missing passwords will be restored. \(replacedPasswords) existing passwords will be replaced. \(keptPasswords) existing passwords will be kept. Counts include session passwords and shared credentials."
         let folders = Array(Set(emptyFolders + backup.folders.compactMap(SessionProfile.canonicalFolder))).sorted()
+        let addedFolderCount = Set(folders).subtracting(Set(configurationFolders)).count
         let incomingButtonBar = restoreButtonBar ? backup.buttonBar : nil
+        var summaryLines = [
+            "Sessions: \(plan.profiles.count) will be added; \(plan.existingIDs.count) existing sessions will be kept.",
+            "Folders: \(addedFolderCount) will be added."
+        ]
+        if hasSecrets {
+            summaryLines.append("Passwords: \(addedPasswords) will be added; \(replacedPasswords) replaced; \(keptPasswords) kept.")
+            summaryLines.append("Password counts include session passwords and shared credentials.")
+        }
+        if incomingButtonBar != nil {
+            summaryLines.append("Button Bar: current sets, commands and folder assignments will be replaced.")
+        }
+        if previewOnly { return summaryLines.joined(separator: "\n\n") }
         let previousButtonBar = incomingButtonBar.map { _ in SendStringButtonStore.shared.checkpoint() }
+        progress?("Saving restored configuration and selected credentials…")
         if let candidate { try vault.replace(candidate) }
         do {
             if let incomingButtonBar { try SendStringButtonStore.shared.restore(incomingButtonBar) }
             try store.save(updated, folders: folders)
         }
         catch {
+            progress?("Save failed. Rolling back changes…")
             if let previousButtonBar { SendStringButtonStore.shared.rollback(previousButtonBar) }
             if let before {
                 do { try vault.replace(before) }
@@ -356,7 +410,18 @@ final class AppModel: ObservableObject {
         }
         if hasSecrets { tabs.forEach { $0.revokeAuthentication() } }
         profiles = updated; emptyFolders = folders
-        operationStatus = "Import complete: \(plan.profiles.count) sessions added, \(restored) session passwords and \(processedShared) shared credentials processed."
+        for profile in plan.profiles { progress?("Added session: " + profile.name) }
+        for entry in backup.sessions where selected.contains(entry.id) && plan.existingIDs.contains(entry.id) {
+            progress?("Kept existing session: " + entry.name)
+        }
+        for result in credentialResults { progress?(result) }
+        progress?("Restored \(restored) session passwords; existing passwords \(replacePasswords ? "may be replaced" : "kept").")
+        progress?("Added \(addedFolderCount) folders.")
+        if incomingButtonBar != nil { progress?("Replaced Button Bar.") }
+        let summary = "Import complete: \(plan.profiles.count) sessions added, \(restored) session passwords and \(processedShared) shared credentials processed."
+        if let progress { progress(summary) }
+        else { operationStatus = summary }
+        return passwordSummary
     }
 
     func importSessions(_ imported: [SessionProfile], folders: [String]) throws {
@@ -846,8 +911,12 @@ final class AppModel: ObservableObject {
         } catch { errorMessage = error.localizedDescription; return false }
     }
 
+    private(set) var deletingSessionItems = false
+
     func deleteSelectedItems(_ rows: Set<SessionRowID>) {
         guard !readOnly else { return }
+        deletingSessionItems = true
+        defer { deletingSessionItems = false }
         let selectedIDs = Set(rows.compactMap(\.profileID))
         let folderRows = rows.filter { $0.location == .folder }
         let includesRoot = folderRows.contains { $0.folderPath == nil }
@@ -914,6 +983,8 @@ final class AppModel: ObservableObject {
     }
 
     func delete(_ p: SessionProfile) {
+        deletingSessionItems = true
+        defer { deletingSessionItems = false }
         let dependent = profiles.filter { $0.jumpHostID == p.id }
         guard dependent.isEmpty else {
             errorMessage = "This jump host is used by: " + dependent.map(\.name).joined(separator: ", ") + ". Change Connect via in these sessions first."

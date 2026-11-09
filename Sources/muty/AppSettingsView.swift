@@ -57,11 +57,11 @@ struct AppSettingsView: View {
 
     private enum Tab: String, CaseIterable {
         case general = "General"
-        case highlights = "Syntax Highlighting"
         case terminal = "Terminal"
+        case credentials = "Credentials"
         case keys = "SSH Keys"
         case hostKeys = "Host Keys"
-        case credentials = "Credentials"
+        case highlights = "Syntax Highlighting"
 
         var icon: String {
             switch self {
@@ -113,15 +113,44 @@ private struct GeneralSettingsView: View {
     @ObservedObject var model: AppModel
     @AppStorage("restoreTabsOnLaunch") private var restoreTabs = false
     @AppStorage("startupSessionID") private var startupSessionID = ""
+    @AppStorage("startupEmptyAction") private var startupEmptyAction = "empty"
+    @ViewState private var choosingStartup = false
     var body: some View {
         Form {
-            Picker("Startup session", selection: $startupSessionID) {
-                Text("None").tag("")
-                ForEach(model.profiles.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) { profile in
-                    Text(profile.folder.map { $0 + "/" + profile.name } ?? profile.name).tag(profile.id.uuidString)
+            LabeledContent("Startup session") {
+                if choosingStartup {
+                    HStack(spacing: 6) {
+                        SavedSessionSearchField(model: model, onSelect: { profile in
+                            startupSessionID = profile.id.uuidString
+                            choosingStartup = false
+                        }, focusOnAppear: true)
+                            .frame(width: 250, height: 24)
+                        Button {
+                            startupSessionID = ""
+                            choosingStartup = false
+                        } label: { Text("None") }.help("Clear startup session")
+                        Button { choosingStartup = false } label: {
+                            Image(systemName: "xmark")
+                        }.buttonStyle(.plain).help("Cancel selection")
+                    }
+                } else {
+                    Button { choosingStartup = true } label: {
+                        HStack {
+                            Text(model.profiles.first { $0.id.uuidString == startupSessionID }?.name ?? "None")
+                                .lineLimit(1)
+                            Image(systemName: "chevron.up.chevron.down").font(.caption)
+                        }
+                    }
                 }
             }
             Text("Automatically connects the selected session when muty launches.")
+                .font(.caption).foregroundStyle(.secondary)
+            Picker("When no tabs are restored", selection: $startupEmptyAction) {
+                Text("Empty window").tag("empty")
+                Text("Local Shell").tag("localShell")
+                Text("Quick Connect").tag("quickConnect")
+            }
+            Text("Used when no startup session is selected and no saved tabs were restored.")
                 .font(.caption).foregroundStyle(.secondary)
             Toggle("Restore tabs on launch", isOn: $restoreTabs)
             Text("Restores saved SSH and Local Shell tabs, their names and order. The startup session connects automatically. For other restored tabs, press Enter or choose Reconnect. Temporary tabs, SFTP browser state and terminal output are excluded.")
@@ -173,8 +202,8 @@ private struct KeyLibraryView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("SSH Keys").font(.title2.bold()); Spacer()
-                Button("Use Existing File…") { add(copy: false) }
-                Button("Import…") { add(copy: true) }
+                Button("Link Key File…") { add(copy: false) }
+                Button("Import Key Copy…") { add(copy: true) }
             }
             if library.busy { ProgressView("Inspecting SSH key…").controlSize(.small) }
             List(selection: $selected) {

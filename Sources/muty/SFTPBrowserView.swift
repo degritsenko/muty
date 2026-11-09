@@ -11,9 +11,9 @@ struct SFTPBrowserView: View {
                 SFTPFilePane(browser: browser, remote: true, title: "Remote · " + endpoint)
             }
             SFTPTransfersView(queue: browser.transferQueue, browser: browser)
+            if browser.busy || browser.disconnected {
             Divider()
             HStack(spacing: 10) {
-                Toggle("Hidden files", isOn: $browser.showHidden).controlSize(.small)
                 if browser.disconnected { Text("SSH connection ended").foregroundStyle(.secondary) }
                 else if browser.busy {
                     if let progress = browser.progress {
@@ -26,7 +26,8 @@ struct SFTPBrowserView: View {
                     Spacer(minLength: 4)
                     Button("Cancel") { browser.cancel() }
                 } else { Text(browser.status).foregroundStyle(.secondary); Spacer(minLength: 0) }
-            }.font(.system(size: 11)).padding(.horizontal, 10).frame(height: 34)
+            }.font(.system(size: 11)).controlSize(.small).padding(.horizontal, 8).frame(height: 24)
+            }
             if let error = browser.error {
                 HStack {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)

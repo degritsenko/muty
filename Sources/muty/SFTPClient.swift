@@ -82,7 +82,7 @@ private struct SFTPReader {
 // and process lifetime only. No SSH credentials or shell commands are used here.
 final class SFTPClient: @unchecked Sendable {
     private let queue = DispatchQueue(label: "muty.sftp.channel", qos: .userInitiated)
-    private let lock = NSLock()
+    private let lock = NSCondition()
     private let executable: URL
     private let arguments: [String]
     private var process: Process?
@@ -90,6 +90,7 @@ final class SFTPClient: @unchecked Sendable {
     private var output: FileHandle?
     private var initiated = false
     private var serial: UInt32 = 0
+    private var paused = false
     private var cancelled = false
     private var closed = false
     private var busy = false
@@ -118,7 +119,7 @@ final class SFTPClient: @unchecked Sendable {
         }
     }
     func cancel() {
-        lock.lock(); cancelled = true; let token = generation; lock.unlock()
+        lock.lock(); cancelled = true; paused = false; lock.broadcast(); let token = generation; lock.unlock()
         // Healthy transfers stop cooperatively and remove their staged files.
         // A stalled network read gets its own mux client killed, never the master.
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) { [weak self] in
@@ -130,13 +131,22 @@ final class SFTPClient: @unchecked Sendable {
         }
     }
     func shutdown() {
-        lock.lock(); closed = true; cancelled = true; let pid = process?.processIdentifier; lock.unlock()
+        lock.lock(); closed = true; cancelled = true; paused = false; lock.broadcast(); let pid = process?.processIdentifier; lock.unlock()
         if let pid, pid > 0 { _ = kill(pid, SIGTERM) }
         queue.async { [self] in disconnectProcess() }
     }
     deinit { if let process, process.isRunning { process.terminate() } }
+    func setPaused(_ value: Bool) {
+        lock.lock()
+        paused = value
+        if !value { lock.broadcast() }
+        lock.unlock()
+    }
     func checkCancellation() throws {
-        lock.lock(); let stop = cancelled || closed; lock.unlock()
+        lock.lock()
+        while paused && !cancelled && !closed { lock.wait() }
+        let stop = cancelled || closed
+        lock.unlock()
         if stop { throw CancellationError() }
     }
     private func connect() throws {

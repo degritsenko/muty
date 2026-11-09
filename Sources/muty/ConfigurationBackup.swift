@@ -8,6 +8,7 @@ struct ConfigurationBackup: Codable, Identifiable {
     var folders: [String]
     var buttonBar: ButtonBarDocument? = nil
     // Transient credentials: never encoded by configuration-only export.
+    var sourcePath: String? = nil
     var restoredPasswords: [UUID: String] = [:]
     var restoredCredentials: [SavedCredential] = []
     private enum CodingKeys: String, CodingKey { case format, version, sessions, folders, buttonBar }

@@ -46,13 +46,17 @@ import AppKit
     private let protected = NSButton(checkboxWithTitle: "Use a master password", target: nil, action: nil)
     private let password = NSSecureTextField()
     private let confirmation = NSSecureTextField()
+    private let visiblePassword = NSTextField()
+    private let visibleConfirmation = NSTextField()
+    private let reveal = NSButton()
+    private var showingPassword = false
     private let save = NSButton()
     private var hint: NSTextField!
     private var error: NSTextField!
     init(vault: VaultStore, mode: VaultAccessMode) {
         self.vault = vault; self.mode = mode
         super.init(title: "Password Storage", width: 450, height: 300)
-        let title = label(mode == .unlock ? "Unlock Password Storage" : mode == .setup ? "Set Up Password Storage" : "Change Password Protection", y: 254, width: 410, height: 28)
+        let title = label(mode == .unlock ? "Unlock Password Storage" : mode == .setup ? "Set Up Password Storage" : "Change Master Password", y: 254, width: 410, height: 28)
         title.font = .systemFont(ofSize: 18, weight: .semibold)
         protected.frame = NSRect(x: 20, y: 220, width: 410, height: 22)
         protected.state = .on; protected.target = self; protected.action = #selector(refresh(_:))
@@ -62,6 +66,18 @@ import AppKit
         confirmation.frame = NSRect(x: 20, y: 150, width: 410, height: 26)
         confirmation.placeholderString = "Confirm master password"; confirmation.delegate = self
         contentView?.addSubview(password); contentView?.addSubview(confirmation)
+        password.frame.size.width = 374
+        confirmation.frame.size.width = 374
+        visiblePassword.frame = password.frame
+        visibleConfirmation.frame = confirmation.frame
+        visiblePassword.placeholderString = password.placeholderString
+        visibleConfirmation.placeholderString = confirmation.placeholderString
+        visiblePassword.delegate = self; visibleConfirmation.delegate = self
+        contentView?.addSubview(visiblePassword); contentView?.addSubview(visibleConfirmation)
+        reveal.frame = NSRect(x: 398, y: 184, width: 32, height: 26)
+        reveal.bezelStyle = .rounded
+        reveal.target = self; reveal.action = #selector(togglePassword(_:))
+        contentView?.addSubview(reveal)
         hint = label("", y: 100, width: 410, height: 38); hint.font = .systemFont(ofSize: 12); hint.textColor = .secondaryLabelColor
         error = label("", y: 48, width: 410, height: 44); error.font = .systemFont(ofSize: 12); error.textColor = .systemRed
         let cancel = cancelButton(x: 240)
@@ -78,13 +94,46 @@ import AppKit
         refresh(nil)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-    func clearSecrets() { password.stringValue = ""; confirmation.stringValue = "" }
-    func controlTextDidChange(_ obj: Notification) { refresh(nil) }
+    func clearSecrets() {
+        password.stringValue = ""; confirmation.stringValue = ""
+        visiblePassword.stringValue = ""; visibleConfirmation.stringValue = ""
+    }
+    func controlTextDidChange(_ obj: Notification) {
+        if showingPassword {
+            password.stringValue = visiblePassword.stringValue
+            confirmation.stringValue = visibleConfirmation.stringValue
+        } else {
+            visiblePassword.stringValue = password.stringValue
+            visibleConfirmation.stringValue = confirmation.stringValue
+        }
+        refresh(nil)
+    }
+    @objc private func togglePassword(_ sender: Any?) {
+        let editingConfirmation = currentEventFieldIsConfirmation()
+        showingPassword.toggle()
+        refresh(nil)
+        makeFirstResponder(editingConfirmation ? (showingPassword ? visibleConfirmation : confirmation) :
+                           (showingPassword ? visiblePassword : password))
+    }
+    private func currentEventFieldIsConfirmation() -> Bool {
+        firstResponder === confirmation.currentEditor() || firstResponder === visibleConfirmation.currentEditor()
+    }
     @objc private func refresh(_ sender: Any?) {
         let usesMaster = mode == .unlock || protected.state == .on
         protected.isHidden = mode == .unlock
-        password.isHidden = !usesMaster
-        confirmation.isHidden = mode == .unlock || !usesMaster
+        password.isHidden = !usesMaster || showingPassword
+        confirmation.isHidden = mode == .unlock || !usesMaster || showingPassword
+        visiblePassword.isHidden = !usesMaster || !showingPassword
+        visibleConfirmation.isHidden = mode == .unlock || !usesMaster || !showingPassword
+        reveal.isHidden = !usesMaster
+        reveal.image = NSImage(systemSymbolName: showingPassword ? "eye.slash" : "eye", accessibilityDescription: showingPassword ? "Hide password" : "Show password")
+        reveal.toolTip = showingPassword ? "Hide password" : "Show password"
+        let first = showingPassword ? visiblePassword : password
+        let second = showingPassword ? visibleConfirmation : confirmation
+        protected.nextKeyView = first
+        first.nextKeyView = mode == .unlock ? reveal : second
+        second.nextKeyView = reveal
+        reveal.nextKeyView = save
         hint.frame = NSRect(x: 20, y: usesMaster ? 100 : 152, width: 410, height: usesMaster ? 38 : 55)
         hint.stringValue = usesMaster ? "Unlock once per app launch. A forgotten master password cannot be recovered." : "Without a master password, the key is stored with the vault. Anyone who copies the vault can recover its passwords."
         hint.textColor = usesMaster ? .secondaryLabelColor : .systemOrange

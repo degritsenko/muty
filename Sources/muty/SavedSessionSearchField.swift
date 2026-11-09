@@ -25,8 +25,11 @@ private final class SessionSuggestionsPanel: NSPanel {
 
 struct SavedSessionSearchField: NSViewRepresentable {
     @ObservedObject var model: AppModel
+    var onSelect: ((SessionProfile) -> Void)? = nil
+    var selectedName: String? = nil
+    var focusOnAppear = false
 
-    func makeCoordinator() -> Coordinator { Coordinator(model: model) }
+    func makeCoordinator() -> Coordinator { Coordinator(model: model, onSelect: onSelect) }
 
     func makeNSView(context: Context) -> NSSearchField {
         let field = NSSearchField()
@@ -40,11 +43,16 @@ struct SavedSessionSearchField: NSViewRepresentable {
         field.sendsSearchStringImmediately = false
         field.sendsWholeSearchString = true
         context.coordinator.field = field
+        if focusOnAppear {
+            DispatchQueue.main.async { field.window?.makeFirstResponder(field) }
+        }
         return field
     }
 
     func updateNSView(_ field: NSSearchField, context: Context) {
         context.coordinator.profiles = model.profiles
+        context.coordinator.onSelect = onSelect
+        if let selectedName, field.currentEditor() == nil { field.stringValue = selectedName }
         if context.coordinator.panel.isVisible { context.coordinator.refresh() }
     }
 
@@ -57,6 +65,7 @@ struct SavedSessionSearchField: NSViewRepresentable {
         weak var field: NSSearchField?
         private weak var model: AppModel?
         var profiles: [SessionProfile]
+        var onSelect: ((SessionProfile) -> Void)?
         fileprivate let panel = SessionSuggestionsPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                                                         backing: .buffered, defer: false)
         private var results: [SessionProfile] = []
@@ -64,7 +73,8 @@ struct SavedSessionSearchField: NSViewRepresentable {
         private var monitor: Any?
         private var observers: [NSObjectProtocol] = []
 
-        init(model: AppModel) {
+        init(model: AppModel, onSelect: ((SessionProfile) -> Void)?) {
+            self.onSelect = onSelect
             self.model = model
             profiles = model.profiles
             super.init()
@@ -168,7 +178,7 @@ struct SavedSessionSearchField: NSViewRepresentable {
         private func position() {
             guard let field, let parent = field.window else { return }
             let anchor = parent.convertToScreen(field.convert(field.bounds, to: nil))
-            let visible = parent.screen?.visibleFrame ?? parent.frame
+            let visible = onSelect == nil ? (parent.screen?.visibleFrame ?? parent.frame) : parent.frame
             panel.setFrameOrigin(NSPoint(x: max(visible.minX, min(anchor.minX, visible.maxX - panel.frame.width)),
                                          y: max(visible.minY, anchor.minY - panel.frame.height - 4)))
         }
@@ -178,7 +188,10 @@ struct SavedSessionSearchField: NSViewRepresentable {
             dismiss()
             field?.stringValue = ""
             field?.window?.makeFirstResponder(nil)
-            model?.connect(current)
+            if let onSelect {
+                field?.stringValue = current.name
+                onSelect(current)
+            } else { model?.connect(current) }
         }
 
         func dismiss() {

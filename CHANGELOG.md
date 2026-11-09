@@ -2,6 +2,33 @@
 
 All notable public changes will be documented in this file. Group release notes under Added, Fixed, and Changed.
 
+## 0.7.9
+
+### Added
+
+- Keep backup and restore logs open with operation details, results and Copy Log.
+- Pause and resume the current SFTP transfer between data blocks.
+- Pin Session Manager as a sidebar that resizes the terminal. Remember its pinned state between launches.
+- Search saved sessions when choosing the startup session. Choose an empty window, Local Shell or Quick Connect when no startup session or restored tabs are available.
+- Reveal the master password during setup, unlock and password changes. Disable the master password from a dedicated menu action.
+
+### Fixed
+
+- Preview the actual sessions, folders and passwords to be added, replaced or kept before restoring a backup.
+- Keep Session Manager open during session deletion and return focus to its search field afterward.
+- Show the effective username from shared credentials in Quick Connect.
+- Distinguish paused transfers from cancelled jobs. Offer Retry Failed after cancellation and allow clearing failed or cancelled transfers.
+
+### Changed
+
+- Show Session Manager search results in their folder tree, with matching branches expanded.
+- Allow hiding the SFTP transfer list during copying, reduce transfer-panel height and always show hidden files.
+- Include the server in remote editor and viewer window titles and file paths.
+- Add the local date in dd-MM-yyyy format to backup filenames. Identify sessions and shared credentials in export logs.
+- Leave the Quick Connect username empty by default.
+- Reorder Settings sections, clarify Link Key File and Import Key Copy actions, and remove the connection menu from the toolbar.
+- Hide Session Manager when it is unpinned.
+
 ## 0.7.8
 
 ### Added

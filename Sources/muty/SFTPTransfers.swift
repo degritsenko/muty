@@ -21,7 +21,7 @@ struct SFTPTransfersView: View {
     @ObservedObject var queue: SFTPTransferQueue
     @ObservedObject var browser: SFTPBrowserModel
     @ViewState private var expanded = false
-    private var active: Bool { queue.items.contains { $0.state == .waiting || $0.state == .copying } }
+    private var active: Bool { queue.items.contains { $0.state == .copying || ($0.state == .waiting && !queue.paused) } }
     private var failures: [UUID] { queue.items.filter { $0.state == .failed || $0.state == .cancelled }.map(\.id) }
     var body: some View {
         if !queue.items.isEmpty {
@@ -29,15 +29,21 @@ struct SFTPTransfersView: View {
             HStack {
                 Text(active ? "Transfers: \(queue.items.filter { $0.state == .done }.count)/\(queue.items.count)" :
                      "\(queue.items.filter { $0.state == .done }.count) transferred").font(.caption)
+                if queue.paused { Text("Paused").font(.caption).foregroundStyle(.secondary) }
                 Spacer()
-                if !failures.isEmpty || queue.paused {
-                    Button("Resume / Retry Failed") { browser.retryTransfers() }.disabled(browser.busy || browser.disconnected)
+                if queue.paused {
+                    Button("Resume") { browser.resumeTransfers() }.disabled(browser.disconnected)
+                } else if active {
+                    Button("Pause") { browser.pauseTransfers() }
+                        .help("Pause transfers")
                 }
-                Button(expanded || active ? "Hide" : "Show") { expanded.toggle() }
-                    .disabled(active)
-                Button("Clear") { queue.items.removeAll { $0.state == .done || $0.state == .skipped } }.disabled(browser.busy)
+                if !failures.isEmpty {
+                    Button("Retry Failed") { browser.retryTransfers() }.disabled(browser.busy || browser.disconnected)
+                }
+                Button(expanded ? "Hide" : "Show") { expanded.toggle() }
+                Button("Clear") { queue.items.removeAll { [.done, .skipped, .failed, .cancelled].contains($0.state) } }.disabled(browser.busy)
             }
-            if expanded || active {
+            if expanded {
             List(queue.items) { item in
                 HStack {
                     Image(systemName: item.kind == .upload || item.kind == .uploadDirectory ? "arrow.up" : "arrow.down")
@@ -51,12 +57,13 @@ struct SFTPTransfersView: View {
                 }
             }.frame(height: 100)
             }
-        }.padding(6)
+        }.controlSize(.small)
+        .padding(.horizontal, 6).padding(.vertical, expanded ? 6 : 2)
         .onChange(of: active) { _, value in
-            if !value { expanded = !failures.isEmpty }
+            expanded = value || !failures.isEmpty
         }
         .onChange(of: failures) { _, value in if !value.isEmpty { expanded = true } }
-        .onAppear { expanded = !failures.isEmpty }
+        .onAppear { expanded = active || !failures.isEmpty }
         }
     }
 }

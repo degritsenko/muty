@@ -3,7 +3,8 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var model: AppModel
     @ViewState private var search = ""
-    @ViewState private var sessionManagerVisible = false
+    @ViewState private var sessionManagerVisible = UserDefaults.standard.bool(forKey: "sessionManagerPinned")
+    @AppStorage("sessionManagerPinned") private var sessionManagerPinned = false
     @ViewState private var outsideDismissEvent: Int?
     @ViewState private var dismissedByOutsideClick = false
     @FocusState private var sessionSearchFocused: Bool
@@ -55,14 +56,24 @@ struct ContentView: View {
                 Spacer(minLength: 0)
             }.frame(width: 26).background(.bar)
             Divider()
+            if sessionManagerPinned && sessionManagerVisible {
+                sessionManager
+                    .frame(width: boundedManagerWidth(managerWidth + managerDrag))
+                    .frame(maxHeight: .infinity)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                    .overlay(alignment: .trailing) { managerResizeHandle }
+                Divider()
+            }
             terminalContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .leading) {
+                    if !sessionManagerPinned {
                     sessionManager
                         .frame(width: boundedManagerWidth(managerWidth + managerDrag))
                         .frame(maxHeight: .infinity)
                         .background(Color(nsColor: .windowBackgroundColor))
-                        .background(OutsideClickObserver(active: sessionManagerVisible) { eventNumber in
+                        .background(OutsideClickObserver(active: sessionManagerVisible && !sessionManagerPinned) { eventNumber in
+                            guard !model.deletingSessionItems else { return }
                             outsideDismissEvent = eventNumber
                             dismissedByOutsideClick = true
                             sessionManagerVisible = false
@@ -73,6 +84,7 @@ struct ContentView: View {
                         .opacity(sessionManagerVisible ? 1 : 0)
                         .allowsHitTesting(sessionManagerVisible)
                         .accessibilityHidden(!sessionManagerVisible)
+                    }
                 }
                 .clipped()
         }
@@ -91,7 +103,10 @@ struct ContentView: View {
                 dismissedByOutsideClick = false
             }
         }
-        .onChange(of: search) { _, _ in selectedRows = [] }
+        .onChange(of: search) { _, _ in
+            selectedRows = []
+            if !search.isEmpty { sessionsExpanded = true }
+        }
         .onChange(of: selectedRows) { _, rows in
             model.selectedProfile = rows.count == 1 ? rows.first?.profileID : nil
             if rows.count == 1, let row = rows.first {
@@ -162,6 +177,12 @@ struct ContentView: View {
         } message: { Text(model.errorMessage ?? "") }
         .onAppear { fontSize = min(30, max(9, fontSize.isFinite ? fontSize : 13)) }
     }
+    private func deleteFromManager(_ rows: Set<SessionRowID>) {
+        model.deleteSelectedItems(rows)
+        sessionManagerVisible = true
+        DispatchQueue.main.async { sessionSearchFocused = true }
+    }
+
     private func toggleSessionManager() {
         // The outside-click monitor has already closed the panel for this event.
         if let event = NSApp.currentEvent, event.eventNumber == outsideDismissEvent { return }
@@ -178,7 +199,7 @@ struct ContentView: View {
     private func connectFromManager(_ profiles: [SessionProfile]) {
         let previous = model.selectedTab
         for profile in profiles { model.connect(profile) }
-        if model.selectedTab != previous { sessionManagerVisible = false }
+        if model.selectedTab != previous && !sessionManagerPinned { sessionManagerVisible = false }
     }
 
     private var managerResizeHandle: some View {
@@ -214,7 +235,7 @@ struct ContentView: View {
                 .disabled(items.isEmpty || model.readOnly).help("Copy")
             Button("Paste", systemImage: "clipboard") { model.pasteSessionItems(into: pasteDestination(selectedRows)) }
                 .disabled(model.sessionClipboard == nil || model.readOnly).help("Paste")
-            Button("Delete Selected Items", systemImage: "trash") { model.deleteSelectedItems(items) }
+            Button("Delete Selected Items", systemImage: "trash") { deleteFromManager(items) }
                 .disabled(items.isEmpty || model.readOnly).help("Delete Selected Items")
             Spacer(minLength: 0)
         }
@@ -228,6 +249,15 @@ struct ContentView: View {
                 HStack {
                     Text("Session Manager").font(.system(size: 12, weight: .semibold))
                     Spacer()
+                    Button {
+                        sessionManagerPinned.toggle()
+                        if !sessionManagerPinned { sessionManagerVisible = false }
+                    } label: {
+                        Image(systemName: sessionManagerPinned ? "pin.fill" : "pin")
+                            .foregroundStyle(sessionManagerPinned ? Color.accentColor : Color.secondary)
+                    }.buttonStyle(.plain)
+                        .help(sessionManagerPinned ? "Unpin Session Manager" : "Keep Session Manager open")
+                        .accessibilityLabel(sessionManagerPinned ? "Unpin Session Manager" : "Pin Session Manager")
                     Menu {
                         ForEach(10...15, id: \.self) { size in
                             Button {
@@ -259,11 +289,16 @@ struct ContentView: View {
                 }.padding(.horizontal, 6).padding(.vertical, 4)
                 List(selection: $selectedRows) {
                     if !search.isEmpty {
-                        Section("Search Results") {
-                            ForEach(SavedSessionSearch.matches(model.profiles, query: search)) { profile in
-                                SessionRow(profile: profile, location: .search, model: model, textFont: managerTextFont)
+                        DisclosureGroup(isExpanded: $sessionsExpanded) {
+                            SessionSearchBranch(parent: nil,
+                                profiles: SavedSessionSearch.matches(model.profiles, query: search),
+                                model: model, textFont: managerTextFont)
+                        } label: {
+                            Label { Text("Sessions").foregroundStyle(.primary) } icon: {
+                                Image(systemName: "folder.fill").foregroundStyle(.blue)
                             }
                         }
+                        .listRowInsets(EdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6))
                     } else {
                         DisclosureGroup(isExpanded: $favoritesExpanded) {
                             ForEach(model.profiles.filter(\.favorite)) { profile in
@@ -337,10 +372,14 @@ struct ContentView: View {
                     Button("Paste") { model.pasteSessionItems(into: pasteDestination(ids)) }.disabled(model.sessionClipboard == nil || model.readOnly)
                     if let profile {
                         Divider()
-                        Button("Delete Session", role: .destructive) { model.delete(profile) }.disabled(model.readOnly)
+                        Button("Delete Session", role: .destructive) {
+                            model.delete(profile)
+                            sessionManagerVisible = true
+                            DispatchQueue.main.async { sessionSearchFocused = true }
+                        }.disabled(model.readOnly)
                     } else if ids.count > 1 || hasFolder {
                         Divider()
-                        Button("Delete Selected Items…", role: .destructive) { model.deleteSelectedItems(ids) }.disabled(model.readOnly)
+                        Button("Delete Selected Items…", role: .destructive) { deleteFromManager(ids) }.disabled(model.readOnly)
                     }
                 } primaryAction: { ids in
                     if ids.count == 1, let id = ids.first, let profile = model.profiles.first(where: { $0.id == id.profileID }) {
@@ -419,26 +458,21 @@ struct ContentView: View {
 
     private var connectionToolbar: some View {
         HStack(spacing: 14) {
-                Menu {
-                    Button("New Session") { model.editing = ProfileDraft() }.disabled(model.readOnly)
-                    Button("Connect Local Shell") {
-                        var profile = SessionProfile()
-                        profile.connectionType = .localShell; profile.name = "Local Shell"
-                        model.connect(profile, temporary: true)
-                    }
-                    Button("Quick Connect…") { model.quickConnect = true }
-                } label: { Image(systemName: "link") }
-                    .help("Connections")
                 Button {
                     if let connection = model.selectedConnection { model.reconnect(connection) }
-                } label: { Image(systemName: "arrow.triangle.2.circlepath") }
+                } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .frame(width: 28, height: 28).contentShape(Rectangle())
+                }
                     .disabled(model.selectedConnection == nil).help("Reconnect / Restart Shell")
                 Button { model.selectedConnection?.disconnect() } label: {
                     Image(systemName: "xmark")
+                        .frame(width: 28, height: 28).contentShape(Rectangle())
                 }.disabled(model.selectedConnection?.running != true).help("Disconnect / Stop Shell")
         }
         .buttonStyle(.plain)
         .font(.system(size: 17, weight: .medium))
+        .padding(.leading, 8)
         .fixedSize()
     }
 
@@ -730,6 +764,53 @@ private struct SessionRow: View {
                 Label(profile.name, systemImage: "desktopcomputer")
                     .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
             }
+    }
+}
+
+private struct SessionSearchBranch: View {
+    let parent: String?
+    let profiles: [SessionProfile]
+    @ObservedObject var model: AppModel
+    let textFont: Font
+
+    private var children: [String] {
+        let prefix = parent.map { $0 + "/" } ?? ""
+        return Set(profiles.compactMap { profile -> String? in
+            guard let folder = profile.folder, folder.hasPrefix(prefix) else { return nil }
+            let remainder = folder.dropFirst(prefix.count)
+            guard let next = remainder.split(separator: "/").first else { return nil }
+            return prefix + next
+        }).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    var body: some View {
+        ForEach(children, id: \.self) { folder in
+            SessionSearchFolder(folder: folder, profiles: profiles, model: model, textFont: textFont)
+        }
+        ForEach(profiles.filter { $0.folder == parent }) { profile in
+            SessionRow(profile: profile, location: .search, model: model, textFont: textFont)
+        }
+    }
+}
+
+private struct SessionSearchFolder: View {
+    let folder: String
+    let profiles: [SessionProfile]
+    @ObservedObject var model: AppModel
+    let textFont: Font
+    @ViewState private var expanded = true
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            AnyView(SessionSearchBranch(parent: folder, profiles: profiles, model: model, textFont: textFont))
+        } label: {
+            Label {
+                Text(String(folder.split(separator: "/").last ?? "")).foregroundStyle(.primary)
+            } icon: {
+                Image(systemName: "folder.fill").foregroundStyle(.blue)
+            }.font(textFont)
+        }
+        .listRowInsets(EdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6))
     }
 }
 

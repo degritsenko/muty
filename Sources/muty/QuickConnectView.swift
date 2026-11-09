@@ -9,7 +9,7 @@ struct QuickConnectView: View {
     @ViewState private var sftpEnabled = false
     @ViewState private var host = ""
     @ViewState private var port = "22"
-    @ViewState private var user = NSUserName()
+    @ViewState private var user = ""
     @ViewState private var error: String?
     @ViewState private var authentication = AuthenticationMode.password
     @ViewState private var credentialID: UUID?
@@ -39,7 +39,13 @@ struct QuickConnectView: View {
                     }.toggleStyle(.switch).controlSize(.small)
                     TextField("Host", text: $host)
                     TextField("Port", text: $port)
-                    TextField("Username", text: $user).disabled(credentialID != nil && authentication == .password)
+                    if authentication == .password, let credentialID {
+                        LabeledContent("Username") {
+                            Text(model.vault.credentials.first(where: { $0.id == credentialID })?.username ?? "Unlock credentials to view")
+                        }
+                    } else {
+                        TextField("Username", text: $user)
+                    }
                     Picker("Authentication", selection: $authentication) {
                         ForEach(AuthenticationMode.selectable) { Text($0.title).tag($0) }
                     }

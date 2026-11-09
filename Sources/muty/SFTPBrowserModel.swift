@@ -11,6 +11,7 @@ struct SFTPProgress {
 @MainActor final class SFTPBrowserModel: ObservableObject {
     let id = UUID()
     let transferQueue: SFTPTransferQueue
+    private let endpoint: String?
     private let sessionID: UUID
     private var queueRunning = false
     @Published private(set) var localPath = FileManager.default.homeDirectoryForCurrentUser.path
@@ -19,7 +20,7 @@ struct SFTPProgress {
     @Published private(set) var remoteFiles: [BrowserFile] = []
     @Published var localSelection = Set<String>()
     @Published var remoteSelection = Set<String>()
-    @Published var showHidden = false { didSet { localSelection = []; remoteSelection = [] } }
+    @Published var showHidden = true { didSet { localSelection = []; remoteSelection = [] } }
     @Published private(set) var busy = false
     @Published private(set) var disconnected = false
     @Published private(set) var progress: SFTPProgress?
@@ -35,7 +36,8 @@ struct SFTPProgress {
     private weak var app: AppModel?
     var visibleLocal: [BrowserFile] { localFiles.filter { showHidden || !$0.name.hasPrefix(".") } }
     var visibleRemote: [BrowserFile] { remoteFiles.filter { showHidden || !$0.name.hasPrefix(".") } }
-    init(client: SFTPClient, app: AppModel, sessionID: UUID, transferQueue: SFTPTransferQueue) {
+    init(client: SFTPClient, app: AppModel, sessionID: UUID, transferQueue: SFTPTransferQueue, endpoint: String? = nil) {
+        self.endpoint = endpoint
         self.client = client; self.app = app; self.sessionID = sessionID
         self.transferQueue = transferQueue
         transferQueue.owner = id
@@ -50,7 +52,15 @@ struct SFTPProgress {
         }
     }
     func disconnect() { disconnected = true; job?.cancel(); client.shutdown(); editors.values.forEach { $0.connectionEnded() } }
-    func cancel() { if queueRunning { transferQueue.paused = true }; job?.cancel(); client.cancel() }
+    func cancel() {
+        if queueRunning {
+            transferQueue.paused = false
+            for index in transferQueue.items.indices where transferQueue.items[index].state == .waiting {
+                transferQueue.items[index].state = .cancelled
+            }
+        }
+        job?.cancel(); client.cancel()
+    }
     func navigateLocal(_ path: String) {
         guard !busy else { return }
         let url = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath, isDirectory: true).resolvingSymlinksInPath()
@@ -173,6 +183,18 @@ struct SFTPProgress {
             return jobs
         }) { self.transferQueue.items.append(contentsOf: $0) }
     }
+    func pauseTransfers() {
+        guard queueRunning else { return }
+        transferQueue.paused = true
+        client.setPaused(true)
+    }
+
+    func resumeTransfers() {
+        transferQueue.paused = false
+        client.setPaused(false)
+        processTransfers()
+    }
+
     func retryTransfers(id: UUID? = nil) {
         guard !busy, !disconnected else { return }
         for i in transferQueue.items.indices where (id == nil || transferQueue.items[i].id == id) && [.failed, .cancelled].contains(transferQueue.items[i].state) {
@@ -217,7 +239,7 @@ struct SFTPProgress {
                             if alert.suppressionButton?.state == .on { allChoice = choice }
                         }
                     }
-                    if choice == 3 { transferQueue.paused = true; throw CancellationError() }
+                    if choice == 3 { cancel(); throw CancellationError() }
                     if choice == 1 {
                         if let current = transferQueue.items.firstIndex(where: { $0.id == transfer.id }) { transferQueue.items[current].state = .skipped }
                         continue
@@ -288,7 +310,7 @@ struct SFTPProgress {
         if let existing = editors[key] { existing.activate(); return }
         run("Opening file…", work: { try $0.readDocument(file.path) }) { [weak self] snapshot in
             guard let self else { return }
-            let controller = RemoteTextEditor(path: file.path, snapshot: snapshot, readOnly: readOnly, tabGroupID: self.id) { [weak self] bytes, expected in
+            let controller = RemoteTextEditor(path: file.path, endpoint: self.endpoint, snapshot: snapshot, readOnly: readOnly, tabGroupID: self.id) { [weak self] bytes, expected in
                 guard let self, !self.disconnected else { throw MutyError("SSH connection ended.") }
                 guard !self.busy else { throw MutyError("Another SFTP operation is running. Try saving again when it finishes.") }
                 self.busy = true; self.status = "Saving file…"

@@ -18,10 +18,21 @@ struct FullBackupExportView: View {
     @ViewState private var acknowledged = false
     @ViewState private var busy = false
     @ViewState private var error: String?
+    @StateObject private var log = BackupOperationLog()
     private var ready: Bool {
         encrypted ? !password.isEmpty && password.utf8.count <= 1024 && password == confirmation : (!includePasswords || acknowledged)
     }
     var body: some View {
+        Group {
+            if log.started {
+                BackupOperationLogView(log: log) { dismiss() }
+            } else {
+                options
+            }
+        }.interactiveDismissDisabled(log.running)
+    }
+
+    private var options: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Back Up").font(.title2)
             Toggle("Include passwords", isOn: $includePasswords)
@@ -54,21 +65,33 @@ struct FullBackupExportView: View {
         .onDisappear { password = ""; confirmation = "" }
     }
     private func export() {
-        let panel = NSSavePanel(); panel.nameFieldStringValue = "muty-backup.mutybackup"
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = .current
+        formatter.dateFormat = "dd-MM-yyyy"
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "muty-backup-" + formatter.string(from: Date()) + ".mutybackup"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         busy = true; error = nil
+        log.start("Back Up", path: url.path)
         let master = encrypted ? password : nil
         Task { @MainActor in
             do {
-                let backup = try await model.makeFullBackup(includePasswords: includePasswords)
+                let backup = try await model.makeFullBackup(includePasswords: includePasswords, progress: { log.append($0) })
                 let count = backup.passwords.count + (backup.credentials?.count ?? 0)
-                try await Task.detached {
-                    let data = try BackupArchive.encode(backup, masterPassword: master)
-                    try BackupArchive.write(data, to: url)
+                log.append(master == nil ? "Encoding backup…" : "Encrypting backup…")
+                let data = try await Task.detached {
+                    try BackupArchive.encode(backup, masterPassword: master)
                 }.value
-                model.operationStatus = "Backup complete: \(backup.configuration.sessions.count) sessions and \(count) passwords saved to \(url.path)"
-                password = ""; confirmation = ""; busy = false; dismiss()
-            } catch { self.error = error.localizedDescription; busy = false }
+                log.append("Writing backup file…")
+                try await Task.detached { try BackupArchive.write(data, to: url) }.value
+                log.finish("Backup complete: \(backup.configuration.sessions.count) sessions and \(count) passwords saved.")
+                password = ""; confirmation = ""; busy = false
+            } catch {
+                password = ""; confirmation = ""; busy = false
+                log.fail(error)
+            }
         }
     }
 }
@@ -94,7 +117,8 @@ struct BackupUnlockView: View {
                     let secret = password; let data = backup.data
                     Task { @MainActor in
                         do {
-                            let document = try await Task.detached { try BackupArchive.decode(data, masterPassword: secret) }.value
+                            var document = try await Task.detached { try BackupArchive.decode(data, masterPassword: secret) }.value
+                            document.sourcePath = backup.sourcePath
                             password = ""; busy = false; dismiss()
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { model.configurationImport = document }
                         } catch { self.error = error.localizedDescription; busy = false }

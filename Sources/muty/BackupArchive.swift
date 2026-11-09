@@ -29,6 +29,7 @@ private struct EncryptedBackup: Codable {
 struct LockedBackup: Identifiable {
     let id = UUID()
     let data: Data
+    var sourcePath: String? = nil
 }
 
 enum BackupArchive {
