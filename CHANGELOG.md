@@ -6,7 +6,7 @@ All notable public changes will be documented in this file. Group release notes 
 
 ### Added
 
-- Choose from 15 built-in terminal color schemes, applied to open and new sessions.
+- Choose from 16 built-in terminal color schemes, applied to open and new sessions. Preserve the original Dark and Light appearances as Muty Dark and Muty Light.
 
 ## 0.7.9
 

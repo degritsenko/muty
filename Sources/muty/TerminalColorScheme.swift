@@ -3,6 +3,7 @@ import SwiftTerm
 
 enum TerminalColorScheme: String, CaseIterable, Identifiable {
     case mutyDark
+    case mutyLight
     case solarizedDark
     case solarizedLight
     case dracula
@@ -23,6 +24,7 @@ enum TerminalColorScheme: String, CaseIterable, Identifiable {
     var name: String {
         switch self {
         case .mutyDark: "Muty Dark"
+        case .mutyLight: "Muty Light"
         case .solarizedDark: "Solarized Dark"
         case .solarizedLight: "Solarized Light"
         case .dracula: "Dracula"
@@ -44,6 +46,8 @@ enum TerminalColorScheme: String, CaseIterable, Identifiable {
         switch self {
         case .mutyDark:
             (0x0E1116, 0xE6E6E6, nil)
+        case .mutyLight:
+            (0xFAFAFA, 0x141414, nil)
         case .solarizedDark:
             (0x002B36, 0x839496, [0x073642, 0xDC322F, 0x859900, 0xB58900, 0x268BD2, 0xD33682, 0x2AA198, 0xEEE8D5,
                                   0x002B36, 0xCB4B16, 0x586E75, 0x657B83, 0x839496, 0x6C71C4, 0x93A1A1, 0xFDF6E3])
@@ -116,7 +120,7 @@ enum TerminalColorScheme: String, CaseIterable, Identifiable {
     static func resolve(_ id: String) -> TerminalColorScheme {
         if let scheme = TerminalColorScheme(rawValue: id) { return scheme }
         switch id {
-        case "Light": return .solarizedLight
+        case "Light": return .mutyLight
         default: return .mutyDark
         }
     }

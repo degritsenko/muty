@@ -30,10 +30,10 @@ private final class PTYObserver: NSObject, LocalProcessTerminalViewDelegate {
 
 final class RegressionTests {
     func testTerminalColorSchemeCatalog() {
-        assert(TerminalColorScheme.allCases.count == 15)
+        assert(TerminalColorScheme.allCases.count == 16)
         assert(TerminalColorScheme.allCases.allSatisfy { $0.ansiColors.count == 16 })
         assert(TerminalColorScheme.resolve("Dark") == .mutyDark)
-        assert(TerminalColorScheme.resolve("Light") == .solarizedLight)
+        assert(TerminalColorScheme.resolve("Light") == .mutyLight)
         assert(TerminalColorScheme.resolve("unknown") == .mutyDark)
     }
 
