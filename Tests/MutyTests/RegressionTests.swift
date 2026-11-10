@@ -75,9 +75,11 @@ final class RegressionTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let app = AppModel(store: ProfileStore(directory: directory), keychain: LockedCredentials())
         let queue = SFTPTransferQueue()
-        var transfer = SFTPTransfer(kind: .download, source: "/test.txt", destination: "/tmp/test.txt")
-        transfer.state = .done
-        queue.items = [transfer]
+        try runSFTPTest {
+            let owner = UUID()
+            queue.attach(owner: owner, executor: MemoryTransferExecutor())
+            try await queue.run(owner: owner, request: SFTPQueueTests.request(["test.txt"]), resolveConflict: SFTPQueueTests.replace)
+        }
         let sessionID = UUID()
         let browser = SFTPBrowserModel(client: SFTPClient(arguments: []), app: app, sessionID: sessionID, transferQueue: queue)
         defer {
@@ -88,7 +90,7 @@ final class RegressionTests {
         view.frame = NSRect(x: 0, y: 0, width: 700, height: 180)
         view.layoutSubtreeIfNeeded()
         let before = view.fittingSize.height
-        queue.items.removeAll { $0.state == .done }
+        queue.clearFinished()
         _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
         view.layoutSubtreeIfNeeded()
         assert(before > 10 && before < 70 && view.fittingSize.height < 10)
@@ -1267,6 +1269,9 @@ final class RegressionTests {
             ("sessions.bulkAppearance", tests.testBulkSessionAppearance),
             ("sessions.temporaryTabSettings", tests.testTemporaryTabSettings),
             ("sessions.localShellTabHostName", tests.testLocalShellTabHostName),
+            ("sftp.queueConflictsAndRetry", SFTPQueueTests.conflictsAndRetry),
+            ("sftp.queuePauseCancelAndRetry", SFTPQueueTests.pauseCancelAndRetry),
+            ("sftp.queueOwnerReplacement", SFTPQueueTests.ownerReplacement),
             ("terminal.colorSchemeCatalog", tests.testTerminalColorSchemeCatalog),
             ("sessions.savedSessionSearch", tests.testSavedSessionSearch),
             ("ui.editorEscapeAndCompletedTransfers", tests.testEditorEscapeAndCompletedTransfers),

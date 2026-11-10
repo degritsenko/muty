@@ -2,18 +2,11 @@ import Foundation
 import AppKit
 import Darwin
 
-struct SFTPProgress {
-    let name: String
-    let bytes: UInt64
-    let total: UInt64?
-}
-
 @MainActor final class SFTPBrowserModel: ObservableObject {
     let id = UUID()
     let transferQueue: SFTPTransferQueue
     private let endpoint: String?
     private let sessionID: UUID
-    private var queueRunning = false
     @Published private(set) var localPath = FileManager.default.homeDirectoryForCurrentUser.path
     @Published private(set) var remotePath = ""
     @Published private(set) var localFiles: [BrowserFile] = []
@@ -40,8 +33,7 @@ struct SFTPProgress {
         self.endpoint = endpoint
         self.client = client; self.app = app; self.sessionID = sessionID
         self.transferQueue = transferQueue
-        transferQueue.owner = id
-        for i in transferQueue.items.indices where transferQueue.items[i].state == .copying { transferQueue.items[i].state = .cancelled }
+        transferQueue.attach(owner: id, executor: SFTPTransferAdapter(client: client))
         let saved = UserDefaults.standard.string(forKey: "sftp-local-" + sessionID.uuidString)
         navigateLocal(transferQueue.localPath ?? saved ?? localPath)
     }
@@ -51,14 +43,9 @@ struct SFTPProgress {
             navigateRemote(transferQueue.remotePath ?? saved ?? ".", restoring: true)
         }
     }
-    func disconnect() { disconnected = true; job?.cancel(); client.shutdown(); editors.values.forEach { $0.connectionEnded() } }
+    func disconnect() { disconnected = true; transferQueue.detach(owner: id); job?.cancel(); client.shutdown(); editors.values.forEach { $0.connectionEnded() } }
     func cancel() {
-        if queueRunning {
-            transferQueue.paused = false
-            for index in transferQueue.items.indices where transferQueue.items[index].state == .waiting {
-                transferQueue.items[index].state = .cancelled
-            }
-        }
+        transferQueue.cancel(owner: id)
         job?.cancel(); client.cancel()
     }
     func navigateLocal(_ path: String) {
@@ -134,160 +121,56 @@ struct SFTPProgress {
             }
         }
     }
-    private func progressCallback() -> (String, UInt64, UInt64?) -> Void {
-        let sink = SFTPProgressSink { [weak self] value in self?.progress = value }
-        return { name, bytes, total in sink.update(name: name, bytes: bytes, total: total) }
-    }
     func uploadSelection() { upload(localFiles.filter { localSelection.contains($0.id) }.map { URL(fileURLWithPath: $0.path) }) }
     func upload(_ files: [URL]) {
-        guard !busy, !disconnected, !remotePath.isEmpty, !files.isEmpty else { return }
-        let target = remotePath
-        run("Preparing uploads…", work: { client in
-            var jobs: [SFTPTransfer] = []
-            func visit(_ source: URL, _ destination: String, _ depth: Int) throws {
-                try client.checkCancellation()
-                guard depth < 64, jobs.count < 100000 else { throw MutyError("Transfer is too large or deeply nested.") }
-                let a = try source.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey])
-                guard a.isSymbolicLink != true else { throw MutyError("Symbolic links are not copied.") }
-                if a.isDirectory == true {
-                    jobs.append(.init(kind: .uploadDirectory, source: source.resolvingSymlinksInPath().path, destination: destination))
-                    for child in try FileManager.default.contentsOfDirectory(at: source, includingPropertiesForKeys: nil) {
-                        try visit(child, try BrowserFile.join(destination, child.lastPathComponent), depth + 1)
-                    }
-                } else {
-                    guard a.isRegularFile == true else { throw MutyError("Only regular files can be copied.") }
-                    jobs.append(.init(kind: .upload, source: source.resolvingSymlinksInPath().path, destination: destination))
-                }
-            }
-            for file in files { try visit(file, try BrowserFile.join(target, file.lastPathComponent), 0) }
-            return jobs
-        }) { self.transferQueue.items.append(contentsOf: $0) }
+        guard !files.isEmpty else { return }
+        processTransfers(request: .upload(files, to: remotePath))
     }
     func downloadSelection() { download(remoteFiles.filter { remoteSelection.contains($0.id) }) }
     func download(_ files: [BrowserFile]) {
-        guard !busy, !disconnected, !files.isEmpty else { return }
-        let target = localPath
-        run("Preparing downloads…", work: { client in
-            var jobs: [SFTPTransfer] = []
-            func visit(_ source: String, _ destination: String, _ depth: Int) throws {
-                guard depth < 64, jobs.count < 100000, let a = try client.attributes(source), !a.isSymlink else { throw MutyError("Unsupported file, symbolic link, or excessive nesting.") }
-                if a.isDirectory {
-                    let canonical = try client.canonical(source)
-                    guard canonical == source else { throw MutyError("Directory changed or is a symbolic link.") }
-                    jobs.append(.init(kind: .downloadDirectory, source: source, destination: destination))
-                    for child in try client.list(source) { try visit(child.path, try BrowserFile.join(destination, child.name), depth + 1) }
-                    guard try client.canonical(source) == canonical else { throw MutyError("Directory changed while preparing transfer.") }
-                } else { jobs.append(.init(kind: .download, source: source, destination: destination)) }
-            }
-            for file in files { try visit(file.path, try BrowserFile.join(target, file.name), 0) }
-            return jobs
-        }) { self.transferQueue.items.append(contentsOf: $0) }
+        guard !files.isEmpty else { return }
+        processTransfers(request: .download(files, to: localPath))
     }
-    func pauseTransfers() {
-        guard queueRunning else { return }
-        transferQueue.paused = true
-        client.setPaused(true)
-    }
-
+    func pauseTransfers() { transferQueue.pause(owner: id) }
     func resumeTransfers() {
-        transferQueue.paused = false
-        client.setPaused(false)
+        transferQueue.resume(owner: id)
         processTransfers()
     }
-
     func retryTransfers(id: UUID? = nil) {
         guard !busy, !disconnected else { return }
-        for i in transferQueue.items.indices where (id == nil || transferQueue.items[i].id == id) && [.failed, .cancelled].contains(transferQueue.items[i].state) {
-            transferQueue.items[i].state = .waiting; transferQueue.items[i].error = nil
-        }
-        transferQueue.paused = false; processTransfers()
+        transferQueue.retry(owner: self.id, id: id)
+        processTransfers()
     }
-    private func processTransfers() {
-        guard !busy, !queueRunning, !disconnected, !remotePath.isEmpty, !transferQueue.paused, transferQueue.owner == id,
-              transferQueue.items.contains(where: { $0.state == .waiting }) else { return }
-        busy = true; queueRunning = true; progress = nil
-        job = Task { [self] in
-            var allChoice: Int?
-            while !Task.isCancelled, !disconnected, !transferQueue.paused, transferQueue.owner == id,
-                  let index = transferQueue.items.firstIndex(where: { $0.state == .waiting }) {
-                let transfer = transferQueue.items[index]
-                transferQueue.items[index].state = .copying; status = "Copying " + (transfer.source as NSString).lastPathComponent
-                do {
-                    let upload = transfer.kind == .upload || transfer.kind == .uploadDirectory
-                    let directory = transfer.kind == .uploadDirectory || transfer.kind == .downloadDirectory
-                    let exists = try await client.perform { client -> Bool in
-                        if upload {
-                            guard let a = try client.attributes(transfer.destination) else { return false }
-                            guard !a.isSymlink, a.isDirectory == directory else { throw MutyError("Destination has a different type or is a symbolic link.") }
-                            return true
-                        }
-                        let url = URL(fileURLWithPath: transfer.destination)
-                        guard FileManager.default.fileExists(atPath: url.path) else { return false }
-                        let a = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-                        guard a.isSymbolicLink != true, (a.isDirectory == true) == directory else { throw MutyError("Destination has a different type or is a symbolic link.") }
-                        return true
-                    }
-                    var choice = 0
-                    if exists && !directory {
-                        if let allChoice { choice = allChoice }
-                        else {
-                            let alert = NSAlert(); alert.messageText = "File already exists"
-                            alert.informativeText = transfer.destination
-                            alert.addButton(withTitle: "Replace"); alert.addButton(withTitle: "Skip"); alert.addButton(withTitle: "Keep Both"); alert.addButton(withTitle: "Cancel Queue")
-                            alert.showsSuppressionButton = true; alert.suppressionButton?.title = "Apply to all conflicts in this batch"
-                            choice = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-                            if alert.suppressionButton?.state == .on { allChoice = choice }
-                        }
-                    }
-                    if choice == 3 { cancel(); throw CancellationError() }
-                    if choice == 1 {
-                        if let current = transferQueue.items.firstIndex(where: { $0.id == transfer.id }) { transferQueue.items[current].state = .skipped }
-                        continue
-                    }
-                    var destination = transfer.destination
-                    if choice == 2 {
-                        destination = try await client.perform { client in
-                            let path = transfer.destination as NSString, ext = path.pathExtension
-                            let base = ext.isEmpty ? transfer.destination : path.deletingPathExtension
-                            var n = 1
-                            while true {
-                                let candidate = base + " Copy " + String(n) + (ext.isEmpty ? "" : "." + ext)
-                                let exists = upload ? try client.attributes(candidate) != nil : FileManager.default.fileExists(atPath: candidate)
-                                if !exists { return candidate }; n += 1
-                            }
-                        }
-                    }
-                    let target = destination, report = progressCallback()
-                    try await client.perform { client in
-                        if upload {
-                            guard URL(fileURLWithPath: transfer.source).resolvingSymlinksInPath().path == transfer.source else { throw MutyError("Source path changed to a symbolic link.") }
-                            try client.validateDirectoryAncestors(target)
-                        } else {
-                            try client.validateDirectoryAncestors(transfer.source)
-                            let parent = URL(fileURLWithPath: (target as NSString).deletingLastPathComponent)
-                            guard parent.resolvingSymlinksInPath().path == parent.path else { throw MutyError("Destination path changed to a symbolic link.") }
-                        }
-                        switch transfer.kind {
-                        case .upload: try client.upload(URL(fileURLWithPath: transfer.source), to: target, replace: exists && choice == 0, progress: report)
-                        case .download: try client.download(transfer.source, to: URL(fileURLWithPath: target), replace: exists && choice == 0, progress: report)
-                        case .uploadDirectory: if !exists { try client.mkdir(target) }
-                        case .downloadDirectory: if !exists { try FileManager.default.createDirectory(atPath: target, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
-                        }
-                    }
-                    guard transferQueue.owner == id else { break }
-                    if let current = transferQueue.items.firstIndex(where: { $0.id == transfer.id }) {
-                        transferQueue.items[current].destination = target; transferQueue.items[current].state = .done
-                    }
-                } catch {
-                    guard transferQueue.owner == id else { break }
-                    if let current = transferQueue.items.firstIndex(where: { $0.id == transfer.id }) {
-                        transferQueue.items[current].state = error is CancellationError ? .cancelled : .failed
-                        transferQueue.items[current].error = error.localizedDescription
-                    }
-                }
+    private func resolveConflict(_ transfer: SFTPTransfer) -> SFTPConflictResolution {
+        let alert = NSAlert(); alert.messageText = "File already exists"
+        alert.informativeText = transfer.destination
+        alert.addButton(withTitle: "Replace"); alert.addButton(withTitle: "Skip")
+        alert.addButton(withTitle: "Keep Both"); alert.addButton(withTitle: "Cancel Queue")
+        alert.showsSuppressionButton = true; alert.suppressionButton?.title = "Apply to all conflicts in this batch"
+        let index = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        let choices: [SFTPConflictResolution.Choice] = [.replace, .skip, .keepBoth, .cancel]
+        return SFTPConflictResolution(choice: choices.indices.contains(index) ? choices[index] : .cancel,
+                                      applyToAll: alert.suppressionButton?.state == .on)
+    }
+    private func processTransfers(request: SFTPTransferRequest? = nil) {
+        guard !busy, !disconnected, !remotePath.isEmpty,
+              request != nil || (transferQueue.hasPending && !transferQueue.paused) else { return }
+        busy = true; progress = nil
+        if let request {
+            error = nil
+            switch request {
+            case .upload: status = "Preparing uploads…"
+            case .download: status = "Preparing downloads…"
             }
-            queueRunning = false; busy = false; progress = nil; job = nil
-            if !disconnected, transferQueue.owner == id { refresh() }
+        }
+        job = Task { [self] in
+            do {
+                try await transferQueue.run(owner: id, request: request, resolveConflict: resolveConflict,
+                    progress: { [weak self] in self?.progress = $0 }, status: { self.status = $0 })
+            } catch is CancellationError { status = "Cancelled" }
+            catch { self.error = error.localizedDescription; status = "Failed" }
+            busy = false; progress = nil; job = nil
+            if !disconnected { refresh() }
         }
     }
     func currentPermissions(_ file: BrowserFile) async throws -> String {
@@ -415,15 +298,3 @@ struct SFTPProgress {
     }
 }
 struct RemoteFileDrag: Codable { let browser: UUID; let paths: [String] }
-
-// Called on the protocol queue; throttle UI publication for large transfers.
-private final class SFTPProgressSink: @unchecked Sendable {
-    private var last = Date.distantPast
-    private let publish: @MainActor (SFTPProgress) -> Void
-    init(publish: @escaping @MainActor (SFTPProgress) -> Void) { self.publish = publish }
-    func update(name: String, bytes: UInt64, total: UInt64?) {
-        guard bytes == 0 || bytes == total || Date().timeIntervalSince(last) >= 0.05 else { return }
-        last = Date()
-        DispatchQueue.main.async { [publish] in publish(SFTPProgress(name: name, bytes: bytes, total: total)) }
-    }
-}
