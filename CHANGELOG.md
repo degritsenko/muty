@@ -2,7 +2,7 @@
 
 All notable public changes will be documented in this file. Group release notes under Added, Fixed, and Changed.
 
-## Unreleased
+## 0.7.10
 
 ### Added
 
