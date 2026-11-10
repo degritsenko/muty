@@ -38,6 +38,7 @@ struct PortableSession: Codable, Identifiable {
     var folder: String?
     var favorite: Bool
     var color: String?
+    var terminalTheme: String?
     var connectionType: ConnectionType
     var authentication: AuthenticationMode
     var forwards: [PortForward]
@@ -48,6 +49,7 @@ struct PortableSession: Codable, Identifiable {
     var credentialID: UUID? = nil
 
     init(_ p: SessionProfile, keyName: String?, keyFingerprint: String?, includeCredentialLink: Bool = false) {
+        terminalTheme = p.terminalTheme
         credentialID = includeCredentialLink ? p.credentialID : nil
         description = p.description.isEmpty ? nil : p.description
         sshEnabled = p.sshEnabled; sftpEnabled = p.sftpEnabled
@@ -62,6 +64,7 @@ struct PortableSession: Codable, Identifiable {
             throw MutyError("Select an SSH key or exclude this session.")
         }
         var p = SessionProfile()
+        p.terminalTheme = terminalTheme
         p.description = description ?? ""
         p.sshEnabled = sshEnabled ?? true; p.sftpEnabled = sftpEnabled ?? true
         p.id = id; p.name = name; p.host = host; p.port = port; p.user = user

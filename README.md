@@ -5,12 +5,14 @@ Native SSH and SFTP client for macOS. Built with SwiftUI and SwiftTerm, powered 
 ![Active SSH terminal session connected to a demo Alpine Linux server](docs/ssh-session.png)
 
 - SSH and local shell tabs with split layouts.
+- Per-session terminal themes with inheritance from Settings. Bulk Edit supports session colors and terminal themes for SSH and Local Shell sessions.
 - Keyword highlighting in terminal output: matched words change foreground colour only. Enabled by default; configure rules in Settings → Syntax Highlighting or toggle with View → Highlight Output (⇧⌘H).
 - Two-pane SFTP browser, transfer queue and tabbed remote text editor.
 - Saved sessions, folders, shared credentials and quick session search in the toolbar.
 - Jump hosts, port forwarding and tunnel-only sessions.
 - SecureCRT and MobaXterm session import.
-- Local credential vault and encrypted backups.
+- Local credential vault and encrypted backups. Forget saved passwords for selected SSH sessions through Bulk Edit, including unlinking shared credentials.
+- Open session settings directly from a tab, including temporary connections. Inspect remote SFTP file properties and edit Unix permissions.
 
 ![Two-pane SFTP browser connected to a disposable demo server](docs/screenshot.png)
 

@@ -9,7 +9,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     nonisolated static let cleanup = DispatchGroup()
     let id = UUID()
     let transferQueueID: UUID
-    let profile: SessionProfile
+    @Published var profile: SessionProfile
     private(set) var connectedJumpProfile: SessionProfile?
     var resolveJumpProfile: ((UUID) throws -> SessionProfile)?
     var onSaveJumpPassword: ((SessionProfile, String) throws -> Void)?
@@ -72,8 +72,15 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
             catch { self.stopLogging(); self.error = "Logging stopped: " + error.localizedDescription }
         }
         terminal.optionAsMetaKey = UserDefaults.standard.object(forKey: "optionAsMetaKey") as? Bool ?? true
-        applyColorScheme(TerminalColorScheme.resolve(UserDefaults.standard.string(forKey: "terminalTheme") ?? TerminalColorScheme.mutyDark.rawValue))
+        applyColorScheme(TerminalColorScheme.resolve(profile.terminalTheme ?? UserDefaults.standard.string(forKey: "terminalTheme") ?? TerminalColorScheme.mutyDark.rawValue))
         terminal.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+    }
+
+    static func localShellHostName() -> String {
+        var buffer = [CChar](repeating: 0, count: Int(MAXHOSTNAMELEN))
+        guard gethostname(&buffer, buffer.count) == 0 else { return "Local Shell" }
+        let hostname = String(cString: buffer)
+        return hostname.isEmpty ? "Local Shell" : hostname
     }
 
     func start() {
@@ -82,6 +89,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         do {
             var p = try profile.validated()
             if p.connectionType == .localShell {
+                if tabName == nil && profile.name == "Local Shell" { tabName = Self.localShellHostName() }
                 try startLocalShell()
                 return
             }

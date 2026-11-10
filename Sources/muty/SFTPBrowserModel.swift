@@ -300,6 +300,17 @@ struct SFTPProgress {
         }
         return String(format: "%04o", mode)
     }
+    func properties(_ file: BrowserFile) async throws -> SFTPAttributes {
+        guard !busy, !disconnected else { throw MutyError("Wait for the current SFTP operation to finish.") }
+        busy = true; defer { busy = false }
+        return try await client.perform { client in
+            try client.validateDirectoryAncestors(file.path)
+            guard let attributes = try client.attributes(file.path), !attributes.isSymlink else {
+                throw MutyError("Properties are unavailable for this file.")
+            }
+            return attributes
+        }
+    }
     func changePermissions(_ file: BrowserFile, mode: String) {
         guard let permissions = UInt32(mode, radix: 8), permissions <= 0o7777 else { error = "Enter Unix permissions in octal, for example 0644."; return }
         run("Changing permissions…", refreshAfter: true, work: { try $0.setPermissions(file.path, permissions) })

@@ -23,6 +23,7 @@ struct SessionProfile: Codable, Identifiable, Equatable {
     var credentialID: UUID?
     var keyID: UUID?
     var color: String?
+    var terminalTheme: String?
     var connectionType: ConnectionType = .ssh
     var forwards: [PortForward] = []
     var tunnelOnly = false
@@ -33,7 +34,7 @@ struct SessionProfile: Codable, Identifiable, Equatable {
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case id, credentialID, name, description, sshEnabled, sftpEnabled, host, port, user, savePassword, folder, favorite, identityFile, keyID, color, authentication, connectionType, forwards, tunnelOnly, jumpHostID
+        case terminalTheme, id, credentialID, name, description, sshEnabled, sftpEnabled, host, port, user, savePassword, folder, favorite, identityFile, keyID, color, authentication, connectionType, forwards, tunnelOnly, jumpHostID
     }
 
     init(from decoder: Decoder) throws {
@@ -53,6 +54,7 @@ struct SessionProfile: Codable, Identifiable, Equatable {
         credentialID = try c.decodeIfPresent(UUID.self, forKey: .credentialID)
         keyID = try c.decodeIfPresent(UUID.self, forKey: .keyID)
         color = try c.decodeIfPresent(String.self, forKey: .color)
+        terminalTheme = try c.decodeIfPresent(String.self, forKey: .terminalTheme)
         forwards = try c.decodeIfPresent([PortForward].self, forKey: .forwards) ?? []
         tunnelOnly = try c.decodeIfPresent(Bool.self, forKey: .tunnelOnly) ?? false
         jumpHostID = try c.decodeIfPresent(UUID.self, forKey: .jumpHostID)
@@ -63,6 +65,9 @@ struct SessionProfile: Codable, Identifiable, Equatable {
 
     func validated() throws -> SessionProfile {
         var p = self
+        if let theme = p.terminalTheme, TerminalColorScheme(rawValue: theme) == nil {
+            p.terminalTheme = nil
+        }
         p.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         p.host = host.trimmingCharacters(in: .whitespacesAndNewlines)
         p.user = user.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -12,6 +12,17 @@ private final class LockedCredentials: CredentialStore {
     func delete(id: UUID) throws { accesses += 1; throw MutyError("locked") }
 }
 
+private final class BulkForgetCredentials: CredentialStore {
+    var secrets: [UUID: String] = [:]
+    var failDelete: UUID?
+    func read(id: UUID) throws -> String? { secrets[id] }
+    func write(id: UUID, password: String) throws { secrets[id] = password }
+    func delete(id: UUID) throws {
+        if id == failDelete { throw MutyError("Injected deletion failure") }
+        secrets[id] = nil
+    }
+}
+
 private final class DisposableCredentials: CredentialStore {
     var reads = 0
     func read(id: UUID) throws -> String? { reads += 1; return "throwaway-broker-secret" }
@@ -29,6 +40,11 @@ private final class PTYObserver: NSObject, LocalProcessTerminalViewDelegate {
 }
 
 final class RegressionTests {
+    @MainActor func testLocalShellTabHostName() {
+        let host = SSHConnection.localShellHostName()
+        assert(!host.isEmpty && !host.contains(" ") && !host.contains("\n"))
+    }
+
     func testTerminalColorSchemeCatalog() {
         assert(TerminalColorScheme.allCases.count == 16)
         assert(TerminalColorScheme.allCases.allSatisfy { $0.ansiColors.count == 16 })
@@ -729,6 +745,135 @@ final class RegressionTests {
         assert(store.document.buttons.allSatisfy { $0.setID == nil })
         assert(store.assignedSet(for: "Prod/DB") == nil)
     }
+    @MainActor func testBulkForgetPasswords() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProfileStore(directory: directory)
+        var first = SessionProfile()
+        first.host = "example.invalid"; first.user = "tester"; first.savePassword = true
+        first = try first.validated()
+        var second = first; second.id = UUID()
+        var shared = first; shared.id = UUID(); shared.savePassword = false; shared.credentialID = UUID()
+        var outside = shared; outside.id = UUID()
+        var local = SessionProfile(); local.connectionType = .localShell
+        local = try local.validated()
+        let original = [first, second, shared, outside, local]
+        try store.save(original)
+        let credentials = BulkForgetCredentials()
+        credentials.secrets = [first.id: "first", second.id: "second", shared.credentialID!: "shared"]
+        let model = AppModel(store: store, keychain: credentials)
+        let connection = SSHConnection(profile: first, manual: true, credentials: credentials, deferredStart: true)
+        model.tabs = [connection]
+        let request = BulkEditRequest(folder: nil, profiles: [first, second, shared, local])
+        credentials.failDelete = second.id
+        do {
+            try model.forgetBulkSavedPasswords(request)
+            assertionFailure("Expected deletion failure")
+        } catch {}
+        assert(credentials.secrets[first.id] == "first" && credentials.secrets[second.id] == "second")
+        assert(model.profiles.first { $0.id == first.id }?.savePassword == true)
+        credentials.failDelete = nil
+        try model.forgetBulkSavedPasswords(request)
+        assert(credentials.secrets[first.id] == nil && credentials.secrets[second.id] == nil)
+        assert(credentials.secrets[shared.credentialID!] == "shared")
+        assert(model.profiles.first { $0.id == shared.id }?.credentialID == nil)
+        assert(model.profiles.first { $0.id == outside.id } == outside)
+        assert(model.profiles.first { $0.id == local.id } == local)
+        assert(connection.status == "Settings Changed")
+        let saved = try store.load()
+        assert(saved.filter { [first.id, second.id, shared.id].contains($0.id) }.allSatisfy { !$0.savePassword && $0.credentialID == nil })
+        do {
+            try model.forgetBulkSavedPasswords(request)
+            assertionFailure("Expected stale request rejection")
+        } catch {}
+    }
+
+    @MainActor func testSessionAppearancePersistence() throws {
+        var profile = SessionProfile()
+        profile.host = "example.invalid"; profile.user = "tester"
+        let legacy = try JSONEncoder().encode(profile)
+        let legacyProfile = try JSONDecoder().decode(SessionProfile.self, from: legacy)
+        assert(legacyProfile.terminalTheme == nil)
+        profile.terminalTheme = "nord"; profile.color = "Green"
+        let decoded = try JSONDecoder().decode(SessionProfile.self, from: JSONEncoder().encode(profile))
+        assert(decoded == profile)
+        let portable = PortableSession(profile, keyName: nil, keyFingerprint: nil)
+        let restored = try JSONDecoder().decode(PortableSession.self, from: JSONEncoder().encode(portable)).profile(keyID: nil)
+        assert(restored.terminalTheme == "nord" && restored.color == "Green")
+        var legacyBackup = try JSONSerialization.jsonObject(with: JSONEncoder().encode(portable)) as! [String: Any]
+        legacyBackup.removeValue(forKey: "terminalTheme")
+        let oldBackup = try JSONDecoder().decode(PortableSession.self, from: JSONSerialization.data(withJSONObject: legacyBackup))
+        let oldProfile = try oldBackup.profile(keyID: nil)
+        assert(oldProfile.terminalTheme == nil)
+        profile.terminalTheme = "unknown-future-scheme"
+        let normalized = try profile.validated()
+        assert(normalized.terminalTheme == nil)
+    }
+
+    @MainActor func testBulkSessionAppearance() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProfileStore(directory: directory)
+        var ssh = SessionProfile()
+        ssh.host = "example.invalid"; ssh.user = "tester"; ssh.folder = "Group"
+        var local = SessionProfile()
+        local.connectionType = .localShell; local.name = "Local"; local.folder = "Group/Sub"
+        var other = ssh; other.id = UUID(); other.folder = "Other"
+        ssh = try ssh.validated(); local = try local.validated(); other = try other.validated()
+        try store.save([ssh, local, other])
+        let credentials = LockedCredentials()
+        let model = AppModel(store: store, keychain: credentials)
+        let connection = SSHConnection(profile: ssh, manual: true, credentials: credentials, deferredStart: true)
+        model.profiles = [ssh, local, other]
+        model.tabs = [connection]
+        model.editFolderSessions("Group")
+        assert(model.bulkEditing!.profiles.count == 2)
+        try model.applyBulkEdit(model.bulkEditing!, user: nil, keyID: nil, changeJump: false, jumpID: nil,
+                                changeColor: true, color: "Blue", changeTheme: true, terminalTheme: "nord")
+        assert(connection.status == "Restored")
+        assert(model.profiles[0].user == ssh.user && model.profiles[1].user == local.user)
+        assert(model.profiles[0].color == "Blue" && model.profiles[1].terminalTheme == "nord")
+        assert(model.profiles[2] == other)
+        let saved = try store.load()
+        assert(Set(saved.map(\.id)) == Set(model.profiles.map(\.id)))
+        for item in saved { assert(model.profiles.first { $0.id == item.id } == item) }
+        model.editFolderSessions("Group")
+        try model.applyBulkEdit(model.bulkEditing!, user: "changed", keyID: nil, changeJump: false, jumpID: nil,
+                                sshEnabled: false, sftpEnabled: true, changeColor: true, changeTheme: true)
+        assert(model.profiles[0].user == "changed" && !model.profiles[0].sshEnabled)
+        assert(model.profiles[1].user == local.user && model.profiles[1].sshEnabled == local.sshEnabled)
+        assert(model.profiles.prefix(2).allSatisfy { $0.color == nil && $0.terminalTheme == nil })
+        assert(connection.status == "Settings Changed")
+        assert(credentials.accesses == 0)
+    }
+
+    @MainActor func testTemporaryTabSettings() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let model = AppModel(store: ProfileStore(directory: directory), keychain: LockedCredentials())
+        var profile = SessionProfile()
+        profile.connectionType = .localShell; profile.name = "Local Shell"
+        let connection = SSHConnection(profile: profile, manual: true, temporary: true, deferredStart: true)
+        connection.tabName = "slowhands.local"
+        model.tabs = [connection]
+        var appearance = profile; appearance.color = "Blue"; appearance.terminalTheme = "nord"
+        try model.updateTemporaryTab(connection, profile: appearance)
+        assert(model.tabs.first === connection)
+        assert(connection.profile.color == "Blue" && connection.profile.terminalTheme == "nord")
+        assert(connection.tabName == "slowhands.local" && connection.status == "Restored")
+
+        var changedTransport = appearance; changedTransport.connectionType = .ssh
+        changedTransport.host = "example.invalid"; changedTransport.user = "tester"
+        model.confirmSessionSettingsChange = { _, _ in false }
+        try model.updateTemporaryTab(connection, profile: changedTransport)
+        assert(model.tabs.first === connection && connection.profile.connectionType == .localShell)
+        model.confirmSessionSettingsChange = { _, _ in true }
+        try model.updateTemporaryTab(connection, profile: changedTransport)
+        assert(model.tabs.first !== connection)
+        assert(model.tabs.first?.profile.host == "example.invalid")
+        assert(model.tabs.first?.tabName == "slowhands.local")
+    }
+
     @MainActor func testCurrentFolderAndAtomicProfileSave() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1117,6 +1262,11 @@ final class RegressionTests {
             return
         }
         let cases: [(String, () throws -> Void)] = [
+            ("credentials.bulkForgetPasswords", tests.testBulkForgetPasswords),
+            ("profiles.sessionAppearancePersistence", tests.testSessionAppearancePersistence),
+            ("sessions.bulkAppearance", tests.testBulkSessionAppearance),
+            ("sessions.temporaryTabSettings", tests.testTemporaryTabSettings),
+            ("sessions.localShellTabHostName", tests.testLocalShellTabHostName),
             ("terminal.colorSchemeCatalog", tests.testTerminalColorSchemeCatalog),
             ("sessions.savedSessionSearch", tests.testSavedSessionSearch),
             ("ui.editorEscapeAndCompletedTransfers", tests.testEditorEscapeAndCompletedTransfers),

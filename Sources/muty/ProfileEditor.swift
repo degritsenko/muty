@@ -4,13 +4,15 @@ struct ProfileEditor: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var model: AppModel
     let draft: ProfileDraft
+    var onSave: ((SessionProfile) throws -> Void)? = nil
     @ViewState private var profile: SessionProfile
     @ViewState private var port: String
     @ViewState private var page = "General"
     @ViewState private var error: String?
 
-    init(model: AppModel, draft: ProfileDraft) {
+    init(model: AppModel, draft: ProfileDraft, onSave: ((SessionProfile) throws -> Void)? = nil) {
         self.model = model; self.draft = draft
+        self.onSave = onSave
         var initial = draft.profile
         if initial.authentication == .agent || initial.authentication == .automatic {
             initial.authentication = (initial.keyID != nil || !(initial.identityFile ?? "").isEmpty) ? .identityFile : .password
@@ -32,7 +34,11 @@ struct ProfileEditor: View {
                     Text("Default").tag("")
                     ForEach(["Red", "Orange", "Yellow", "Green", "Blue", "Purple"], id: \.self) { Text($0).tag($0) }
                 }
-            }.formStyle(.grouped).frame(height: 185)
+                Picker("Terminal Theme", selection: Binding(get: { profile.terminalTheme ?? "" }, set: { profile.terminalTheme = $0.isEmpty ? nil : $0 })) {
+                    Text("Inherit from Settings").tag("")
+                    ForEach(TerminalColorScheme.allCases) { Text($0.name).tag($0.rawValue) }
+                }
+            }.formStyle(.grouped).frame(height: 220)
             if profile.connectionType == .ssh && !profile.tunnelOnly {
                 HStack(spacing: 20) {
                     Text("Open:")
@@ -139,7 +145,8 @@ struct ProfileEditor: View {
                         if updated.authentication != .password || changed { updated.savePassword = false }
                         if updated.authentication != .password { updated.credentialID = nil }
                         if updated.authentication != .identityFile { updated.keyID = nil; updated.identityFile = nil }
-                        try model.save(updated, password: "", reuse: false)
+                        if let onSave { try onSave(updated) }
+                        else { try model.save(updated, password: "", reuse: false) }
                         dismiss()
                     } catch { self.error = error.localizedDescription }
                 }.keyboardShortcut(.defaultAction)

@@ -8,3 +8,14 @@
 - Group changelog entries and GitHub release notes under **Added**, **Fixed**, and **Changed**. Use the matching changelog section as the source for GitHub release notes and preserve its headings. Keep validation logs out of the changelog and public release notes. Use the version without the build number in GitHub release titles.
 - Prepare changes and app builds locally first. Present the changes, verification results, clickable links to README.md and CHANGELOG.md, and a proposed commit message for the user's review.
 - Create commits, push commits, create or push tags, and publish GitHub releases only when the user explicitly authorizes the corresponding actions. A generic instruction such as “делай” authorizes local preparation only unless those actions are explicitly named. Do not infer publication approval from a discussion of release readiness.
+
+## Token-efficient workflow
+
+- Start with the task, current branch, and working-tree status. Search with `rg` or `rg --files` scoped to the relevant subsystem, then read the matching sections. Expand the scope when dependencies or findings require it.
+- Reuse information already established in the current context. Re-read files when they changed, context was lost, or an exact detail needs verification.
+- Read supporting documentation on demand. Use `docs/verification.md` for verification procedures and `docs/gui-checklist.md` for explicitly requested manual GUI checks.
+- Keep tool output bounded. Save verbose build and check logs to a temporary file, inspect exit status, and report relevant errors or a short result. Expand output when diagnosing a failure.
+- Keep changes scoped to the request. Use existing scripts and conventions. Create plans, reports, helper files, or abstractions only when requested or necessary for the task.
+- Use skills whose instructions apply to the task. Keep optional workflow steps proportional to its complexity and risk, while following mandatory checks and approval requirements above.
+- Before context compaction or a handoff, record a short summary of the goal, decisions, changed files, completed checks, unresolved issues, and next step in the conversation. Verify live Git and build state when resuming.
+- Report changed behavior, verification results, and remaining issues concisely. Avoid repeated explanations and full logs unless requested.

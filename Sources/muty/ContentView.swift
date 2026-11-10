@@ -155,6 +155,7 @@ struct ContentView: View {
         .sheet(isPresented: $model.quickConnect) { QuickConnectView(model: model) }
         .sheet(item: $model.bulkEditing) { BulkSessionEditor(model: model, request: $0) }
         .sheet(item: $model.editing) { ProfileEditor(model: model, draft: $0) }
+        .modifier(TemporaryTabEditorSheet(model: model))
         .onChange(of: model.newFolderPrompt) { _, value in showFolderPrompt = value }
         .alert("New Folder", isPresented: $showFolderPrompt) {
             TextField("Folder name", text: $folderName)
@@ -438,7 +439,7 @@ struct ContentView: View {
                     Divider()
                     TerminalWorkspace(model: model) { connection, index in
                         SessionPane(connection: connection, model: model, fontSize: fontSize,
-                            scrollback: Int(scrollback.isFinite ? max(1000, min(50000, scrollback)) : 10000), theme: theme,
+                            scrollback: Int(scrollback.isFinite ? max(1000, min(50000, scrollback)) : 10000), theme: (model.profiles.first(where: { $0.id == connection.profile.id }) ?? connection.profile).terminalTheme ?? theme,
                             optionAsMetaKey: optionAsMetaKey, fontName: fontName,
                             selected: model.selectedTab == connection.id, showPaneTitle: index != nil, paneIndex: index)
                     }
@@ -481,6 +482,17 @@ struct ContentView: View {
         matchFound = backward ? terminal.findPrevious(terminalQuery) : terminal.findNext(terminalQuery)
     }
 
+}
+
+private struct TemporaryTabEditorSheet: ViewModifier {
+    @ObservedObject var model: AppModel
+    func body(content: Content) -> some View {
+        content.sheet(item: Binding(get: { model.editingTabConnection }, set: { model.editingTab = $0?.id })) { connection in
+            ProfileEditor(model: model, draft: ProfileDraft(connection.profile), onSave: { updated in
+                try model.updateTemporaryTab(connection, profile: updated)
+            })
+        }
+    }
 }
 
 private struct SessionButtonBar: View {
@@ -547,7 +559,7 @@ private struct SessionTab: View {
                     }
                     if connection.isLogging { Image(systemName: "record.circle.fill").foregroundStyle(.red).help("Logging session output") }
                     Text(connection.tabName ?? connection.profile.name).lineLimit(1)
-                    if let color = connection.profile.color {
+                    if let color = (model.profiles.first(where: { $0.id == connection.profile.id }) ?? connection.profile).color {
                         Circle().fill(sessionColor(color)).frame(width: 8, height: 8).help(color)
                     }
                 }.padding(.vertical, 1)
@@ -575,6 +587,12 @@ private struct SessionTab: View {
                 renaming = true
             }
             Button("Duplicate Tab") { model.duplicateTab(connection) }
+            Button("Session Settings…") {
+                if connection.temporary { model.editingTab = connection.id }
+                else if let profile = model.profiles.first(where: { $0.id == connection.profile.id }) {
+                    model.editing = ProfileDraft(profile)
+                }
+            }.disabled(!connection.temporary && model.profiles.first(where: { $0.id == connection.profile.id }) == nil)
             if connection.temporary {
                 Button("Save as Session…") { model.saveTemporaryProfile(connection) }
             } else if let profile = model.profiles.first(where: { $0.id == connection.profile.id }) {

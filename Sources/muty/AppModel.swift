@@ -69,6 +69,12 @@ final class AppModel: ObservableObject {
     @Published var newFolderPrompt = false
     @Published var bulkEditing: BulkEditRequest?
     @Published var editing: ProfileDraft?
+    @Published var editingTab: UUID?
+    var editingTabConnection: SSHConnection? { editingTab.flatMap { id in tabs.first { $0.id == id } } }
+    var confirmSessionSettingsChange: ((String, String) -> Bool)?
+    func confirmSessionSettings(_ title: String, text: String) -> Bool {
+        confirmSessionSettingsChange?(title, text) ?? confirm(title, text: text)
+    }
     @Published var operationStatus: String? { didSet { scheduleStatusDismissal() } }
     private var statusDismissal: Task<Void, Never>?
     @Published var errorMessage: String?
@@ -161,7 +167,6 @@ final class AppModel: ObservableObject {
         let ids = Set(rows.compactMap(\.profileID))
         let folders = rows.filter { $0.location == .folder }
         let affected = profiles.filter { profile in
-            guard profile.connectionType == .ssh else { return false }
             return ids.contains(profile.id) || folders.contains { row in
                 guard let folder = row.folderPath else { return true }
                 return profile.folder == folder || profile.folder?.hasPrefix(folder + "/") == true
@@ -172,7 +177,6 @@ final class AppModel: ObservableObject {
 
     func editFolderSessions(_ folder: String?) {
         let affected = profiles.filter { profile in
-            guard profile.connectionType == .ssh else { return false }
             guard let folder else { return true }
             return profile.folder == folder || profile.folder?.hasPrefix(folder + "/") == true
         }
@@ -181,9 +185,11 @@ final class AppModel: ObservableObject {
 
     func applyBulkEdit(_ request: BulkEditRequest, user: String?, keyID: UUID?,
                        changeJump: Bool, jumpID: UUID?, credentialID: UUID? = nil,
-                       sshEnabled: Bool? = nil, sftpEnabled: Bool? = nil) throws {
+                       sshEnabled: Bool? = nil, sftpEnabled: Bool? = nil,
+                       changeColor: Bool = false, color: String? = nil,
+                       changeTheme: Bool = false, terminalTheme: String? = nil) throws {
         guard !readOnly else { throw MutyError("Profiles are read-only.") }
-        guard !request.profiles.isEmpty else { throw MutyError("No SSH sessions in this folder.") }
+        guard !request.profiles.isEmpty else { throw MutyError("No sessions in this folder.") }
         guard request.profiles.allSatisfy({ original in profiles.contains(original) }) else {
             throw MutyError("Sessions changed. Close and reopen Bulk Edit.")
         }
@@ -193,24 +199,38 @@ final class AppModel: ObservableObject {
         if let keyID { _ = try keyLibrary.path(for: keyID) }
         let ids = Set(request.profiles.map(\.id))
         var updated = profiles
+        var authenticationIDs = Set<UUID>()
         for index in updated.indices where ids.contains(updated[index].id) {
-            if let sshEnabled { updated[index].sshEnabled = sshEnabled }
-            if let sftpEnabled { updated[index].sftpEnabled = sftpEnabled }
-            if user != nil || keyID != nil { updated[index].credentialID = nil }
-            if let shared {
-                updated[index].credentialID = shared.id; updated[index].user = shared.username
-                updated[index].authentication = .password; updated[index].savePassword = false
-                updated[index].keyID = nil; updated[index].identityFile = nil
+            if updated[index].connectionType == .ssh {
+                if let sshEnabled { updated[index].sshEnabled = sshEnabled }
+                if let sftpEnabled { updated[index].sftpEnabled = sftpEnabled }
+                if user != nil || keyID != nil { updated[index].credentialID = nil }
+                if let shared {
+                    updated[index].credentialID = shared.id; updated[index].user = shared.username
+                    updated[index].authentication = .password; updated[index].savePassword = false
+                    updated[index].keyID = nil; updated[index].identityFile = nil
+                }
+                if let user {
+                    updated[index].user = user.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if updated[index].user != profiles[index].user { updated[index].savePassword = false }
+                }
+                if let keyID {
+                    updated[index].keyID = keyID; updated[index].identityFile = nil
+                    updated[index].authentication = .identityFile; updated[index].savePassword = false
+                }
+                if changeJump { updated[index].jumpHostID = jumpID }
+                let original = profiles[index]
+                let changed = updated[index]
+                if changed.user != original.user || changed.keyID != original.keyID ||
+                    changed.identityFile != original.identityFile || changed.credentialID != original.credentialID ||
+                    changed.authentication != original.authentication || changed.savePassword != original.savePassword ||
+                    changed.jumpHostID != original.jumpHostID || changed.sshEnabled != original.sshEnabled ||
+                    changed.sftpEnabled != original.sftpEnabled {
+                    authenticationIDs.insert(original.id)
+                }
             }
-            if let user {
-                updated[index].user = user.trimmingCharacters(in: .whitespacesAndNewlines)
-                if updated[index].user != profiles[index].user { updated[index].savePassword = false }
-            }
-            if let keyID {
-                updated[index].keyID = keyID; updated[index].identityFile = nil
-                updated[index].authentication = .identityFile; updated[index].savePassword = false
-            }
-            if changeJump { updated[index].jumpHostID = jumpID }
+            if changeColor { updated[index].color = color }
+            if changeTheme { updated[index].terminalTheme = terminalTheme }
             updated[index] = try updated[index].validated()
         }
         // Validate the final graph, including sessions outside the edited folder.
@@ -223,7 +243,7 @@ final class AppModel: ObservableObject {
             }
         }
         try store.save(updated, folders: emptyFolders)
-        tabs.filter { ids.contains($0.profile.id) || $0.profile.jumpHostID.map(ids.contains) == true }
+        tabs.filter { authenticationIDs.contains($0.profile.id) || $0.profile.jumpHostID.map(authenticationIDs.contains) == true }
             .forEach { $0.revokeAuthentication() }
         profiles = updated
     }
@@ -724,6 +744,35 @@ final class AppModel: ObservableObject {
         editing = ProfileDraft(new: draft)
     }
 
+    func updateTemporaryTab(_ connection: SSHConnection, profile value: SessionProfile) throws {
+        guard connection.temporary, let index = tabs.firstIndex(where: { $0.id == connection.id }) else {
+            throw MutyError("Temporary session is no longer open.")
+        }
+        var updated = value
+        updated.id = connection.profile.id
+        updated.savePassword = false
+        updated.credentialID = nil
+        updated = try updated.validated()
+        let original = connection.profile
+        let transportChanged = updated.connectionType != original.connectionType ||
+            updated.host != original.host || updated.port != original.port || updated.user != original.user ||
+            updated.jumpHostID != original.jumpHostID || updated.authentication != original.authentication ||
+            updated.keyID != original.keyID || updated.identityFile != original.identityFile ||
+            updated.sshEnabled != original.sshEnabled || updated.sftpEnabled != original.sftpEnabled
+        if transportChanged {
+            guard confirmSessionSettings("Apply Session Settings?", text: "The current connection will restart with the updated settings.") else { return }
+            connection.disconnect()
+            let replacement = SSHConnection(profile: updated, manual: connection.manual, temporary: true,
+                                            credentials: passwordStore, transferQueueID: connection.transferQueueID)
+            replacement.tabName = connection.tabName
+            tabs[index] = replacement
+            selectedTab = replacement.id
+        } else {
+            connection.profile = updated
+            connection.setTheme(updated.terminalTheme ?? UserDefaults.standard.string(forKey: "terminalTheme") ?? TerminalColorScheme.mutyDark.rawValue)
+        }
+    }
+
     @discardableResult
     private func persist(_ updated: [SessionProfile]) -> Bool {
         guard !readOnly else { return false }
@@ -877,6 +926,51 @@ final class AppModel: ObservableObject {
         replacement.tabName = connection.tabName
         splitSlots = splitSlots.map { $0 == connection.id ? replacement.id : $0 }
         tabs[index] = replacement; selectedTab = replacement.id
+    }
+
+    func forgetBulkSavedPasswords(_ request: BulkEditRequest) throws {
+        guard !readOnly else { throw MutyError("Profiles are read-only.") }
+        guard !request.profiles.isEmpty,
+              request.profiles.allSatisfy({ profiles.contains($0) }) else {
+            throw MutyError("Sessions changed. Close and reopen Bulk Edit.")
+        }
+        let affected = request.profiles.filter { $0.connectionType == .ssh }
+        guard !affected.isEmpty else { throw MutyError("No SSH sessions selected.") }
+        let ids = Set(affected.map(\.id))
+        let passwordProfiles = affected.filter { $0.savePassword }
+        var secrets: [UUID: String] = [:]
+        if !passwordProfiles.isEmpty {
+            try preparePasswordStorage()
+            for profile in passwordProfiles {
+                secrets[profile.id] = try passwordStore.read(id: profile.id)
+            }
+        }
+        var updated = profiles
+        for index in updated.indices where ids.contains(updated[index].id) {
+            updated[index].savePassword = false
+            updated[index].credentialID = nil
+        }
+        tabs.filter { ids.contains($0.profile.id) || $0.profile.jumpHostID.map(ids.contains) == true }
+            .forEach { $0.revokeAuthentication() }
+        var deleted: [SessionProfile] = []
+        do {
+            for profile in passwordProfiles {
+                try passwordStore.delete(id: profile.id)
+                deleted.append(profile)
+            }
+            try store.save(updated, folders: emptyFolders)
+        } catch {
+            let originalError = error
+            var rollbackFailed = false
+            for profile in deleted {
+                guard let secret = secrets[profile.id] else { continue }
+                do { try passwordStore.write(id: profile.id, password: secret, name: profile.name, endpoint: profile.endpoint) }
+                catch { rollbackFailed = true }
+            }
+            if rollbackFailed { throw MutyError("Password deletion rollback failed. Check saved passwords for the selected sessions.") }
+            throw originalError
+        }
+        profiles = updated
     }
 
     @discardableResult

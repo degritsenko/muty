@@ -6,7 +6,19 @@ All notable public changes will be documented in this file. Group release notes 
 
 ### Added
 
+- Open session settings from a tab, including temporary Quick Connect and Local Shell tabs. Apply appearance changes immediately and reconnect temporary sessions when connection settings change.
+- Inspect SFTP file metadata and edit Unix permissions from a Properties window.
+- Name new Local Shell tabs after the machine hostname.
+
+- Forget saved passwords for selected SSH sessions through Bulk Edit, with confirmation and shared credential unlinking.
+
+- Assign session colors and terminal themes through Bulk Edit. Override the global terminal theme per session, with inheritance by default and immediate updates to open terminals. Preserve overrides in configuration backups.
+
 - Choose from 16 built-in terminal color schemes, applied to open and new sessions. Preserve the original Dark and Light appearances as Muty Dark and Muty Light.
+
+### Fixed
+
+- Keep pending authentication intact when Bulk Edit changes only appearance. Update open-tab colors immediately and inherit the global theme for unknown imported scheme IDs.
 
 ## 0.7.9
 

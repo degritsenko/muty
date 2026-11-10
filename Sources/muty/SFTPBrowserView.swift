@@ -52,9 +52,22 @@ private struct SFTPFilePane: View {
     @ViewState private var namePrompt = false
     @ViewState private var creatingFile = false
     @ViewState private var name = ""
-    @ViewState private var permissionsFile: BrowserFile?
+    @ViewState private var propertiesFile: BrowserFile?
+    @ViewState private var propertiesAttributes: SFTPAttributes?
     @ViewState private var permissions = "0644"
-    @ViewState private var permissionsPrompt = false
+    @ViewState private var ownerRead = false
+    @ViewState private var ownerWrite = false
+    @ViewState private var ownerExecute = false
+    @ViewState private var groupRead = false
+    @ViewState private var groupWrite = false
+    @ViewState private var groupExecute = false
+    @ViewState private var otherRead = false
+    @ViewState private var otherWrite = false
+    @ViewState private var otherExecute = false
+    @ViewState private var setUID = false
+    @ViewState private var setGID = false
+    @ViewState private var sticky = false
+    @ViewState private var propertiesPrompt = false
     @ViewState private var renaming: BrowserFile?
     @ViewState private var sortOrder = [KeyPathComparator(\BrowserFile.name)]
     private var files: [BrowserFile] {
@@ -77,6 +90,76 @@ private struct SFTPFilePane: View {
     private var selection: Binding<Set<String>> { remote ? $browser.remoteSelection : $browser.localSelection }
     private var directory: String { remote ? browser.remotePath : browser.localPath }
     private var unavailable: Bool { browser.busy || (remote && (browser.disconnected || browser.remotePath.isEmpty)) }
+
+    private var propertiesSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Properties").font(.title2)
+            if let file = propertiesFile, let attributes = propertiesAttributes {
+                Form {
+                    Section("General") {
+                        LabeledContent("Name", value: file.name)
+                        LabeledContent("Location", value: (file.path as NSString).deletingLastPathComponent)
+                        LabeledContent("Type", value: file.isDirectory ? "Folder" : "File")
+                        LabeledContent("Size", value: attributes.size.map { SFTPBrowserView.bytes($0) } ?? "Unavailable")
+                        LabeledContent("Modified", value: attributes.modified?.formatted(date: .long, time: .standard) ?? "Unavailable")
+                        LabeledContent("Owner", value: attributes.owner.map(String.init) ?? "Unavailable")
+                        LabeledContent("Group", value: attributes.group.map(String.init) ?? "Unavailable")
+                    }
+                    Section("Attributes") {
+                        TextField("Octal mode", text: $permissions).fontDesign(.monospaced)
+                            .onChange(of: permissions) { _, value in updatePermissionToggles(value) }
+                        LabeledContent("Executable") {
+                            Toggle("Set-User-ID", isOn: $setUID).labelsHidden().onChange(of: setUID) { _, _ in updateOctal() }
+                            Toggle("Set-Group-ID", isOn: $setGID).labelsHidden().onChange(of: setGID) { _, _ in updateOctal() }
+                            Toggle("Sticky", isOn: $sticky).labelsHidden().onChange(of: sticky) { _, _ in updateOctal() }
+                        }
+                        permissionRow("Owner", read: $ownerRead, write: $ownerWrite, execute: $ownerExecute)
+                        permissionRow("Group", read: $groupRead, write: $groupWrite, execute: $groupExecute)
+                        permissionRow("Other", read: $otherRead, write: $otherWrite, execute: $otherExecute)
+                    }
+                }.formStyle(.grouped)
+                Text("Owner and group IDs are read-only on this SFTP connection.").font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { propertiesPrompt = false }
+                    Button("Apply") {
+                        if let file = propertiesFile { browser.changePermissions(file, mode: permissions) }
+                        propertiesPrompt = false
+                    }.disabled(UInt32(permissions, radix: 8).map { $0 <= 0o7777 } != true)
+                }
+            }
+        }.padding(20).frame(width: 520, height: 650)
+    }
+
+    private func permissionRow(_ title: String, read: Binding<Bool>, write: Binding<Bool>, execute: Binding<Bool>) -> some View {
+        LabeledContent(title) {
+            Toggle("Read", isOn: read).onChange(of: read.wrappedValue) { _, _ in updateOctal() }
+            Toggle("Write", isOn: write).onChange(of: write.wrappedValue) { _, _ in updateOctal() }
+            Toggle("Execute", isOn: execute).onChange(of: execute.wrappedValue) { _, _ in updateOctal() }
+        }
+    }
+
+    private func applyPermissionBits(_ mode: UInt32) {
+        ownerRead = mode & 0o400 != 0; ownerWrite = mode & 0o200 != 0; ownerExecute = mode & 0o100 != 0
+        groupRead = mode & 0o040 != 0; groupWrite = mode & 0o020 != 0; groupExecute = mode & 0o010 != 0
+        otherRead = mode & 0o004 != 0; otherWrite = mode & 0o002 != 0; otherExecute = mode & 0o001 != 0
+        setUID = mode & 0o4000 != 0; setGID = mode & 0o2000 != 0; sticky = mode & 0o1000 != 0
+        permissions = String(format: "%04o", mode & 0o7777)
+    }
+
+    private func updatePermissionToggles(_ value: String) {
+        guard let mode = UInt32(value, radix: 8), mode <= 0o7777 else { return }
+        applyPermissionBits(mode)
+    }
+
+    private func updateOctal() {
+        var mode: UInt32 = 0
+        if ownerRead { mode |= 0o400 }; if ownerWrite { mode |= 0o200 }; if ownerExecute { mode |= 0o100 }
+        if groupRead { mode |= 0o040 }; if groupWrite { mode |= 0o020 }; if groupExecute { mode |= 0o010 }
+        if otherRead { mode |= 0o004 }; if otherWrite { mode |= 0o002 }; if otherExecute { mode |= 0o001 }
+        if setUID { mode |= 0o4000 }; if setGID { mode |= 0o2000 }; if sticky { mode |= 0o1000 }
+        permissions = String(format: "%04o", mode)
+    }
     var body: some View {
         VStack(spacing: 7) {
             HStack {
@@ -124,10 +207,15 @@ private struct SFTPFilePane: View {
                     Button("Edit…") {
                         if let file = files.first(where: { ids.contains($0.id) }) { browser.openEditor(file, readOnly: false) }
                     }.disabled(ids.count != 1 || unavailable || files.contains { ids.contains($0.id) && ($0.isDirectory || $0.isSymlink) })
-                    Button("Permissions…") {
+                    Button("Properties…") {
                         if let file = files.first(where: { ids.contains($0.id) }) {
                             Task {
-                                do { permissions = try await browser.currentPermissions(file); permissionsFile = file; permissionsPrompt = true }
+                                do {
+                                    let attributes = try await browser.properties(file)
+                                    propertiesFile = file; propertiesAttributes = attributes
+                                    applyPermissionBits(attributes.permissions ?? 0)
+                                    propertiesPrompt = true
+                                }
                                 catch { browser.error = error.localizedDescription }
                             }
                         }
@@ -156,11 +244,7 @@ private struct SFTPFilePane: View {
         .controlSize(.small)
         .onAppear { path = directory }
         .onChange(of: directory) { _, value in path = value }
-        .alert("Unix Permissions", isPresented: $permissionsPrompt) {
-            TextField("Octal mode (0644)", text: $permissions)
-            Button("Cancel", role: .cancel) {}
-            Button("Apply") { if let file = permissionsFile { browser.changePermissions(file, mode: permissions) } }
-        }
+        .sheet(isPresented: $propertiesPrompt) { propertiesSheet }
         .alert(renaming != nil ? "Rename Item" : creatingFile ? "New File" : "New Folder", isPresented: $namePrompt) {
             TextField("Name", text: $name)
             Button("Cancel", role: .cancel) {}
