@@ -29,6 +29,7 @@ final class AppModel: ObservableObject {
     @Published var selectedProfile: UUID?
     @Published var selectedFolder: String? = nil
     @Published private var emptyFolders: [String] = []
+    @Published private var folderColors: [String: String] = [:]
     @Published var tabs: [SSHConnection] = [] { didSet { persistWorkspace() } }
     @Published var selectedTab: UUID? { didSet { persistWorkspace() } }
     let keyLibrary = SSHKeyLibrary()
@@ -87,6 +88,25 @@ final class AppModel: ObservableObject {
     private var workspaceReady = false
     private var workspaceBlocked = false
     var configurationFolders: [String] { emptyFolders }
+    func folderColor(_ path: String?) -> String? {
+        var current = path
+        while let value = current {
+            if let color = folderColors[value] { return color }
+            current = value.split(separator: "/").dropLast().joined(separator: "/")
+            if current?.isEmpty == true { current = nil }
+        }
+        return nil
+    }
+
+    func setFolderColor(_ color: String?, for path: String) {
+        guard !readOnly, folders.contains(path) else { return }
+        var updated = folderColors
+        if let color { updated[path] = color } else { updated.removeValue(forKey: path) }
+        do {
+            try store.save(profiles, folders: folders, folderColors: updated)
+            folderColors = updated
+        } catch { errorMessage = error.localizedDescription }
+    }
     var selectedConnection: SSHConnection? { tabs.first { $0.id == selectedTab } }
     func currentFolder(for connection: SSHConnection) -> String? {
         if !connection.temporary, let profile = profiles.first(where: { $0.id == connection.profile.id }) {
@@ -112,7 +132,7 @@ final class AppModel: ObservableObject {
         let vault = VaultStore(directory: store.directory)
         self.vault = vault; self.passwordStore = keychain ?? vault
         self.workspaceStore = WorkspaceStore(directory: store.directory)
-        do { profiles = try store.load(); emptyFolders = try store.loadFolders() }
+        do { profiles = try store.load(); emptyFolders = try store.loadFolders(); folderColors = try store.loadFolderColors() }
         catch { readOnly = true; errorMessage = error.localizedDescription }
         if vault.needsSetup && passwordStore is VaultStore {
             for index in profiles.indices { profiles[index].savePassword = false }
@@ -278,7 +298,7 @@ final class AppModel: ObservableObject {
             let configuration = ConfigurationBackup(sessions: profiles.map { profile in
                 let key = keyLibrary.keys.first { $0.id == profile.keyID }
                 return PortableSession(profile, keyName: key?.name, keyFingerprint: key?.fingerprint)
-            }, folders: configurationFolders, buttonBar: try SendStringButtonStore.shared.snapshot())
+            }, folders: configurationFolders, folderColors: folderColors, buttonBar: try SendStringButtonStore.shared.snapshot())
             for profile in profiles { progress?("Exporting session: " + profile.name) }
             progress?("Exporting \(configuration.folders.count) folders and Button Bar.")
             return FullBackup(configuration: configuration, passwords: [])
@@ -290,7 +310,7 @@ final class AppModel: ObservableObject {
             let profile = try effectiveProfile(profile)
             let key = keyLibrary.keys.first { $0.id == profile.keyID }
             return PortableSession(profile, keyName: key?.name, keyFingerprint: key?.fingerprint, includeCredentialLink: true)
-        }, folders: configurationFolders, buttonBar: try SendStringButtonStore.shared.snapshot())
+        }, folders: configurationFolders, folderColors: folderColors, buttonBar: try SendStringButtonStore.shared.snapshot())
         for profile in snapshot { progress?("Exporting session: " + profile.name) }
         progress?("Exporting \(configuration.folders.count) folders and Button Bar.")
         await Task.yield()
@@ -398,6 +418,7 @@ final class AppModel: ObservableObject {
         }
         let passwordSummary = "\(addedPasswords) missing passwords will be restored. \(replacedPasswords) existing passwords will be replaced. \(keptPasswords) existing passwords will be kept. Counts include session passwords and shared credentials."
         let folders = Array(Set(emptyFolders + backup.folders.compactMap(SessionProfile.canonicalFolder))).sorted()
+        let restoredFolderColors = backup.folderColors.filter { folders.contains($0.key) && ["Red", "Orange", "Yellow", "Green", "Blue", "Purple"].contains($0.value) }
         let addedFolderCount = Set(folders).subtracting(Set(configurationFolders)).count
         let incomingButtonBar = restoreButtonBar ? backup.buttonBar : nil
         var summaryLines = [
@@ -417,7 +438,7 @@ final class AppModel: ObservableObject {
         if let candidate { try vault.replace(candidate) }
         do {
             if let incomingButtonBar { try SendStringButtonStore.shared.restore(incomingButtonBar) }
-            try store.save(updated, folders: folders)
+            try store.save(updated, folders: folders, folderColors: restoredFolderColors)
         }
         catch {
             progress?("Save failed. Rolling back changes…")
@@ -429,7 +450,7 @@ final class AppModel: ObservableObject {
             throw error
         }
         if hasSecrets { tabs.forEach { $0.revokeAuthentication() } }
-        profiles = updated; emptyFolders = folders
+        profiles = updated; emptyFolders = folders; folderColors = restoredFolderColors
         for profile in plan.profiles { progress?("Added session: " + profile.name) }
         for entry in backup.sessions where selected.contains(entry.id) && plan.existingIDs.contains(entry.id) {
             progress?("Kept existing session: " + entry.name)
@@ -591,13 +612,28 @@ final class AppModel: ObservableObject {
     }
 
     private func saveFolderChanges(_ profiles: [SessionProfile], folders: [String], mapping: [String: String]) throws {
-        guard !mapping.isEmpty else { try store.save(profiles, folders: folders); return }
+        var updatedColors = folderColors
+        if !mapping.isEmpty {
+            for (source, destination) in mapping {
+                let moved = updatedColors.filter { $0.key == source || $0.key.hasPrefix(source + "/") }
+                updatedColors = updatedColors.filter { !($0.key == source || $0.key.hasPrefix(source + "/")) }
+                for (path, color) in moved {
+                    updatedColors[destination + path.dropFirst(source.count)] = color
+                }
+            }
+        }
+        guard !mapping.isEmpty else {
+            try store.save(profiles, folders: folders, folderColors: updatedColors)
+            folderColors = updatedColors
+            return
+        }
         let buttons = SendStringButtonStore.shared
         let updated = try buttons.movingFolders(mapping)
         let checkpoint = buttons.checkpoint()
         try buttons.replace(updated)
-        do { try store.save(profiles, folders: folders) }
+        do { try store.save(profiles, folders: folders, folderColors: updatedColors) }
         catch { buttons.rollback(checkpoint); throw error }
+        folderColors = updatedColors
     }
 
     func renameFolder(_ folder: String, to name: String) {
@@ -633,7 +669,9 @@ final class AppModel: ObservableObject {
         }
         do {
             let names = folders.filter { $0 != folder && !$0.hasPrefix(folder + "/") }
-            try store.save(updated, folders: names)
+            let colors = folderColors.filter { $0.key != folder && !$0.key.hasPrefix(folder + "/") }
+            try store.save(updated, folders: names, folderColors: colors)
+            folderColors = colors
             profiles = updated; emptyFolders = names; selectedFolder = nil
         } catch { errorMessage = error.localizedDescription }
     }
@@ -745,7 +783,7 @@ final class AppModel: ObservableObject {
     }
 
     func updateTemporaryTab(_ connection: SSHConnection, profile value: SessionProfile) throws {
-        guard connection.temporary, let index = tabs.firstIndex(where: { $0.id == connection.id }) else {
+        guard connection.temporary, tabs.contains(where: { $0.id == connection.id }) else {
             throw MutyError("Temporary session is no longer open.")
         }
         var updated = value
@@ -764,9 +802,7 @@ final class AppModel: ObservableObject {
             connection.disconnect()
             let replacement = SSHConnection(profile: updated, manual: connection.manual, temporary: true,
                                             credentials: passwordStore, transferQueueID: connection.transferQueueID)
-            replacement.tabName = connection.tabName
-            tabs[index] = replacement
-            selectedTab = replacement.id
+            replaceTab(connection, with: replacement)
         } else {
             connection.profile = updated
             connection.setTheme(updated.terminalTheme ?? UserDefaults.standard.string(forKey: "terminalTheme") ?? TerminalColorScheme.mutyDark.rawValue)
@@ -919,13 +955,21 @@ final class AppModel: ObservableObject {
         } else if connection.running {
             guard confirm("Reconnect?", text: "The current connection will be closed.") else { return }
         }
-        guard let index = tabs.firstIndex(where: { $0.id == connection.id }) else { return }
+        guard tabs.contains(where: { $0.id == connection.id }) else { return }
         connection.disconnect()
         let replacement = SSHConnection(profile: latest, manual: manual || connection.manual, temporary: connection.temporary, credentials: passwordStore, ignoreSavedPassword: promptForPassword || connection.ignoreSavedPassword, transferQueueID: destinationChanged ? UUID() : connection.transferQueueID)
         configurePasswordSaving(replacement)
+        replaceTab(connection, with: replacement)
+    }
+
+    private func replaceTab(_ connection: SSHConnection, with replacement: SSHConnection) {
+        guard let index = tabs.firstIndex(where: { $0.id == connection.id }) else { return }
         replacement.tabName = connection.tabName
         splitSlots = splitSlots.map { $0 == connection.id ? replacement.id : $0 }
-        tabs[index] = replacement; selectedTab = replacement.id
+        if editingTab == connection.id { editingTab = replacement.id }
+        tabs[index] = replacement
+        selectedTab = replacement.id
+        syncSplitSelection()
     }
 
     func forgetBulkSavedPasswords(_ request: BulkEditRequest) throws {

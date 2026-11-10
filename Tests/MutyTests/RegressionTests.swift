@@ -869,11 +869,27 @@ final class RegressionTests {
         model.confirmSessionSettingsChange = { _, _ in false }
         try model.updateTemporaryTab(connection, profile: changedTransport)
         assert(model.tabs.first === connection && connection.profile.connectionType == .localShell)
+        let sibling = SSHConnection(profile: profile, manual: true, temporary: true, deferredStart: true)
+        model.tabs.append(sibling)
+        model.selectedTab = connection.id
+        model.split("right", secondary: sibling.id)
         model.confirmSessionSettingsChange = { _, _ in true }
         try model.updateTemporaryTab(connection, profile: changedTransport)
         assert(model.tabs.first !== connection)
         assert(model.tabs.first?.profile.host == "example.invalid")
         assert(model.tabs.first?.tabName == "slowhands.local")
+        assert(model.splitSlots == [model.tabs.first!.id, sibling.id])
+        assert(model.selectedTab == model.tabs.first!.id)
+        assert(model.tabs[1] === sibling)
+        model.reconnect(sibling)
+        assert(model.tabs[1] !== sibling)
+        assert(model.splitSlots == model.tabs.map { Optional($0.id) })
+        assert(model.selectedTab == model.tabs[1].id)
+        model.split("none")
+        let current = model.tabs[1]
+        model.reconnect(current)
+        assert(model.splitSlots.isEmpty && model.splitMode == "none")
+        assert(model.selectedTab == model.tabs[1].id)
     }
 
     @MainActor func testCurrentFolderAndAtomicProfileSave() throws {
@@ -907,6 +923,26 @@ final class RegressionTests {
         let contents = try FileManager.default.contentsOfDirectory(atPath: directory.path)
         assert(!contents.contains(where: { $0.hasPrefix(".profiles-") }))
         assert(!original.isEmpty)
+    }
+    @MainActor func testFolderColorPersistenceAndInheritance() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProfileStore(directory: directory)
+        try store.save([], folders: ["Prod", "Prod/DB"])
+        let model = AppModel(store: store, keychain: LockedCredentials())
+        model.setFolderColor("Green", for: "Prod")
+        assert(model.folderColor("Prod/DB") == "Green")
+        model.setFolderColor("Purple", for: "Prod/DB")
+        assert(model.folderColor("Prod/DB") == "Purple")
+        model.setFolderColor(nil, for: "Prod/DB")
+        assert(model.folderColor("Prod/DB") == "Green")
+        model.renameFolder("Prod", to: "Archive")
+        assert(model.folderColor("Archive") == "Green")
+        assert(model.folderColor("Archive/DB") == "Green")
+        let colors = try store.loadFolderColors()
+        assert(colors["Archive"] == "Green")
+        let reopened = AppModel(store: store, keychain: LockedCredentials())
+        assert(reopened.folderColor("Archive/DB") == "Green")
     }
     func testFolderCanonicalization() {
         assert(SessionProfile.canonicalFolder(" / Prod // DB / ") == "Prod/DB")
@@ -1280,6 +1316,7 @@ final class RegressionTests {
             ("ui.quickAddressPasteAndColor", tests.testQuickAddressAndPasteSafety),
             ("profiles.folderCanonicalization", tests.testFolderCanonicalization),
             ("profiles.currentFolderAndAtomicSave", tests.testCurrentFolderAndAtomicProfileSave),
+            ("folders.colorPersistenceAndInheritance", tests.testFolderColorPersistenceAndInheritance),
             ("buttons.setsMigrationAndBackup", tests.testButtonSetsMigrationAndBackup),
             ("sessions.importMobaXterm", tests.testMobaXtermSessions),
             ("profiles.rejectInvalidEndpoint", tests.testInvalidEndpointRejected),

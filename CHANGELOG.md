@@ -6,6 +6,8 @@ All notable public changes will be documented in this file. Group release notes 
 
 ### Added
 
+- Color folders with the session palette. Nested folders inherit their nearest colored parent unless assigned their own color.
+- Use one font size for the saved-session and terminal search fields.
 - Open session settings from a tab, including temporary Quick Connect and Local Shell tabs. Apply appearance changes immediately and reconnect temporary sessions when connection settings change.
 - Inspect SFTP file metadata and edit Unix permissions from a Properties window.
 - Name new Local Shell tabs after the machine hostname.
@@ -18,6 +20,7 @@ All notable public changes will be documented in this file. Group release notes 
 
 ### Fixed
 
+- Preserve split pane assignments when temporary session settings restart a connection. Use the same tab replacement flow for session settings and reconnect.
 - Keep pending authentication intact when Bulk Edit changes only appearance. Update open-tab colors immediately and inherit the global theme for unknown imported scheme IDs.
 
 ## 0.7.9

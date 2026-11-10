@@ -13,6 +13,8 @@ Native SSH and SFTP client for macOS. Built with SwiftUI and SwiftTerm, powered 
 - SecureCRT and MobaXterm session import.
 - Local credential vault and encrypted backups. Forget saved passwords for selected SSH sessions through Bulk Edit, including unlinking shared credentials.
 - Open session settings directly from a tab, including temporary connections. Inspect remote SFTP file properties and edit Unix permissions.
+- Color Session Manager folders with the session palette. Nested folders inherit their nearest colored parent unless assigned their own color.
+- The Session Manager and terminal search fields use the same toolbar font size.
 
 ![Two-pane SFTP browser connected to a disposable demo server](docs/screenshot.png)
 

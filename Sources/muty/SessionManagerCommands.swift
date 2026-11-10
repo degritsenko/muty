@@ -34,6 +34,7 @@ struct SessionManagerCommands: NSViewRepresentable {
 }
 
 struct TerminalSearchField: NSViewRepresentable {
+    static let toolbarFont = SavedSessionSearchField.toolbarFont
     @Binding var text: String
     let request: UUID
     var submit: () -> Void
@@ -49,6 +50,7 @@ struct TerminalSearchField: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSSearchField {
         let field = NSSearchField(); field.placeholderString = "Find in terminal"; field.controlSize = .small
+        field.font = Self.toolbarFont
         field.delegate = context.coordinator; field.target = context.coordinator; field.action = #selector(Coordinator.search(_:))
         field.sendsSearchStringImmediately = false; field.sendsWholeSearchString = true
         field.setAccessibilityLabel("Find in terminal")

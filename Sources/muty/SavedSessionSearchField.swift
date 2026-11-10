@@ -24,6 +24,7 @@ private final class SessionSuggestionsPanel: NSPanel {
 }
 
 struct SavedSessionSearchField: NSViewRepresentable {
+    static let toolbarFont = NSFont.systemFont(ofSize: 13)
     @ObservedObject var model: AppModel
     var onSelect: ((SessionProfile) -> Void)? = nil
     var selectedName: String? = nil
@@ -36,7 +37,7 @@ struct SavedSessionSearchField: NSViewRepresentable {
         field.placeholderString = "Find saved session"
         field.setAccessibilityLabel("Find saved session")
         field.controlSize = .small
-        field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        field.font = Self.toolbarFont
         field.delegate = context.coordinator
         field.target = context.coordinator
         field.action = #selector(Coordinator.submit(_:))

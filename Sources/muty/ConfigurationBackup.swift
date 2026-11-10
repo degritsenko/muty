@@ -6,12 +6,19 @@ struct ConfigurationBackup: Codable, Identifiable {
     var version = 1
     var sessions: [PortableSession]
     var folders: [String]
+    var folderColors: [String: String] = [:]
     var buttonBar: ButtonBarDocument? = nil
     // Transient credentials: never encoded by configuration-only export.
     var sourcePath: String? = nil
     var restoredPasswords: [UUID: String] = [:]
     var restoredCredentials: [SavedCredential] = []
-    private enum CodingKeys: String, CodingKey { case format, version, sessions, folders, buttonBar }
+    private enum CodingKeys: String, CodingKey { case format, version, sessions, folders, folderColors, buttonBar }
+    init(sessions: [PortableSession], folders: [String], folderColors: [String: String] = [:], buttonBar: ButtonBarDocument? = nil) {
+        self.sessions = sessions
+        self.folders = folders
+        self.folderColors = folderColors
+        self.buttonBar = buttonBar
+    }
     func validated() throws -> Self {
         guard format == "muty.sessions", version == 1, sessions.count <= 10000,
               Set(sessions.map(\.id)).count == sessions.count else {

@@ -154,6 +154,7 @@ struct ProfileStore {
         var version: Int
         var profiles: [SessionProfile]
         var folders: [String]?
+        var folderColors: [String: String]?
     }
     let directory: URL
     var file: URL { directory.appendingPathComponent("profiles.json") }
@@ -182,12 +183,17 @@ struct ProfileStore {
         return try JSONDecoder().decode(Document.self, from: Data(contentsOf: file)).folders ?? []
     }
 
-    func save(_ profiles: [SessionProfile], folders: [String] = []) throws {
+    func loadFolderColors() throws -> [String: String] {
+        guard FileManager.default.fileExists(atPath: file.path) else { return [:] }
+        return try JSONDecoder().decode(Document.self, from: Data(contentsOf: file)).folderColors ?? [:]
+    }
+
+    func save(_ profiles: [SessionProfile], folders: [String] = [], folderColors: [String: String] = [:]) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(Document(version: 1, profiles: profiles, folders: folders))
+        let data = try encoder.encode(Document(version: 1, profiles: profiles, folders: folders, folderColors: folderColors))
         var template = Array(directory.appendingPathComponent(".profiles-XXXXXX").path.utf8CString)
         let descriptor = mkstemp(&template)
         guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }

@@ -125,12 +125,12 @@ struct ContentView: View {
             }
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 10) {
-                    SavedSessionSearchField(model: model).frame(width: 190, height: 22)
+                    SavedSessionSearchField(model: model).frame(width: 190, height: 24)
                     Divider().frame(height: 18).padding(.horizontal, 6)
                     HStack(spacing: 4) {
                         TerminalSearchField(text: $terminalQuery, request: model.terminalFindRequest) {
                             findInTerminal(backward: false)
-                        }.frame(width: 190, height: 22)
+                        }.frame(width: 190, height: 24)
                         if !terminalQuery.isEmpty {
                             Button { terminalQuery = ""; matchFound = true } label: { Image(systemName: "xmark.circle.fill") }.help("Clear search")
                         }
@@ -361,6 +361,21 @@ struct ContentView: View {
                             model.selectedFolder = row.folderPath; model.newFolderPrompt = true
                         }.disabled(model.readOnly)
                         if let path = row.folderPath {
+                            Menu("Folder Color") {
+                                Button("Default") { model.setFolderColor(nil, for: path) }
+                                Divider()
+                                ForEach(["Red", "Orange", "Yellow", "Green", "Blue", "Purple"], id: \.self) { color in
+                                    Button {
+                                        model.setFolderColor(color, for: path)
+                                    } label: {
+                                        HStack {
+                                            Circle().fill(sessionColor(color)).frame(width: 8, height: 8)
+                                            Text(color)
+                                            if model.folderColor(path) == color { Image(systemName: "checkmark") }
+                                        }
+                                    }
+                                }
+                            }
                             Button("Rename Folder…") {
                                 renameFolder = path; renameValue = path; showRenamePrompt = true
                             }.disabled(model.readOnly)
@@ -851,7 +866,9 @@ private struct FolderBranch: View {
             DisclosureGroup {
                 AnyView(FolderBranch(parent: path, model: model, textFont: textFont))
             } label: {
-                Label { Text(String(path.split(separator: "/").last ?? "")).font(textFont).lineLimit(1) } icon: { Image(systemName: "folder.fill").foregroundStyle(.blue) }
+                Label { Text(String(path.split(separator: "/").last ?? "")).font(textFont).lineLimit(1) } icon: {
+                    Image(systemName: "folder.fill").foregroundStyle(model.folderColor(path).map(sessionColor) ?? .blue)
+                }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 2)
                     .contentShape(Rectangle())
