@@ -1,22 +1,5 @@
 import SwiftUI
 
-struct SFTPTransfer: Identifiable {
-    enum Kind { case upload, download, uploadDirectory, downloadDirectory }
-    enum State: String { case waiting = "Waiting", copying = "Copying", done = "Done", failed = "Failed", cancelled = "Cancelled", skipped = "Skipped" }
-    let id = UUID()
-    let kind: Kind
-    let source: String
-    var destination: String
-    var state: State = .waiting
-    var error: String?
-}
-@MainActor final class SFTPTransferQueue: ObservableObject {
-    @Published var items: [SFTPTransfer] = []
-    @Published var paused = false
-    var owner = UUID()
-    var localPath: String?
-    var remotePath: String?
-}
 struct SFTPTransfersView: View {
     @ObservedObject var queue: SFTPTransferQueue
     @ObservedObject var browser: SFTPBrowserModel
@@ -41,7 +24,7 @@ struct SFTPTransfersView: View {
                     Button("Retry Failed") { browser.retryTransfers() }.disabled(browser.busy || browser.disconnected)
                 }
                 Button(expanded ? "Hide" : "Show") { expanded.toggle() }
-                Button("Clear") { queue.items.removeAll { [.done, .skipped, .failed, .cancelled].contains($0.state) } }.disabled(browser.busy)
+                Button("Clear") { queue.clearFinished() }.disabled(browser.busy)
             }
             if expanded {
             List(queue.items) { item in

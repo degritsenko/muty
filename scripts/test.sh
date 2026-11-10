@@ -9,7 +9,7 @@ for object in "$bin"/muty.build/*.swift.o "$bin"/SwiftTerm.build/*.o "$bin"/Muty
  [[ "$object" == "$bin"/muty.build/* && ! -f "Sources/muty/$(basename "${object%.o}")" ]] && continue
  objects+=("$object")
 done
-swiftc -parse-as-library -enable-testing -I "$bin/Modules" -Xcc -fmodule-map-file="$bin/SecureCRTSupport.build/module.modulemap" -Xcc -I -Xcc "$PWD/Sources/SecureCRTSupport/include" Tests/MutyTests/RegressionTests.swift "${objects[@]}" -o "$bin/muty-regression-tests"
+swiftc -parse-as-library -enable-testing -I "$bin/Modules" -Xcc -fmodule-map-file="$bin/SecureCRTSupport.build/module.modulemap" -Xcc -I -Xcc "$PWD/Sources/SecureCRTSupport/include" Tests/MutyTests/*.swift "${objects[@]}" -o "$bin/muty-regression-tests"
 python3 Tests/Support/run_cases.py "$bin/muty-regression-tests"
 
 python3 Tests/Support/test_askpass.py "$bin/muty-askpass"
