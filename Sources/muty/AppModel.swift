@@ -427,7 +427,20 @@ final class AppModel: ObservableObject {
         }
         let passwordSummary = "\(addedPasswords) missing passwords will be restored. \(replacedPasswords) existing passwords will be replaced. \(keptPasswords) existing passwords will be kept. Counts include session passwords and shared credentials."
         let folders = Array(Set(emptyFolders + backup.folders.compactMap(SessionProfile.canonicalFolder))).sorted()
-        let restoredFolderColors = backup.folderColors.filter { folders.contains($0.key) && ["Red", "Orange", "Yellow", "Green", "Blue", "Purple"].contains($0.value) }
+        var knownFolders = Set(folders)
+        for profile in updated {
+            var path = SessionProfile.canonicalFolder(profile.folder)
+            while let current = path {
+                knownFolders.insert(current)
+                let parent = current.split(separator: "/").dropLast().joined(separator: "/")
+                path = parent.isEmpty ? nil : parent
+            }
+        }
+        let validFolderColors = Set(["Red", "Orange", "Yellow", "Green", "Blue", "Purple"])
+        var restoredFolderColors = folderColors
+        for (path, color) in backup.folderColors where knownFolders.contains(path) && validFolderColors.contains(color) {
+            restoredFolderColors[path] = color
+        }
         let addedFolderCount = Set(folders).subtracting(Set(configurationFolders)).count
         let incomingButtonBar = restoreButtonBar ? backup.buttonBar : nil
         var summaryLines = [
