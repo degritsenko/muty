@@ -149,6 +149,12 @@ enum AuthenticationMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+struct ProfileCatalog {
+    var profiles: [SessionProfile]
+    var folders: [String]
+    var folderColors: [String: String]
+}
+
 struct ProfileStore {
     private struct Document: Codable {
         var version: Int
@@ -162,6 +168,26 @@ struct ProfileStore {
     init(directory: URL? = nil) {
         self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("muty", isDirectory: true)
+    }
+
+    func loadCatalog() throws -> ProfileCatalog {
+        guard FileManager.default.fileExists(atPath: file.path) else {
+            return ProfileCatalog(profiles: [], folders: [], folderColors: [:])
+        }
+        do {
+            let doc = try JSONDecoder().decode(Document.self, from: Data(contentsOf: file))
+            guard doc.version == 1 else { throw MutyError("Unsupported profiles version.") }
+            guard Set(doc.profiles.map(\.id)).count == doc.profiles.count else {
+                throw MutyError("Duplicate profile IDs.")
+            }
+            return ProfileCatalog(
+                profiles: try doc.profiles.map { try $0.validated() },
+                folders: doc.folders ?? [],
+                folderColors: doc.folderColors ?? [:]
+            )
+        } catch {
+            throw MutyError("Could not read \(file.path). The file was not changed. \(error.localizedDescription)")
+        }
     }
 
     func load() throws -> [SessionProfile] {
@@ -188,12 +214,17 @@ struct ProfileStore {
         return try JSONDecoder().decode(Document.self, from: Data(contentsOf: file)).folderColors ?? [:]
     }
 
-    func save(_ profiles: [SessionProfile], folders: [String] = [], folderColors: [String: String] = [:]) throws {
+    func save(_ profiles: [SessionProfile], folders: [String] = [], folderColors: [String: String]? = nil) throws {
+        let colors = folderColors ?? (try? loadCatalog().folderColors) ?? [:]
+        try save(ProfileCatalog(profiles: profiles, folders: folders, folderColors: colors))
+    }
+
+    func save(_ catalog: ProfileCatalog) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(Document(version: 1, profiles: profiles, folders: folders, folderColors: folderColors))
+        let data = try encoder.encode(Document(version: 1, profiles: catalog.profiles, folders: catalog.folders, folderColors: catalog.folderColors))
         var template = Array(directory.appendingPathComponent(".profiles-XXXXXX").path.utf8CString)
         let descriptor = mkstemp(&template)
         guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
