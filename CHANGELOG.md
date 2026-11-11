@@ -1,7 +1,5 @@
 # Changelog
 
-All notable public changes will be documented in this file. Group release notes under Added, Fixed, and Changed.
-
 ## 0.7.11
 
 ### Added
