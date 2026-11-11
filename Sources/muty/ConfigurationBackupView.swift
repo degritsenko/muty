@@ -38,8 +38,8 @@ struct ConfigurationImportView: View {
     @ViewState private var error: String?
     @StateObject private var log = BackupOperationLog()
     private var keys: [SSHKeyRecord] { model.keyLibrary.keys.filter { $0.pendingDeletion != true } }
-    private var plan: ConfigurationImportPlan {
-        ConfigurationImportPlan(backup: backup, existing: model.profiles, selected: selected, keyBindings: bindings, availableKeys: Set(keys.map(\.id)))
+    private var plan: ConfigurationRestorePlan {
+        ConfigurationRestorePlan(backup: backup, existing: model.profiles, selected: selected, keyBindings: bindings, availableKeys: Set(keys.map(\.id)))
     }
     init(model: AppModel, backup: ConfigurationBackup) {
         self.model = model; self.backup = backup

@@ -4,6 +4,7 @@ import AppKit
 struct TerminalPane: NSViewRepresentable {
     @ObservedObject var connection: SSHConnection
     var fontSize: Double
+    var fontName: String
     var selected: Bool
 
     final class Coordinator { var selected = false }
@@ -20,13 +21,13 @@ struct TerminalPane: NSViewRepresentable {
             terminal.topAnchor.constraint(equalTo: container.topAnchor),
             terminal.bottomAnchor.constraint(equalTo: container.bottomAnchor)
         ])
-        connection.setFontSize(fontSize)
+        connection.setFontSize(fontSize, fontName: fontName)
         DispatchQueue.main.async { connection.start() }
         return container
     }
 
     func updateNSView(_ view: NSView, context: Context) {
-        connection.setFontSize(fontSize)
+        connection.setFontSize(fontSize, fontName: fontName)
         let becameSelected = selected && !context.coordinator.selected
         context.coordinator.selected = selected
         if becameSelected {
