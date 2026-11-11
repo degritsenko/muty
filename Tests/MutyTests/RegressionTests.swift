@@ -54,20 +54,21 @@ final class RegressionTests {
     }
 
     func testSavedSessionSearch() {
-        var first = SessionProfile(); first.name = "ASA edge"; first.host = "10.0.0.1"; first.folder = "Cisco/KOR"
+        var first = SessionProfile(); first.name = "ASA edge"; first.host = "10.0.0.1"; first.folder = "Cisco  West/KOR"
         var second = SessionProfile(); second.name = "Backup"; second.host = "asa-backup.invalid"
         var third = SessionProfile(); third.name = "Other"; third.host = "other.invalid"; third.folder = "Archive/ASA"
         let profiles = [third, second, first]
         assert(SavedSessionSearch.matches(profiles, query: "").isEmpty)
         assert(SavedSessionSearch.matches(profiles, query: "  ").isEmpty)
-        assert(SavedSessionSearch.matches(profiles, query: " ASA ").map(\.id) == [first.id, second.id])
-        assert(SavedSessionSearch.matches(profiles, query: "cisco/kor").isEmpty)
-        assert(SavedSessionSearch.matches(profiles, query: "archive").isEmpty)
+        assert(SavedSessionSearch.matches(profiles, query: " ASA ").map(\.id) == [first.id, second.id, third.id])
+        assert(SavedSessionSearch.matches(profiles, query: "cisco  west/kor").map(\.id) == [first.id])
+        assert(SavedSessionSearch.matches(profiles, query: "cisco west kor").map(\.id) == [first.id])
+        assert(SavedSessionSearch.matches(profiles, query: "archive").map(\.id) == [third.id])
         assert(SavedSessionSearch.matches(profiles, query: "10.0.0.1").map(\.id) == [first.id])
         assert(SavedSessionSearch.matches(profiles, query: "missing.invalid").isEmpty)
         var linux = SessionProfile(); linux.name = "Database"; linux.host = "db.invalid"; linux.folder = "linux_MSR/ERSL"
         var lin = SessionProfile(); lin.name = "lin.gritsenko.me"; lin.host = "lin.gritsenko.me"
-        assert(SavedSessionSearch.matches([linux, lin], query: "lin").map(\.id) == [lin.id])
+        assert(SavedSessionSearch.matches([linux, lin], query: "lin").map(\.id) == [lin.id, linux.id])
         assert(SavedSessionSearch.matches([linux, lin], query: "lin.").map(\.id) == [lin.id])
     }
     @MainActor func testEditorEscapeAndCompletedTransfers() throws {
@@ -984,7 +985,20 @@ final class RegressionTests {
             sessions: [PortableSession(incoming, keyName: nil, keyFingerprint: nil)],
             folders: [], folderColors: ["Imported": "Red", "Imported/Only": "Green"]
         )
-        try model.importConfiguration(backup, selected: [incoming.id], keyBindings: [:])
+        let stale = try model.prepareRestore(backup, selected: [incoming.id], keyBindings: [:])
+        model.setFolderColor("Purple", for: "Local")
+        do {
+            try model.applyRestore(stale)
+            preconditionFailure("Stale restore plan was applied.")
+        } catch {
+            assert(error.localizedDescription.contains("Configuration changed"))
+        }
+        let persistedAfterRejection = try store.loadCatalog()
+        assert(persistedAfterRejection.profiles.map(\.id) == [local.id])
+        assert(persistedAfterRejection.folderColors["Local"] == "Purple")
+        model.setFolderColor("Blue", for: "Local")
+        let plan = try model.prepareRestore(backup, selected: [incoming.id], keyBindings: [:])
+        try model.applyRestore(plan)
 
         assert(model.folderColor("Local") == "Blue")
         assert(model.folderColor("Imported") == "Red")
@@ -992,6 +1006,92 @@ final class RegressionTests {
         let persisted = try store.loadFolderColors()
         assert(persisted["Local"] == "Blue" && persisted["Imported/Only"] == "Green")
     }
+    @MainActor func testWorkspaceSplitPersistence() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let defaults = UserDefaults.standard
+        let key = "restoreTabsOnLaunch"
+        let oldPreference = defaults.object(forKey: key)
+        defaults.set(true, forKey: key)
+        defer {
+            defaults.set(oldPreference, forKey: key)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        var profile = SessionProfile()
+        profile.host = "split.invalid"; profile.user = "tester"
+        let store = ProfileStore(directory: directory)
+        try store.save([profile])
+        let workspace = WorkspaceStore(directory: directory)
+        try workspace.save(WorkspaceDocument(tabs: [
+            .init(profileID: profile.id, name: "One"), .init(profileID: profile.id, name: "Two")
+        ], selectedIndex: 0))
+        let model = AppModel(store: store, keychain: LockedCredentials())
+        assert(model.splitMode == "none")
+        model.split("four", secondary: model.tabs[1].id)
+        model.splitColumnFraction = 0.6
+        model.splitRowFraction = 0.4
+        model.moveTab(model.tabs[1].id, to: 3)
+        let reopened = AppModel(store: store, keychain: LockedCredentials())
+        assert(reopened.splitMode == "four")
+        assert(reopened.splitColumnFraction == 0.6 && reopened.splitRowFraction == 0.4)
+        assert(reopened.splitSlots == [reopened.tabs[0].id, nil, nil, reopened.tabs[1].id])
+        assert(reopened.selectedTab == reopened.tabs[1].id)
+        reopened.reorderTabs(from: reopened.tabs[1].id, to: reopened.tabs[0].id)
+        let reordered = AppModel(store: store, keychain: LockedCredentials())
+        assert(reordered.tabs.map(\.tabName) == ["Two", "One"])
+        assert(reordered.splitSlots == [reordered.tabs[1].id, nil, nil, reordered.tabs[0].id])
+        assert(reordered.selectedTab == reordered.tabs[0].id)
+
+        try workspace.save(WorkspaceDocument(tabs: [
+            .init(profileID: profile.id, name: "Hidden"), .init(profileID: profile.id, name: "Visible")
+        ], selectedIndex: nil, split: .init(mode: "right", slots: [nil, 1], activeIndex: 0)))
+        let missing = AppModel(store: store, keychain: LockedCredentials())
+        assert(missing.splitSlots == [nil, missing.tabs[1].id])
+        assert(missing.selectedTab == missing.tabs[1].id)
+        missing.cycleTab(1)
+        assert(missing.selectedTab == missing.tabs[1].id)
+        assert(missing.splitSlots == [nil, missing.tabs[1].id])
+
+        missing.split("four")
+        let extra = SSHConnection(profile: profile, manual: true, deferredStart: true)
+        missing.tabs.append(extra)
+        missing.moveTab(extra.id, to: 3)
+        let slots = missing.splitSlots
+        missing.cycleTab(1)
+        assert(missing.selectedTab == missing.tabs[1].id && missing.splitSlots == slots)
+        missing.cycleTab(-1)
+        assert(missing.selectedTab == extra.id && missing.splitSlots == slots)
+        missing.selectTab(missing.tabs[0].id)
+        assert(missing.splitSlots[1] == missing.tabs[0].id)
+        assert(missing.splitSlots[3] == extra.id)
+        let moved = missing.tabs[0]
+        missing.moveTab(moved.id, to: 3, before: extra.id)
+        assert(missing.splitGroups[3].tabs == [moved.id, extra.id])
+        assert(missing.tabs[0] === moved)
+        let migrated = AppModel(store: store, keychain: LockedCredentials())
+        assert(migrated.splitGroups[3].tabs == [migrated.tabs[0].id, migrated.tabs[2].id])
+        assert(migrated.splitSlots[3] == migrated.tabs[0].id)
+        let original = TerminalPaneLayout(mode: "three", size: CGSize(width: 800, height: 600), x: 0.5, y: 0.5)
+        let mirrored = TerminalPaneLayout(mode: "three-left", size: CGSize(width: 800, height: 600), x: 0.5, y: 0.5)
+        assert(original.frames.map(\.height) == [600, 300, 299] && original.rowStart == 401 && original.rowWidth == 399)
+        assert(mirrored.frames.map(\.height) == [300, 299, 600] && mirrored.rowStart == 0 && mirrored.rowWidth == 400)
+        migrated.split("three")
+        let groups = migrated.splitGroups.map(\.tabs)
+        let selected = migrated.selectedTab
+        migrated.splitColumnFraction = 0.6
+        migrated.splitRowFraction = 0.4
+        migrated.split("three-left")
+        assert(migrated.splitGroups.map(\.tabs) == groups && migrated.selectedTab == selected)
+        let restoredMirror = AppModel(store: store, keychain: LockedCredentials())
+        assert(restoredMirror.splitMode == "three-left")
+        assert(restoredMirror.splitColumnFraction == 0.6 && restoredMirror.splitRowFraction == 0.4)
+        assert(restoredMirror.splitGroups.map { $0.tabs.count } == groups.map(\.count))
+        assert(restoredMirror.selectedConnection?.tabName == migrated.selectedConnection?.tabName)
+        missing.split("none")
+        assert(missing.tabs.map(\.id) == [missing.tabs[0].id, moved.id, extra.id])
+        missing.cycleTab(1)
+        assert(missing.selectedTab == extra.id)
+    }
+
     func testMobaXtermSessions() throws {
         let export = [
             "[Bookmarks]", "SubRep=", "ImgNum=42",
@@ -1362,6 +1462,7 @@ final class RegressionTests {
             ("backups.legacyFolderColors", tests.testLegacyConfigurationBackupWithoutFolderColors),
             ("backups.restoreFolderColors", tests.testConfigurationRestorePreservesFolderColors),
             ("profiles.currentFolderAndAtomicSave", tests.testCurrentFolderAndAtomicProfileSave),
+            ("workspace.splitPersistence", tests.testWorkspaceSplitPersistence),
             ("folders.colorPersistenceAndInheritance", tests.testFolderColorPersistenceAndInheritance),
             ("buttons.setsMigrationAndBackup", tests.testButtonSetsMigrationAndBackup),
             ("sessions.importMobaXterm", tests.testMobaXtermSessions),

@@ -149,7 +149,7 @@ enum AuthenticationMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct ProfileCatalog {
+struct ProfileCatalog: Equatable {
     var profiles: [SessionProfile]
     var folders: [String]
     var folderColors: [String: String]

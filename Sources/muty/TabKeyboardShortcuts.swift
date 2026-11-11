@@ -18,8 +18,8 @@ struct TabKeyboardShortcuts: NSViewRepresentable {
                 let modifiers = event.modifierFlags.intersection([.command, .control, .shift, .option])
                 let index: Int
                 if event.keyCode == 48, modifiers == .control || modifiers == [.control, .shift] {
-                    let current = model.tabs.firstIndex { $0.id == model.selectedTab } ?? 0
-                    index = (current + (modifiers.contains(.shift) ? -1 : 1) + model.tabs.count) % model.tabs.count
+                    model.cycleTab(modifiers.contains(.shift) ? -1 : 1)
+                    return nil
                 } else if modifiers == .command,
                           let number = [UInt16(18): 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9][event.keyCode] {
                     index = number - 1

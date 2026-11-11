@@ -2,11 +2,23 @@
 
 All notable public changes will be documented in this file. Group release notes under Added, Fixed, and Changed.
 
-## Unreleased
+## 0.7.11
 
 ### Added
 
 - Send Ctrl+C from a Button Bar button with the `\x03` escape.
+- Search saved sessions by folder path.
+- Give each split pane its own tab group. Drag live tabs between panes and restore saved groups after relaunch.
+- Add the Two Left + Right layout to the Window menu.
+- Save named SFTP bookmarks for pairs of local and remote directories.
+- Choose a session for each split pane and remember the selected Button Bar for each open tab.
+
+### Fixed
+
+- Cycle through visible panes with Ctrl+Tab and Ctrl+Shift+Tab in split layouts.
+- Prevent a crash when closing the last Local Shell tab.
+- Preserve folder colors when saving changes to the session catalog. Thanks to @zurkiryy for PR #6.
+- Restore folder colors from backups and retain local colors for folders absent from the backup. Thanks to @zurkiryy for PR #7.
 
 ## 0.7.10
 
@@ -28,6 +40,11 @@ All notable public changes will be documented in this file. Group release notes 
 
 - Preserve split pane assignments when temporary session settings restart a connection. Use the same tab replacement flow for session settings and reconnect.
 - Keep pending authentication intact when Bulk Edit changes only appearance. Update open-tab colors immediately and inherit the global theme for unknown imported scheme IDs.
+
+### Changed
+
+- Thank you to @zurkiryy for contributing built-in terminal color schemes in PR #3.
+- Thank you to @zurkiryy for contributing the SFTP transfer queue improvements in PR #4.
 
 ## 0.7.9
 

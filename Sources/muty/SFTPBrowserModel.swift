@@ -2,11 +2,37 @@ import Foundation
 import AppKit
 import Darwin
 
+struct SFTPBookmark: Codable, Identifiable {
+    var id = UUID()
+    let name: String
+    let localPath: String
+    let remotePath: String
+}
+
+@MainActor final class SFTPBookmarks: ObservableObject {
+    static let shared = SFTPBookmarks()
+    @Published private(set) var byDestination: [String: [SFTPBookmark]]
+    private let key = "sftp-bookmarks"
+
+    private init() {
+        byDestination = UserDefaults.standard.data(forKey: "sftp-bookmarks")
+            .flatMap { try? JSONDecoder().decode([String: [SFTPBookmark]].self, from: $0) } ?? [:]
+    }
+
+    func save(_ bookmarks: [SFTPBookmark], for destination: String) throws {
+        var updated = byDestination
+        updated[destination] = bookmarks.isEmpty ? nil : bookmarks
+        UserDefaults.standard.set(try JSONEncoder().encode(updated), forKey: key)
+        byDestination = updated
+    }
+}
+
 @MainActor final class SFTPBrowserModel: ObservableObject {
     let id = UUID()
     let transferQueue: SFTPTransferQueue
     private let endpoint: String?
     private let sessionID: UUID
+    let bookmarkDestination: String?
     @Published private(set) var localPath = FileManager.default.homeDirectoryForCurrentUser.path
     @Published private(set) var remotePath = ""
     @Published private(set) var localFiles: [BrowserFile] = []
@@ -29,14 +55,67 @@ import Darwin
     private weak var app: AppModel?
     var visibleLocal: [BrowserFile] { localFiles.filter { showHidden || !$0.name.hasPrefix(".") } }
     var visibleRemote: [BrowserFile] { remoteFiles.filter { showHidden || !$0.name.hasPrefix(".") } }
-    init(client: SFTPClient, app: AppModel, sessionID: UUID, transferQueue: SFTPTransferQueue, endpoint: String? = nil) {
+    init(client: SFTPClient, app: AppModel, sessionID: UUID, transferQueue: SFTPTransferQueue, endpoint: String? = nil, jumpEndpoint: String? = nil, temporary: Bool = false) {
         self.endpoint = endpoint
+        let bookmarkScope = temporary ? "quick-connect" : sessionID.uuidString
+        bookmarkDestination = endpoint.map { bookmarkScope + "|" + String($0.count) + ":" + $0 + (jumpEndpoint ?? "") }
         self.client = client; self.app = app; self.sessionID = sessionID
         self.transferQueue = transferQueue
         transferQueue.attach(owner: id, executor: SFTPTransferAdapter(client: client))
         let saved = UserDefaults.standard.string(forKey: "sftp-local-" + sessionID.uuidString)
         navigateLocal(transferQueue.localPath ?? saved ?? localPath)
     }
+    func promptForBookmark() {
+        let alert = NSAlert()
+        alert.messageText = "Add SFTP Bookmark"
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "Name"
+        field.setAccessibilityLabel("Bookmark name")
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        if alert.runModal() == .alertFirstButtonReturn { saveBookmark(named: field.stringValue) }
+    }
+
+    private func saveBookmark(named input: String) {
+        let name = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !busy, !disconnected, !name.isEmpty, let bookmarkDestination, !remotePath.isEmpty else { return }
+        let store = SFTPBookmarks.shared
+        let bookmarks = store.byDestination[bookmarkDestination] ?? []
+        guard !bookmarks.contains(where: { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) else {
+            error = "A bookmark with that name already exists."
+            return
+        }
+        do {
+            try store.save(bookmarks + [SFTPBookmark(name: name, localPath: localPath, remotePath: remotePath)],
+                           for: bookmarkDestination)
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func removeBookmark(_ bookmark: SFTPBookmark) {
+        guard let bookmarkDestination else { return }
+        let store = SFTPBookmarks.shared
+        do {
+            try store.save((store.byDestination[bookmarkDestination] ?? []).filter { $0.id != bookmark.id },
+                           for: bookmarkDestination)
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func openBookmark(_ bookmark: SFTPBookmark) {
+        guard !busy, !disconnected else { return }
+        do {
+            let local = try readLocalDirectory(bookmark.localPath)
+            run("Opening bookmark…", work: { client in
+                let path = try client.canonical(bookmark.remotePath)
+                return (path, try client.list(path))
+            }) { [weak self] remote in
+                self?.applyLocalDirectory(local)
+                self?.applyRemoteDirectory(remote)
+            }
+        } catch { self.error = error.localizedDescription }
+    }
+
     func start() {
         if remotePath.isEmpty && !busy && !disconnected {
             let saved = UserDefaults.standard.string(forKey: "sftp-remote-" + sessionID.uuidString)
@@ -50,21 +129,27 @@ import Darwin
     }
     func navigateLocal(_ path: String) {
         guard !busy else { return }
+        do { applyLocalDirectory(try readLocalDirectory(path)) }
+        catch { self.error = error.localizedDescription }
+    }
+
+    private func readLocalDirectory(_ path: String) throws -> (path: String, files: [BrowserFile]) {
         let url = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath, isDirectory: true).resolvingSymlinksInPath()
-        do {
-            let urls = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])
-            var entries: [BrowserFile] = []
-            for item in urls {
-                let values = try item.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])
-                entries.append(BrowserFile(name: item.lastPathComponent, path: item.path,
-                                           isDirectory: values.isDirectory == true && values.isSymbolicLink != true,
-                                           isSymlink: values.isSymbolicLink == true,
-                                           size: values.fileSize.map { UInt64(max(0, $0)) }, modified: values.contentModificationDate))
-            }
-            localPath = url.path; transferQueue.localPath = url.path
-            UserDefaults.standard.set(url.path, forKey: "sftp-local-" + sessionID.uuidString)
-            localFiles = BrowserFile.sorted(entries); localSelection = []; error = nil
-        } catch { self.error = error.localizedDescription }
+        let urls = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])
+        let entries = try urls.map { item in
+            let values = try item.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])
+            return BrowserFile(name: item.lastPathComponent, path: item.path,
+                               isDirectory: values.isDirectory == true && values.isSymbolicLink != true,
+                               isSymlink: values.isSymbolicLink == true,
+                               size: values.fileSize.map { UInt64(max(0, $0)) }, modified: values.contentModificationDate)
+        }
+        return (url.path, BrowserFile.sorted(entries))
+    }
+
+    private func applyLocalDirectory(_ directory: (path: String, files: [BrowserFile])) {
+        localPath = directory.path; transferQueue.localPath = directory.path
+        UserDefaults.standard.set(directory.path, forKey: "sftp-local-" + sessionID.uuidString)
+        localFiles = directory.files; localSelection = []; error = nil
     }
     func localUp() { navigateLocal((localPath as NSString).deletingLastPathComponent) }
     func localHome() { navigateLocal(FileManager.default.homeDirectoryForCurrentUser.path) }
@@ -79,14 +164,16 @@ import Darwin
                 let home = try client.canonical(".")
                 return (home, try client.list(home))
             }
-        }) { [weak self] value in
-            guard let self else { return }
-            remotePath = value.0; transferQueue.remotePath = value.0
-            UserDefaults.standard.set(value.0, forKey: "sftp-remote-" + sessionID.uuidString)
-            remoteFiles = value.1; remoteSelection = []
-            status = ""
-        }
+        }) { [weak self] value in self?.applyRemoteDirectory(value) }
     }
+
+    private func applyRemoteDirectory(_ directory: (path: String, files: [BrowserFile])) {
+        remotePath = directory.path; transferQueue.remotePath = directory.path
+        UserDefaults.standard.set(directory.path, forKey: "sftp-remote-" + sessionID.uuidString)
+        remoteFiles = directory.files; remoteSelection = []
+        status = ""
+    }
+
     func refresh() {
         guard !busy else { return }
         navigateLocal(localPath)

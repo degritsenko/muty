@@ -130,17 +130,7 @@ struct ButtonBarDocument: Codable {
     }
     func movingFolders(_ mapping: [String: String]) throws -> ButtonBarDocument {
         var updated = try snapshot()
-        var assignments = document.folderSets
-        let moved = document.folderSets.filter { folder, _ in
-            mapping.keys.contains { folder == $0 || folder.hasPrefix($0 + "/") }
-        }
-        for folder in moved.keys { assignments.removeValue(forKey: folder) }
-        for (folder, set) in moved {
-            guard let root = mapping.keys.first(where: { folder == $0 || folder.hasPrefix($0 + "/") }),
-                  let target = mapping[root] else { continue }
-            assignments[target + folder.dropFirst(root.count)] = set
-        }
-        updated.folderSets = assignments
+        updated.folderSets = FolderPaths.moveAssignments(updated.folderSets, using: mapping)
         return updated
     }
     func addStarterSets() throws -> UUID? {
@@ -234,16 +224,43 @@ struct ButtonBarDocument: Codable {
     }
 }
 
+enum ButtonBarSelection {
+    case defaultSet
+    case named(UUID)
+}
+
 struct SendStringButtonBar: View {
     @ObservedObject var model: AppModel
+    var tabSelection: Binding<ButtonBarSelection?>? = nil
     @ObservedObject private var store = SendStringButtonStore.shared
-    @ViewState private var selectedSet: UUID?
+    @ViewState private var standaloneSelection: UUID?
     @ViewState private var editingSet = false
     @ViewState private var setName = ""
     @ViewState private var setToRename: UUID?
 
     private var folder: String? {
         model.selectedConnection.flatMap { model.currentFolder(for: $0) }
+    }
+    private var selectedSet: UUID? {
+        get {
+            guard let tabSelection else {
+                return standaloneSelection.flatMap { id in
+                    store.document.sets.contains(where: { $0.id == id }) ? id : nil
+                }
+            }
+            switch tabSelection.wrappedValue {
+            case .some(.defaultSet): return nil
+            case .some(.named(let id)) where store.document.sets.contains(where: { $0.id == id }): return id
+            default: return store.assignedSet(for: folder)
+            }
+        }
+        nonmutating set {
+            if let tabSelection {
+                tabSelection.wrappedValue = newValue.map(ButtonBarSelection.named) ?? .defaultSet
+            } else {
+                standaloneSelection = newValue
+            }
+        }
     }
     private var title: String { store.document.sets.first { $0.id == selectedSet }?.name ?? "Default" }
     private var setPicker: some View {
@@ -259,7 +276,7 @@ struct SendStringButtonBar: View {
                     Button("Rename Set…") { setToRename = selectedSet; setName = title; editingSet = true }
                     Button("Remove Set…") {
                         guard model.confirm("Remove Button Set?", text: "Its buttons will move to Default.", action: "Remove") else { return }
-                        perform { try store.removeSet(selectedSet); self.selectedSet = nil }
+                        perform { try store.removeSet(selectedSet); followFolder() }
                     }
                 }
                 if let folder {
@@ -314,11 +331,6 @@ struct SendStringButtonBar: View {
         .font(.system(size: 12)).controlSize(.small)
         .padding(.horizontal, 8).padding(.vertical, 4).frame(height: 32)
         .background(.bar).contentShape(Rectangle())
-        .onChange(of: model.selectedTab, initial: true) { _, _ in followFolder() }
-        .onChange(of: folder) { _, _ in followFolder() }
-        .onChange(of: store.document.sets) { _, sets in
-            if let selectedSet, !sets.contains(where: { $0.id == selectedSet }) { followFolder() }
-        }
         .alert(setToRename == nil ? "New Button Set" : "Rename Button Set", isPresented: $editingSet) {
             TextField("Name", text: $setName)
             Button("Cancel", role: .cancel) {}
@@ -326,7 +338,10 @@ struct SendStringButtonBar: View {
         }
         .contextMenu { Button("New Button…") { edit(nil) }.disabled(store.loadError != nil) }
     }
-    private func followFolder() { selectedSet = store.assignedSet(for: folder) }
+    private func followFolder() {
+        tabSelection?.wrappedValue = nil
+        standaloneSelection = nil
+    }
     private func perform(_ action: () throws -> Void) {
         do { try action() } catch { model.errorMessage = error.localizedDescription }
     }

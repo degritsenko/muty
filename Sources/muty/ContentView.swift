@@ -143,10 +143,7 @@ struct ContentView: View {
         }
         .background(TabKeyboardShortcuts(model: model).frame(width: 0, height: 0))
         .onChange(of: terminalQuery) { _, _ in matchFound = true }
-        .onChange(of: model.selectedTab) { _, id in
-            matchFound = true
-            model.syncSplitSelection()
-        }
+        .onChange(of: model.selectedTab) { _, _ in matchFound = true }
         .sheet(isPresented: $model.fullBackupExport) { FullBackupExportView(model: model) }
         .sheet(item: $model.lockedBackup) { BackupUnlockView(model: model, backup: $0) }
         .sheet(item: $model.configurationImport) { ConfigurationImportView(model: model, backup: $0) }
@@ -418,45 +415,11 @@ struct ContentView: View {
                 if model.tabs.isEmpty {
                     Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    HStack(spacing: 8) {
-                    ScrollViewReader { proxy in
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 2) {
-                            ForEach(model.tabs) { connection in
-                                SessionTab(connection: connection, model: model,
-                                           selected: model.selectedTab == connection.id,
-                                           select: { model.selectTab(connection.id) },
-                                           close: { model.close(connection) })
-                                .id(connection.id)
-                                .onDrag { NSItemProvider(object: connection.id.uuidString as NSString) }
-                                .dropDestination(for: String.self) { items, _ in
-                                    guard let value = items.first, let source = UUID(uuidString: value) else { return false }
-                                    model.reorderTabs(from: source, to: connection.id)
-                                    return true
-                                }
-                            }
-                        }.padding(.horizontal, 6).padding(.vertical, 2)
-                    }.scrollIndicators(.hidden)
-                    .onChange(of: model.selectedTab) { _, id in
-                        if let id { proxy.scrollTo(id) }
-                    }
-                    .onChange(of: model.tabs.map(\.id)) { _, _ in
-                        if let id = model.selectedTab { proxy.scrollTo(id) }
-                    }
-                    }
-                    if let connection = model.selectedConnection,
-                       connection.profile.connectionType == .ssh, !connection.profile.tunnelOnly,
-                       connection.profile.sshEnabled, connection.profile.sftpEnabled {
-                        SessionModePicker(connection: connection, model: model)
-                            .padding(.trailing, 8)
-                    }
-                    }.frame(height: 26).background(.bar)
-                    Divider()
-                    TerminalWorkspace(model: model) { connection, index in
+                    TerminalWorkspace(model: model) { connection in
                         SessionPane(connection: connection, model: model, fontSize: fontSize,
                             scrollback: Int(scrollback.isFinite ? max(1000, min(50000, scrollback)) : 10000), theme: (model.profiles.first(where: { $0.id == connection.profile.id }) ?? connection.profile).terminalTheme ?? theme,
                             optionAsMetaKey: optionAsMetaKey, fontName: fontName,
-                            selected: model.selectedTab == connection.id, showPaneTitle: index != nil, paneIndex: index)
+                            selected: model.selectedTab == connection.id)
                     }
 
                 }
@@ -517,24 +480,28 @@ private struct SessionButtonBar: View {
     var body: some View {
         if !connection.showingSFTP {
             Divider()
-            SendStringButtonBar(model: model)
+            SendStringButtonBar(model: model, tabSelection: $connection.buttonBarSelection)
         }
     }
 }
 
-private struct SessionModePicker: View {
+struct SessionModePicker: View {
     @ObservedObject var connection: SSHConnection
     @ObservedObject var model: AppModel
 
     var body: some View {
         HStack(spacing: 2) {
             Button("SSH") {
+                model.selectTab(connection.id)
                 connection.showingSFTP = false
                 connection.terminal.window?.makeFirstResponder(connection.terminal)
             }
             .padding(.horizontal, 6).padding(.vertical, 2)
             .background(connection.showingSFTP ? Color.clear : Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
-            Button("SFTP") { connection.openFileBrowser(app: model) }
+            Button("SFTP") {
+                model.selectTab(connection.id)
+                connection.openFileBrowser(app: model)
+            }
                 .padding(.horizontal, 6).padding(.vertical, 2)
                 .background(connection.showingSFTP ? Color.accentColor.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 4))
                 .disabled(!connection.canOpenSFTP && connection.fileBrowser == nil)
@@ -544,7 +511,7 @@ private struct SessionModePicker: View {
     }
 }
 
-private struct SessionTab: View {
+struct SessionTab: View {
     @ObservedObject var connection: SSHConnection
     @ObservedObject var model: AppModel
     let selected: Bool
@@ -643,36 +610,10 @@ private struct SessionPane: View {
     let optionAsMetaKey: Bool
     let fontName: String
     let selected: Bool
-    var showPaneTitle = false
-    var paneIndex: Int?
     @ViewState private var tunnelsVisible = false
 
     var body: some View {
         VStack(spacing: 0) {
-            if showPaneTitle {
-                HStack(spacing: 8) {
-                    Text(connection.tabName ?? connection.profile.name)
-                        .font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                    Spacer(minLength: 4)
-                    if connection.profile.connectionType == .ssh {
-                        Text(connection.profile.endpoint).font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                    }
-                    if let paneIndex {
-                        Menu {
-                            ForEach(model.tabs) { tab in
-                                Button(tab.tabName ?? tab.profile.name) { model.assignSplitTab(tab.id, to: paneIndex) }
-                            }
-                        } label: { Image(systemName: "chevron.down") }
-                            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Choose session for this pane")
-                    }
-                }
-                .padding(.horizontal, 8).frame(height: 26)
-                .background(selected ? Color.accentColor.opacity(0.14) : Color(nsColor: .controlBackgroundColor))
-                .overlay(alignment: .bottom) { Rectangle().fill(selected ? Color.accentColor : Color.clear).frame(height: 2) }
-                .contentShape(Rectangle()).onTapGesture { model.selectTab(connection.id) }
-                .help(connection.profile.endpoint)
-            }
             if let tunnels = connection.activeTunnels, tunnels.entries.contains(where: { $0.active }) {
                 HStack {
                     Button("Active Tunnels (\(tunnels.entries.filter { $0.active }.count))…") { tunnelsVisible = true }
@@ -692,7 +633,10 @@ private struct SessionPane: View {
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
             }
             ZStack {
-                TerminalPane(connection: connection, fontSize: fontSize, selected: selected && !connection.showingSFTP)
+                TerminalPane(connection: connection, fontSize: fontSize, selected: selected && !connection.showingSFTP,
+                             onSelect: { [weak model, weak connection] in
+                                 if let connection { model?.selectTab(connection.id) }
+                             }, isCurrentSelection: { model.selectedTab == connection.id })
                     .opacity(connection.showingSFTP ? 0 : 1)
                     .allowsHitTesting(!connection.showingSFTP)
                     .accessibilityHidden(connection.showingSFTP)
@@ -704,6 +648,11 @@ private struct SessionPane: View {
             if showStatusBar && (connection.profile.connectionType == .ssh || connection.error != nil || (!connection.running && connection.status != "Not Started")) {
                 Divider()
                 ConnectionStatusBar(connection: connection)
+            }
+        }.onChange(of: selected) { _, selected in
+            if selected, connection.showingSFTP, let window = connection.terminal.window,
+               window.firstResponder is ReconnectTerminalView {
+                window.makeFirstResponder(nil)
             }
         }.sheet(isPresented: $tunnelsVisible) {
             if let tunnels = connection.activeTunnels { ActiveTunnelsView(manager: tunnels, model: model, profile: connection.profile) }

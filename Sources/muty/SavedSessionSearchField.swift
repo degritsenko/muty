@@ -5,16 +5,24 @@ enum SavedSessionSearch {
     static func matches(_ profiles: [SessionProfile], query: String) -> [SessionProfile] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return [] }
-        return profiles.filter {
-            [$0.name, $0.host].contains { $0.localizedStandardContains(query) }
-        }.sorted {
-            let leftPrefix = $0.name.lowercased().hasPrefix(query.lowercased()) || $0.host.lowercased().hasPrefix(query.lowercased())
-            let rightPrefix = $1.name.lowercased().hasPrefix(query.lowercased()) || $1.host.lowercased().hasPrefix(query.lowercased())
-            if leftPrefix != rightPrefix { return leftPrefix }
-            let order = $0.name.localizedStandardCompare($1.name)
-            if order != .orderedSame { return order == .orderedAscending }
-            return $0.id.uuidString < $1.id.uuidString
+        let lower = query.lowercased()
+        func folderSearchText(_ path: String) -> String {
+            path.split(whereSeparator: { $0 == "/" || $0.isWhitespace }).joined(separator: " ")
         }
+        let folderQuery = folderSearchText(query)
+        return profiles.compactMap { profile -> (profile: SessionProfile, rank: Int)? in
+            let direct = [profile.name, profile.host]
+            if direct.contains(where: { $0.lowercased().hasPrefix(lower) }) { return (profile, 0) }
+            if direct.contains(where: { $0.localizedStandardContains(query) }) { return (profile, 1) }
+            guard let folder = profile.folder, !folderQuery.isEmpty,
+                  folderSearchText(folder).localizedStandardContains(folderQuery) else { return nil }
+            return (profile, 2)
+        }.sorted { lhs, rhs in
+            if lhs.rank != rhs.rank { return lhs.rank < rhs.rank }
+            let order = lhs.profile.name.localizedStandardCompare(rhs.profile.name)
+            if order != .orderedSame { return order == .orderedAscending }
+            return lhs.profile.id.uuidString < rhs.profile.id.uuidString
+        }.map(\.profile)
     }
 }
 

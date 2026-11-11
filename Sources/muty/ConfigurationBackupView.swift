@@ -113,11 +113,12 @@ struct ConfigurationImportView: View {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Import") {
+                    let restorePlan: AppModel.ConfigurationRestorePlan
                     do {
-                        let summary = try model.importConfiguration(backup, selected: selected, keyBindings: bindings,
+                        restorePlan = try model.prepareRestore(backup, selected: selected, keyBindings: bindings,
                             restorePasswords: restorePasswords, replacePasswords: replacePasswords,
-                            restoreButtonBar: restoreButtonBar, previewOnly: true)
-                        guard model.confirm("Restore Backup?", text: summary, action: "Restore") else { return }
+                            restoreButtonBar: restoreButtonBar)
+                        guard model.confirm("Restore Backup?", text: restorePlan.summary, action: "Restore") else { return }
                     } catch {
                         self.error = error.localizedDescription
                         return
@@ -126,9 +127,7 @@ struct ConfigurationImportView: View {
                     Task { @MainActor in
                         await Task.yield()
                         do {
-                            try model.importConfiguration(backup, selected: selected, keyBindings: bindings,
-                                restorePasswords: restorePasswords, replacePasswords: replacePasswords,
-                                restoreButtonBar: restoreButtonBar, progress: { log.append($0) })
+                            try model.applyRestore(restorePlan, progress: { log.append($0) })
                             log.finish("Restore complete.")
                         } catch { log.fail(error) }
                     }

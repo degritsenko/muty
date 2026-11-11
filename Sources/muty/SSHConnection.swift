@@ -17,6 +17,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     private var proxyDirectory: URL?
     var onSavePassword: ((String) throws -> Void)?
     @Published var tabName: String?
+    @Published var buttonBarSelection: ButtonBarSelection?
     let manual: Bool
     let temporary: Bool
     private let deferredStart: Bool
@@ -181,7 +182,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         if fileBrowser == nil {
             let args = transport.clientArguments() + ["-T", "-p", String(profile.port), "-l", profile.user, "-s", "--", profile.host, "sftp"]
             let queue = app.transferQueue(for: transferQueueID, endpoint: profile.endpoint, jump: connectedJumpProfile)
-            fileBrowser = SFTPBrowserModel(client: SFTPClient(arguments: args), app: app, sessionID: profile.id, transferQueue: queue, endpoint: profile.endpoint)
+            fileBrowser = SFTPBrowserModel(client: SFTPClient(arguments: args), app: app, sessionID: profile.id, transferQueue: queue, endpoint: profile.endpoint, jumpEndpoint: connectedJumpProfile?.endpoint, temporary: temporary)
         }
         showingSFTP = true
         terminal.cancelPendingPaste()
@@ -449,6 +450,11 @@ final class ReconnectTerminalView: LocalProcessTerminalView {
     private var highlightTransformer = OutputHighlightTransformer()
     /// Overridable in tests; the app always uses the shared store.
     var highlightStore: OutputHighlightStore?
+    var onTerminalClick: (() -> Void)?
+    override func mouseDown(with event: NSEvent) {
+        onTerminalClick?()
+        super.mouseDown(with: event)
+    }
     var onFindRequested: (() -> Void)?
     override func performFindPanelAction(_ sender: Any?) {
         if let item = sender as? NSMenuItem, item.tag == Int(NSFindPanelAction.showFindPanel.rawValue), let onFindRequested {

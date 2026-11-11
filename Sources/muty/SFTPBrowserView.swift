@@ -4,8 +4,36 @@ import UniformTypeIdentifiers
 struct SFTPBrowserView: View {
     @ObservedObject var browser: SFTPBrowserModel
     let endpoint: String
+    @ObservedObject private var bookmarks = SFTPBookmarks.shared
+
+    private var destinationBookmarks: [SFTPBookmark] {
+        guard let destination = browser.bookmarkDestination else { return [] }
+        return (bookmarks.byDestination[destination] ?? []).sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
+            if browser.bookmarkDestination != nil {
+                HStack {
+                    Spacer()
+                    Menu("Bookmarks", systemImage: "bookmark") {
+                        Button("Add Current Directories…") { browser.promptForBookmark() }
+                        if !destinationBookmarks.isEmpty {
+                            Divider()
+                            ForEach(destinationBookmarks) { bookmark in
+                                Button(bookmark.name) { browser.openBookmark(bookmark) }
+                            }
+                            Menu("Remove Bookmark") {
+                                ForEach(destinationBookmarks) { bookmark in
+                                    Button(bookmark.name, role: .destructive) { browser.removeBookmark(bookmark) }
+                                }
+                            }
+                        }
+                    }.disabled(browser.busy || browser.disconnected || browser.remotePath.isEmpty)
+                }.controlSize(.small).padding(.horizontal, 8).padding(.vertical, 4)
+            }
             HSplitView {
                 SFTPFilePane(browser: browser, remote: false, title: "Local")
                 SFTPFilePane(browser: browser, remote: true, title: "Remote · " + endpoint)

@@ -107,6 +107,7 @@ struct MutyApp: App {
                     }
                 }.disabled(model.tabs.count < 2)
                 Button("3 Panes — Left + Two Right") { model.split("three") }.disabled(model.tabs.isEmpty)
+                Button("3 Panes — Two Left + Right") { model.split("three-left") }.disabled(model.tabs.isEmpty)
                 Button("4 Panes — Grid") { model.split("four") }.disabled(model.tabs.isEmpty)
                 Button("Single Pane") { model.split("none") }.disabled(model.splitMode == "none")
                 Divider()
@@ -161,9 +162,7 @@ struct MutyApp: App {
         fontSize = min(30, max(9, (fontSize.isFinite ? fontSize : 13) + delta))
     }
     private func cycle(_ direction: Int) {
-        guard !model.tabs.isEmpty else { return }
-        let current = model.tabs.firstIndex { $0.id == model.selectedTab } ?? 0
-        model.selectedTab = model.tabs[(current + direction + model.tabs.count) % model.tabs.count].id
+        model.cycleTab(direction)
     }
 }
 

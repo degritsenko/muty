@@ -5,6 +5,8 @@ struct TerminalPane: NSViewRepresentable {
     @ObservedObject var connection: SSHConnection
     var fontSize: Double
     var selected: Bool
+    var onSelect: () -> Void
+    var isCurrentSelection: () -> Bool
 
     final class Coordinator { var selected = false }
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -27,13 +29,15 @@ struct TerminalPane: NSViewRepresentable {
 
     func updateNSView(_ view: NSView, context: Context) {
         connection.setFontSize(fontSize)
+        connection.terminal.onTerminalClick = onSelect
         let becameSelected = selected && !context.coordinator.selected
         context.coordinator.selected = selected
         if becameSelected {
             DispatchQueue.main.async {
-                guard !connection.showingSFTP else { return }
-                if view.window?.firstResponder !== connection.terminal {
-                    view.window?.makeFirstResponder(connection.terminal)
+                guard isCurrentSelection(), !connection.showingSFTP,
+                      let window = view.window, window.isKeyWindow, window.attachedSheet == nil else { return }
+                if window.firstResponder !== connection.terminal {
+                    window.makeFirstResponder(connection.terminal)
                 }
             }
         }

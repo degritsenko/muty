@@ -6,6 +6,7 @@ struct TerminalPaneLayout {
     let column: CGFloat?
     let row: CGFloat?
     let rowStart: CGFloat
+    let rowWidth: CGFloat
     init(mode: String, size: CGSize, x: CGFloat, y: CGFloat) {
         let w = max(1, size.width), h = max(1, size.height)
         let minX = min(0.45, 180 / w), minY = min(0.45, 100 / h)
@@ -21,47 +22,63 @@ struct TerminalPaneLayout {
         case "three":
             frames = [left, CGRect(x: right.minX, y: 0, width: right.width, height: dy), CGRect(x: right.minX, y: dy + 1, width: right.width, height: bottom.height)]
             column = dx; row = dy; rowStart = right.minX
+        case "three-left":
+            frames = [CGRect(x: 0, y: 0, width: dx, height: dy),
+                      CGRect(x: 0, y: bottom.minY, width: dx, height: bottom.height), right]
+            column = dx; row = dy; rowStart = 0
         case "four":
             frames = [CGRect(x: 0, y: 0, width: dx, height: dy), CGRect(x: right.minX, y: 0, width: right.width, height: dy), CGRect(x: 0, y: bottom.minY, width: dx, height: bottom.height), CGRect(x: right.minX, y: bottom.minY, width: right.width, height: bottom.height)]
             column = dx; row = dy; rowStart = 0
         default: frames = [CGRect(origin: .zero, size: size)]; column = nil; row = nil; rowStart = 0
         }
+        rowWidth = mode == "three-left" ? dx : max(1, w - rowStart)
     }
 }
 
 struct TerminalWorkspace<Pane: View>: View {
     @ObservedObject var model: AppModel
-    let pane: (SSHConnection, Int?) -> Pane
-    @ViewState private var columnFraction: CGFloat = 0.5
-    @ViewState private var rowFraction: CGFloat = 0.5
+    let pane: (SSHConnection) -> Pane
+    private let tabBarHeight: CGFloat = 26
     var body: some View {
         GeometryReader { geometry in
-            let layout = TerminalPaneLayout(mode: model.splitMode, size: geometry.size, x: columnFraction, y: rowFraction)
-            let slots: [UUID?] = model.splitMode == "none" ? [model.selectedTab] : model.splitSlots
+            let layout = TerminalPaneLayout(mode: model.splitMode, size: geometry.size, x: model.splitColumnFraction, y: model.splitRowFraction)
+            let split = model.splitMode != "none"
+            let groups = split ? model.splitGroups : [.init(tabs: model.tabs.map(\.id), selected: model.selectedTab)]
+            let connections = Dictionary(uniqueKeysWithValues: model.tabs.map { ($0.id, $0) })
             ZStack(alignment: .topLeading) {
+                // Keep a single view identity per connection as tabs move between groups.
                 ForEach(model.tabs) { connection in
-                    let index = slots.firstIndex(where: { $0 == connection.id })
+                    let index = groups.firstIndex { $0.selected == connection.id }
                     let frame = layout.frames[min(index ?? 0, layout.frames.count - 1)]
-                    pane(connection, model.splitMode == "none" ? nil : index)
-                        .frame(width: frame.width, height: frame.height)
-                        .offset(x: frame.minX, y: frame.minY)
-                        .opacity(index != nil ? 1 : 0).allowsHitTesting(index != nil).accessibilityHidden(index == nil)
+                    pane(connection)
+                        .frame(width: frame.width, height: max(1, frame.height - tabBarHeight))
+                        .clipped()
+                        .offset(x: frame.minX, y: frame.minY + tabBarHeight)
+                        .opacity(index != nil ? 1 : 0)
+                        .allowsHitTesting(index != nil)
+                        .accessibilityHidden(index == nil)
                         .simultaneousGesture(TapGesture().onEnded { model.selectTab(connection.id) })
                 }
-                if model.splitMode != "none" {
-                    ForEach(layout.frames.indices, id: \.self) { index in
-                        if index >= slots.count || !model.tabs.contains(where: { $0.id == slots[index] }) {
-                            let frame = layout.frames[index]
-                            VStack(spacing: 12) {
-                                Text("Pane \(index + 1)").foregroundStyle(.secondary)
-                                Menu("Choose Session") {
-                                    ForEach(model.tabs) { tab in
-                                        Button(tab.tabName ?? tab.profile.name) { model.assignSplitTab(tab.id, to: index) }
-                                    }
-                                }.fixedSize()
-                            }.frame(width: frame.width, height: frame.height)
-                                .background(Color(nsColor: .windowBackgroundColor)).offset(x: frame.minX, y: frame.minY)
+                ForEach(layout.frames.indices, id: \.self) { index in
+                    if groups.indices.contains(index) {
+                        let frame = layout.frames[index]
+                        let group = groups[index]
+                        if group.tabs.isEmpty {
+                            Color(nsColor: .windowBackgroundColor)
+                                .overlay {
+                                    emptyPaneActions(group, index: index)
+                                }
+                                .frame(width: frame.width, height: max(1, frame.height - tabBarHeight))
+                                .contentShape(Rectangle())
+                                .onTapGesture { model.focusGroup(index) }
+                                .dropDestination(for: String.self) { items, _ in
+                                    dropTab(items, in: index)
+                                }
+                                .offset(x: frame.minX, y: frame.minY + tabBarHeight)
                         }
+                        tabBar(group, connections: connections, index: index, split: split)
+                            .frame(width: frame.width, height: tabBarHeight)
+                            .offset(x: frame.minX, y: frame.minY)
                     }
                 }
                 if let x = layout.column {
@@ -69,23 +86,121 @@ struct TerminalWorkspace<Pane: View>: View {
                         .overlay { Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1) }
                         .contentShape(Rectangle()).offset(x: x - 3)
                         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("mutyWorkspace")).onChanged { event in
-                            columnFraction = min(0.85, max(0.15, event.location.x / max(1, geometry.size.width)))
-                        })
+                            model.splitColumnFraction = min(0.85, max(0.15, event.location.x / max(1, geometry.size.width)))
+                        }.onEnded { _ in model.persistWorkspace() })
                         .onHover { inside in if inside { NSCursor.resizeLeftRight.set() } else { NSCursor.arrow.set() } }
                         .accessibilityLabel("Resize columns")
                 }
                 if let y = layout.row {
-                    Rectangle().fill(Color.clear).frame(width: max(1, geometry.size.width - layout.rowStart), height: 7)
+                    Rectangle().fill(Color.clear).frame(width: layout.rowWidth, height: 7)
                         .overlay { Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1) }
                         .contentShape(Rectangle()).offset(x: layout.rowStart, y: y - 3)
                         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("mutyWorkspace")).onChanged { event in
-                            rowFraction = min(0.85, max(0.15, event.location.y / max(1, geometry.size.height)))
-                        })
+                            model.splitRowFraction = min(0.85, max(0.15, event.location.y / max(1, geometry.size.height)))
+                        }.onEnded { _ in model.persistWorkspace() })
                         .onHover { inside in if inside { NSCursor.resizeUpDown.set() } else { NSCursor.arrow.set() } }
                         .accessibilityLabel("Resize rows")
                 }
             }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
                 .coordinateSpace(name: "mutyWorkspace").clipped()
         }
+    }
+
+    private func emptyPaneActions(_ group: AppModel.TabGroup, index: Int) -> some View {
+        VStack(spacing: 10) {
+            sessionMenu(group, index: index) { Text("Choose Session") }
+            Button("New Local Shell") {
+                model.focusGroup(index)
+                var profile = SessionProfile()
+                profile.connectionType = .localShell
+                profile.name = "Local Shell"
+                model.connect(profile, manual: true, temporary: true)
+            }.buttonStyle(.borderless)
+        }.fixedSize()
+    }
+
+    private func sessionMenu<MenuLabel: View>(_ group: AppModel.TabGroup, index: Int,
+                                          @ViewBuilder label: () -> MenuLabel) -> some View {
+        Menu {
+            ForEach(model.tabs) { connection in
+                let isInGroup = group.tabs.contains(connection.id)
+                Button {
+                    if isInGroup {
+                        model.selectTab(connection.id)
+                    } else {
+                        model.moveTab(connection.id, to: index)
+                    }
+                } label: {
+                    let title = connection.tabName ?? connection.profile.name
+                    if connection.id == group.selected {
+                        Label(title, systemImage: "checkmark")
+                    } else if !isInGroup {
+                        Label(title, systemImage: "arrow.right.square")
+                    } else {
+                        Text(title)
+                    }
+                }
+            }
+        } label: { label() }
+    }
+
+    private func tabBar(_ group: AppModel.TabGroup, connections: [UUID: SSHConnection], index: Int, split: Bool) -> some View {
+        HStack(spacing: 8) {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal) {
+                    HStack(spacing: 2) {
+                        ForEach(group.tabs, id: \.self) { id in
+                            if let connection = connections[id] {
+                                SessionTab(connection: connection, model: model, selected: group.selected == id,
+                                           select: { model.selectTab(id) }, close: { model.close(connection) })
+                                    .id(id)
+                                    .onDrag { NSItemProvider(object: id.uuidString as NSString) }
+                                    .dropDestination(for: String.self) { items, _ in
+                                        dropTab(items, in: index, before: id)
+                                    }
+                            }
+                        }
+                    }.padding(.horizontal, 6).padding(.vertical, 2)
+                }
+                .scrollIndicators(.hidden)
+                .onChange(of: group.selected, initial: true) { _, selected in
+                    if let selected { proxy.scrollTo(selected) }
+                }
+                .onChange(of: group.tabs) { _, _ in
+                    if let selected = group.selected { proxy.scrollTo(selected) }
+                }
+            }
+            if let id = group.selected, let connection = connections[id],
+               connection.profile.connectionType == .ssh, !connection.profile.tunnelOnly,
+               connection.profile.sshEnabled, connection.profile.sftpEnabled {
+                SessionModePicker(connection: connection, model: model).padding(.trailing, 8)
+            }
+            if split && !group.tabs.isEmpty {
+                sessionMenu(group, index: index) {
+                    Image(systemName: "chevron.down").accessibilityLabel("Choose Session")
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .padding(.trailing, 8)
+                .help("Choose Session")
+            }
+        }
+        .background(.bar)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(split && model.activeSplitIndex == index ? Color.accentColor : Color(nsColor: .separatorColor))
+                .frame(height: 1).allowsHitTesting(false)
+        }
+        .contentShape(Rectangle())
+        .dropDestination(for: String.self) { items, _ in
+            dropTab(items, in: index)
+        }
+    }
+
+    private func dropTab(_ items: [String], in index: Int, before target: UUID? = nil) -> Bool {
+        guard let value = items.first, let source = UUID(uuidString: value),
+              model.tabs.contains(where: { $0.id == source }) else { return false }
+        if model.splitMode != "none" { return model.moveTab(source, to: index, before: target) }
+        guard let target, source != target else { return false }
+        model.reorderTabs(from: source, to: target)
+        return true
     }
 }

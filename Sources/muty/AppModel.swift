@@ -30,8 +30,8 @@ final class AppModel: ObservableObject {
     @Published var selectedFolder: String? = nil
     @Published private var emptyFolders: [String] = []
     @Published private var folderColors: [String: String] = [:]
-    @Published var tabs: [SSHConnection] = [] { didSet { persistWorkspace() } }
-    @Published var selectedTab: UUID? { didSet { persistWorkspace() } }
+    @Published var tabs: [SSHConnection] = []
+    @Published var selectedTab: UUID?
     let keyLibrary = SSHKeyLibrary()
     @Published var backupProgress: String?
     @Published var fullBackupExport = false
@@ -40,31 +40,125 @@ final class AppModel: ObservableObject {
     @Published var importPreview: SessionImportPreview?
     @Published var mobaXtermImport: MobaXtermImport?
     @Published var splitMode = "none"
-    @Published var splitSlots: [UUID?] = []
-    private var activeSplitIndex = 0
-    func split(_ mode: String, secondary: UUID? = nil) {
-        guard mode != "none", !tabs.isEmpty else { splitMode = "none"; splitSlots = []; activeSplitIndex = 0; return }
-        let count = mode == "four" ? 4 : mode == "three" ? 3 : 2
-        if secondary != nil || splitSlots.isEmpty {
-            splitSlots = [selectedTab ?? tabs.first?.id]
+    struct TabGroup {
+        var tabs: [UUID] = []
+        var selected: UUID?
+
+        mutating func remove(_ id: UUID) {
+            guard let index = tabs.firstIndex(of: id) else { return }
+            tabs.remove(at: index)
+            if selected == id { selected = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)] }
         }
-        splitSlots = Array(splitSlots.prefix(count))
-        while splitSlots.count < count { splitSlots.append(nil) }
-        if let secondary, tabs.contains(where: { $0.id == secondary }), secondary != splitSlots[0] { splitSlots[1] = secondary }
-        splitMode = mode; activeSplitIndex = min(activeSplitIndex, count - 1)
-        syncSplitSelection()
     }
-    func assignSplitTab(_ id: UUID, to index: Int) {
-        guard splitMode != "none", splitSlots.indices.contains(index), tabs.contains(where: { $0.id == id }) else { return }
-        if let old = splitSlots.firstIndex(where: { $0 == id }), old != index { splitSlots[old] = splitSlots[index] }
-        splitSlots[index] = id; activeSplitIndex = index; selectedTab = id
+
+    @Published private(set) var splitGroups: [TabGroup] = []
+    var splitSlots: [UUID?] { splitGroups.map(\.selected) }
+    @Published var splitColumnFraction: CGFloat = 0.5
+    @Published var splitRowFraction: CGFloat = 0.5
+    private(set) var activeSplitIndex = 0
+
+    private static func paneCount(for mode: String) -> Int? {
+        switch mode {
+        case "right", "bottom": return 2
+        case "three", "three-left": return 3
+        case "four": return 4
+        default: return nil
+        }
     }
-    func syncSplitSelection() {
-        guard splitMode != "none", let id = selectedTab, tabs.contains(where: { $0.id == id }) else { return }
-        if let index = splitSlots.firstIndex(where: { $0 == id }) { activeSplitIndex = index }
-        else if splitSlots.indices.contains(activeSplitIndex) { splitSlots[activeSplitIndex] = id }
+
+    func split(_ mode: String, secondary: UUID? = nil) {
+        defer { persistWorkspace() }
+        guard let count = Self.paneCount(for: mode), !tabs.isEmpty else { resetSplit(); return }
+        var groups = splitGroups
+        if groups.isEmpty {
+            let ids = tabs.map(\.id)
+            let current = selectedTab ?? ids.first
+            groups = [.init(tabs: ids, selected: current)]
+        }
+        if groups.count > count {
+            let destination = min(activeSplitIndex, count - 1)
+            for group in groups.dropFirst(count) { groups[destination].tabs += group.tabs }
+            if let selectedTab, groups[destination].tabs.contains(selectedTab) {
+                groups[destination].selected = selectedTab
+            } else if groups[destination].selected == nil {
+                groups[destination].selected = groups[destination].tabs.first
+            }
+            groups = Array(groups.prefix(count))
+        }
+        while groups.count < count { groups.append(.init()) }
+        if let secondary, let source = groups.firstIndex(where: { $0.tabs.contains(secondary) }), source != 1 {
+            groups[source].remove(secondary)
+            groups[1].tabs.append(secondary)
+            groups[1].selected = secondary
+        } else if let secondary, groups[1].tabs.contains(secondary) {
+            groups[1].selected = secondary
+        }
+        splitMode = mode
+        splitGroups = groups
+        activeSplitIndex = groups.firstIndex(where: { $0.selected == selectedTab && selectedTab != nil })
+            ?? groups.firstIndex(where: { $0.selected != nil }) ?? 0
+        selectedTab = groups[activeSplitIndex].selected
     }
-    func selectTab(_ id: UUID) { selectedTab = id; syncSplitSelection() }
+
+    private func resetSplit() {
+        if !splitGroups.isEmpty {
+            let order = splitGroups.flatMap(\.tabs)
+            let connections = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, $0) })
+            tabs = order.compactMap { connections[$0] } + tabs.filter { !order.contains($0.id) }
+        }
+        splitMode = "none"
+        splitGroups = []
+        activeSplitIndex = 0
+        if selectedTab == nil { selectedTab = tabs.first?.id }
+    }
+
+    @discardableResult
+    func moveTab(_ id: UUID, to group: Int, before target: UUID? = nil) -> Bool {
+        guard splitGroups.indices.contains(group), tabs.contains(where: { $0.id == id }),
+              id != target else { return false }
+        if let source = splitGroups.firstIndex(where: { $0.tabs.contains(id) }) {
+            splitGroups[source].remove(id)
+        }
+        let index = target.flatMap { splitGroups[group].tabs.firstIndex(of: $0) } ?? splitGroups[group].tabs.count
+        splitGroups[group].tabs.insert(id, at: index)
+        splitGroups[group].selected = id
+        activeSplitIndex = group
+        selectedTab = id
+        persistWorkspace()
+        return true
+    }
+
+    func focusGroup(_ index: Int) {
+        guard splitGroups.indices.contains(index), activeSplitIndex != index else { return }
+        activeSplitIndex = index
+        selectedTab = splitGroups[index].selected
+        persistWorkspace()
+    }
+
+    func selectTab(_ id: UUID) {
+        guard selectedTab != id, tabs.contains(where: { $0.id == id }) else { return }
+        if !splitGroups.isEmpty {
+            if let group = splitGroups.firstIndex(where: { $0.tabs.contains(id) }) {
+                activeSplitIndex = group
+            } else {
+                splitGroups[activeSplitIndex].tabs.append(id)
+            }
+            splitGroups[activeSplitIndex].selected = id
+        }
+        selectedTab = id
+        persistWorkspace()
+    }
+
+    func cycleTab(_ direction: Int) {
+        let candidates = splitMode == "none" ? tabs.map(\.id) : splitSlots.compactMap { $0 }
+        guard !candidates.isEmpty else { return }
+        guard let current = candidates.firstIndex(where: { $0 == selectedTab }) else {
+            if let target = direction < 0 ? candidates.last : candidates.first { selectTab(target) }
+            return
+        }
+        selectTab(candidates[(current + direction + candidates.count) % candidates.count])
+    }
+
     @Published var terminalFindRequest = UUID()
     @Published var quickConnect = false
     @Published var newFolderPrompt = false
@@ -145,16 +239,44 @@ final class AppModel: ObservableObject {
         if !readOnly && UserDefaults.standard.bool(forKey: "restoreTabsOnLaunch") {
             do {
                 if let document = try workspaceStore.load() {
-                    var active: UUID?
+                    var restoredTabs: [Int: UUID] = [:]
                     for (index, saved) in document.tabs.enumerated() {
                         guard let profile = profiles.first(where: { $0.id == saved.profileID }) else { continue }
                         let tab = SSHConnection(profile: profile, manual: false, credentials: passwordStore, deferredStart: true)
                         tab.tabName = saved.name
                         configurePasswordSaving(tab)
                         tabs.append(tab)
-                        if index == document.selectedIndex { active = tab.id }
+                        restoredTabs[index] = tab.id
                     }
-                    selectedTab = active ?? tabs.first?.id
+                    selectedTab = document.selectedIndex.flatMap { restoredTabs[$0] } ?? tabs.first?.id
+                    if let split = document.split, let count = Self.paneCount(for: split.mode) {
+                        if split.slots.count == count, split.slots.indices.contains(split.activeIndex) {
+                            var used = Set<UUID>()
+                            let savedGroups = split.groups?.count == count ? split.groups : nil
+                            var groups = split.slots.enumerated().map { index, slot -> TabGroup in
+                                let members = savedGroups?[index] ?? slot.map { [$0] } ?? []
+                                let ids = members.compactMap { saved -> UUID? in
+                                    guard let id = restoredTabs[saved], used.insert(id).inserted else { return nil }
+                                    return id
+                                }
+                                let active = slot.flatMap { restoredTabs[$0] }.flatMap { ids.contains($0) ? $0 : nil }
+                                return TabGroup(tabs: ids, selected: active ?? ids.first)
+                            }
+                            let fallback = groups.firstIndex(where: { $0.selected != nil }) ?? split.activeIndex
+                            activeSplitIndex = savedGroups == nil && groups[split.activeIndex].selected == nil ? fallback : split.activeIndex
+                            groups[activeSplitIndex].tabs += tabs.map(\.id).filter { !used.contains($0) }
+                            if groups[activeSplitIndex].selected == nil {
+                                groups[activeSplitIndex].selected = groups[activeSplitIndex].tabs.first
+                            }
+                            if !tabs.isEmpty {
+                                splitMode = split.mode
+                                splitGroups = groups
+                                selectedTab = groups[activeSplitIndex].selected
+                                splitColumnFraction = split.columnFraction.map { min(0.85, max(0.15, $0)) } ?? 0.5
+                                splitRowFraction = split.rowFraction.map { min(0.85, max(0.15, $0)) } ?? 0.5
+                            }
+                        }
+                    }
                 }
             } catch {
                 workspaceBlocked = true
@@ -187,7 +309,7 @@ final class AppModel: ObservableObject {
             return
         }
         if let tab = tabs.first(where: { $0.profile.id == id }) {
-            if tab.running { selectedTab = tab.id }
+            if tab.running { selectTab(tab.id) }
             else { reconnect(tab) }
         } else { connect(profile) }
     }
@@ -291,7 +413,16 @@ final class AppModel: ObservableObject {
               UserDefaults.standard.bool(forKey: "restoreTabsOnLaunch") else { return }
         let saved = tabs.filter { !$0.temporary }
         let valid = saved.filter { tab in profiles.contains { $0.id == tab.profile.id } }
-        let document = WorkspaceDocument(tabs: valid.map { .init(profileID: $0.profile.id, name: $0.tabName) }, selectedIndex: valid.firstIndex { $0.id == selectedTab })
+        let indices = Dictionary(uniqueKeysWithValues: valid.enumerated().map { ($1.id, $0) })
+        let split: WorkspaceDocument.Split? = splitMode == "none" ? nil : .init(
+            mode: splitMode, slots: splitSlots.map { $0.flatMap { indices[$0] } }, activeIndex: activeSplitIndex,
+            columnFraction: splitColumnFraction, rowFraction: splitRowFraction,
+            groups: splitGroups.map { $0.tabs.compactMap { indices[$0] } }
+        )
+        let document = WorkspaceDocument(
+            tabs: valid.map { .init(profileID: $0.profile.id, name: $0.tabName) },
+            selectedIndex: selectedTab.flatMap { indices[$0] }, split: split
+        )
         do { try workspaceStore.save(document) }
         catch { workspaceBlocked = true; errorMessage = "Could not save workspace: " + error.localizedDescription }
     }
@@ -339,10 +470,38 @@ final class AppModel: ObservableObject {
         return FullBackup(configuration: configuration, passwords: passwords, credentials: credentials)
     }
 
-    @discardableResult
-    func importConfiguration(_ backup: ConfigurationBackup, selected: Set<UUID>, keyBindings: [UUID: UUID], restorePasswords: Bool = false, replacePasswords: Bool = false, linkExistingCredentials: Bool = false, restoreButtonBar: Bool = false, progress: ((String) -> Void)? = nil, previewOnly: Bool = false) throws -> String {
+    struct ConfigurationRestorePlan {
+        let summary: String
+        fileprivate let source: ProfileCatalog
+        fileprivate let catalog: ProfileCatalog
+        fileprivate let keys: Set<UUID>
+        fileprivate let vaultChange: VaultChange?
+        fileprivate let buttonBarChange: ButtonBarChange?
+        fileprivate let messages: [String]
+        fileprivate let result: String
+        fileprivate let passwordSummary: String
+
+        fileprivate struct VaultChange {
+            let before: VaultDocument
+            let after: VaultDocument
+        }
+
+        fileprivate struct ButtonBarChange {
+            let before: SendStringButtonStore.Checkpoint
+            let after: ButtonBarDocument
+        }
+    }
+
+    private var restoreCatalog: ProfileCatalog {
+        ProfileCatalog(profiles: profiles, folders: emptyFolders, folderColors: folderColors)
+    }
+
+    private var restoreKeyIDs: Set<UUID> {
+        Set(keyLibrary.keys.filter { $0.pendingDeletion != true }.map(\.id))
+    }
+
+    func prepareRestore(_ backup: ConfigurationBackup, selected: Set<UUID>, keyBindings: [UUID: UUID], restorePasswords: Bool = false, replacePasswords: Bool = false, linkExistingCredentials: Bool = false, restoreButtonBar: Bool = false) throws -> ConfigurationRestorePlan {
         guard !readOnly else { throw MutyError("Profiles are read-only.") }
-        progress?("Validating backup…")
         _ = try backup.validated()
         var credentialResults: [String] = []
         var prepared = backup
@@ -385,7 +544,7 @@ final class AppModel: ObservableObject {
                 } else { prepared.sessions[index].credentialID = nil }
             }
         }
-        let keys = Set(keyLibrary.keys.filter { $0.pendingDeletion != true }.map(\.id))
+        let keys = restoreKeyIDs
         let plan = ConfigurationImportPlan(backup: prepared, existing: profiles, selected: selected, keyBindings: keyBindings, availableKeys: keys)
         guard selected.count == plan.profiles.count + plan.existingIDs.count else {
             throw MutyError("Resolve the highlighted conflicts and missing keys, or exclude those sessions before importing.")
@@ -454,37 +613,73 @@ final class AppModel: ObservableObject {
         if incomingButtonBar != nil {
             summaryLines.append("Button Bar: current sets, commands and folder assignments will be replaced.")
         }
-        if previewOnly { return summaryLines.joined(separator: "\n\n") }
-        let previousButtonBar = incomingButtonBar.map { _ in SendStringButtonStore.shared.checkpoint() }
-        progress?("Saving restored configuration and selected credentials…")
-        if let candidate { try vault.replace(candidate) }
-        do {
-            if let incomingButtonBar { try SendStringButtonStore.shared.restore(incomingButtonBar) }
-            try saveCatalog(updated, folders: folders, folderColors: restoredFolderColors)
+        var messages = plan.profiles.map { "Added session: " + $0.name }
+        messages += backup.sessions.filter { selected.contains($0.id) && plan.existingIDs.contains($0.id) }
+            .map { "Kept existing session: " + $0.name }
+        messages += credentialResults
+        messages.append("Restored \(restored) session passwords; existing passwords \(replacePasswords ? "may be replaced" : "kept").")
+        messages.append("Added \(addedFolderCount) folders.")
+        let buttonBarChange = incomingButtonBar.map {
+            ConfigurationRestorePlan.ButtonBarChange(before: SendStringButtonStore.shared.checkpoint(), after: $0)
         }
-        catch {
+        if buttonBarChange != nil { messages.append("Replaced Button Bar.") }
+        let vaultChange = before.flatMap { original in
+            candidate.map { ConfigurationRestorePlan.VaultChange(before: original, after: $0) }
+        }
+        return ConfigurationRestorePlan(
+            summary: summaryLines.joined(separator: "\n\n"), source: restoreCatalog,
+            catalog: ProfileCatalog(profiles: updated, folders: folders, folderColors: restoredFolderColors),
+            keys: keys, vaultChange: vaultChange, buttonBarChange: buttonBarChange, messages: messages,
+            result: "Import complete: \(plan.profiles.count) sessions added, \(restored) session passwords and \(processedShared) shared credentials processed.",
+            passwordSummary: passwordSummary
+        )
+    }
+
+    @discardableResult
+    func applyRestore(_ plan: ConfigurationRestorePlan, progress: ((String) -> Void)? = nil) throws -> String {
+        let buttons = SendStringButtonStore.shared
+        let currentButtons = plan.buttonBarChange.map { _ in buttons.checkpoint() }
+        guard !readOnly, restoreCatalog == plan.source, restoreKeyIDs == plan.keys,
+              currentButtons?.data == plan.buttonBarChange?.before.data,
+              currentButtons?.loadError == plan.buttonBarChange?.before.loadError else {
+            throw MutyError("Configuration changed. Review and confirm the restore again.")
+        }
+        if let change = plan.vaultChange, try vault.snapshot() != change.before {
+            throw MutyError("Password storage changed. Review and confirm the restore again.")
+        }
+        progress?("Saving restored configuration and selected credentials…")
+        if let change = plan.vaultChange { try vault.replace(change.after) }
+        do {
+            if let change = plan.buttonBarChange { try buttons.restore(change.after) }
+            try store.save(plan.catalog)
+        } catch {
             progress?("Save failed. Rolling back changes…")
-            if let previousButtonBar { SendStringButtonStore.shared.rollback(previousButtonBar) }
-            if let before {
-                do { try vault.replace(before) }
+            if let checkpoint = currentButtons { buttons.rollback(checkpoint) }
+            if let change = plan.vaultChange {
+                do { try vault.replace(change.before) }
                 catch { throw MutyError("Import and password-vault rollback failed. Check password storage before retrying.") }
             }
             throw error
         }
-        if hasSecrets { tabs.forEach { $0.revokeAuthentication() } }
-        profiles = updated; emptyFolders = folders; folderColors = restoredFolderColors
-        for profile in plan.profiles { progress?("Added session: " + profile.name) }
-        for entry in backup.sessions where selected.contains(entry.id) && plan.existingIDs.contains(entry.id) {
-            progress?("Kept existing session: " + entry.name)
-        }
-        for result in credentialResults { progress?(result) }
-        progress?("Restored \(restored) session passwords; existing passwords \(replacePasswords ? "may be replaced" : "kept").")
-        progress?("Added \(addedFolderCount) folders.")
-        if incomingButtonBar != nil { progress?("Replaced Button Bar.") }
-        let summary = "Import complete: \(plan.profiles.count) sessions added, \(restored) session passwords and \(processedShared) shared credentials processed."
-        if let progress { progress(summary) }
-        else { operationStatus = summary }
-        return passwordSummary
+        if plan.vaultChange != nil { tabs.forEach { $0.revokeAuthentication() } }
+        profiles = plan.catalog.profiles
+        emptyFolders = plan.catalog.folders
+        folderColors = plan.catalog.folderColors
+        if let progress {
+            plan.messages.forEach(progress)
+            progress(plan.result)
+        } else { operationStatus = plan.result }
+        return plan.passwordSummary
+    }
+
+    @discardableResult
+    func importConfiguration(_ backup: ConfigurationBackup, selected: Set<UUID>, keyBindings: [UUID: UUID],
+                             restorePasswords: Bool = false, replacePasswords: Bool = false,
+                             linkExistingCredentials: Bool = false, restoreButtonBar: Bool = false) throws -> String {
+        let plan = try prepareRestore(backup, selected: selected, keyBindings: keyBindings,
+                                      restorePasswords: restorePasswords, replacePasswords: replacePasswords,
+                                      linkExistingCredentials: linkExistingCredentials, restoreButtonBar: restoreButtonBar)
+        return try applyRestore(plan)
     }
 
     func importSessions(_ imported: [SessionProfile], folders: [String]) throws {
@@ -634,16 +829,7 @@ final class AppModel: ObservableObject {
     }
 
     private func saveFolderChanges(_ profiles: [SessionProfile], folders: [String], mapping: [String: String]) throws {
-        var updatedColors = folderColors
-        if !mapping.isEmpty {
-            for (source, destination) in mapping {
-                let moved = updatedColors.filter { $0.key == source || $0.key.hasPrefix(source + "/") }
-                updatedColors = updatedColors.filter { !($0.key == source || $0.key.hasPrefix(source + "/")) }
-                for (path, color) in moved {
-                    updatedColors[destination + path.dropFirst(source.count)] = color
-                }
-            }
-        }
+        let updatedColors = FolderPaths.moveAssignments(folderColors, using: mapping)
         guard !mapping.isEmpty else {
             try saveCatalog(profiles, folders: folders, folderColors: updatedColors)
             folderColors = updatedColors
@@ -668,17 +854,15 @@ final class AppModel: ObservableObject {
             return
         }
         var updated = profiles
-        func renamed(_ path: String) -> String {
-            path == folder ? value : value + path.dropFirst(folder.count)
-        }
+        let mapping = [folder: value]
         for index in updated.indices {
-            if let path = updated[index].folder, path == folder || path.hasPrefix(folder + "/") {
-                updated[index].folder = renamed(path)
+            if let path = updated[index].folder, let target = FolderPaths.moved(path, using: mapping) {
+                updated[index].folder = target
             }
         }
         do {
-            let names = Array(Set(folders.map { ($0 == folder || $0.hasPrefix(folder + "/")) ? renamed($0) : $0 } + [value]))
-            try saveFolderChanges(updated, folders: names, mapping: [folder: value])
+            let names = Array(Set(folders.map { FolderPaths.moved($0, using: mapping) ?? $0 } + [value]))
+            try saveFolderChanges(updated, folders: names, mapping: mapping)
             profiles = updated; emptyFolders = names; selectedFolder = value
         } catch { errorMessage = error.localizedDescription }
     }
@@ -794,6 +978,7 @@ final class AppModel: ObservableObject {
               let to = tabs.firstIndex(where: { $0.id == destination }), from != to else { return }
         let tab = tabs.remove(at: from)
         tabs.insert(tab, at: to)
+        persistWorkspace()
     }
 
     func saveTemporaryProfile(_ connection: SSHConnection) {
@@ -946,9 +1131,16 @@ final class AppModel: ObservableObject {
         connection.disconnect()
         let index = tabs.firstIndex { $0.id == connection.id } ?? 0
         tabs.removeAll { $0.id == connection.id }
-        splitSlots = splitSlots.map { $0 == connection.id ? nil : $0 }
-        if splitMode != "none", !splitSlots.contains(where: { $0 != nil }) { split("none") }
-        if selectedTab == connection.id { selectedTab = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].id }
+        if let group = splitGroups.firstIndex(where: { $0.tabs.contains(connection.id) }) {
+            splitGroups[group].remove(connection.id)
+        }
+        if tabs.isEmpty { resetSplit() }
+        if selectedTab == connection.id {
+            selectedTab = splitGroups.isEmpty
+                ? (tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].id)
+                : splitGroups[activeSplitIndex].selected
+        }
+        persistWorkspace()
     }
 
     func reconnect(_ connection: SSHConnection, manual: Bool = false, promptForPassword: Bool = false) {
@@ -987,11 +1179,15 @@ final class AppModel: ObservableObject {
     private func replaceTab(_ connection: SSHConnection, with replacement: SSHConnection) {
         guard let index = tabs.firstIndex(where: { $0.id == connection.id }) else { return }
         replacement.tabName = connection.tabName
-        splitSlots = splitSlots.map { $0 == connection.id ? replacement.id : $0 }
+        replacement.buttonBarSelection = connection.buttonBarSelection
+        if let group = splitGroups.firstIndex(where: { $0.tabs.contains(connection.id) }),
+           let position = splitGroups[group].tabs.firstIndex(of: connection.id) {
+            splitGroups[group].tabs[position] = replacement.id
+            if splitGroups[group].selected == connection.id { splitGroups[group].selected = replacement.id }
+        }
         if editingTab == connection.id { editingTab = replacement.id }
         tabs[index] = replacement
-        selectedTab = replacement.id
-        syncSplitSelection()
+        selectTab(replacement.id)
     }
 
     func forgetBulkSavedPasswords(_ request: BulkEditRequest) throws {

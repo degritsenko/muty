@@ -1,5 +1,29 @@
 import Foundation
 
+enum FolderPaths {
+    static func contains(_ path: String, in root: String) -> Bool {
+        path == root || path.hasPrefix(root + "/")
+    }
+
+    static func moved(_ path: String, using mapping: [String: String]) -> String? {
+        guard let root = mapping.keys.filter({ contains(path, in: $0) }).max(by: { $0.count < $1.count }),
+              let destination = mapping[root] else { return nil }
+        return destination + path.dropFirst(root.count)
+    }
+
+    static func moveAssignments<Value>(_ assignments: [String: Value], using mapping: [String: String]) -> [String: Value] {
+        var result = assignments
+        var moves: [(String, Value)] = []
+        for path in assignments.keys.sorted() {
+            guard let target = moved(path, using: mapping), let value = assignments[path] else { continue }
+            result.removeValue(forKey: path)
+            moves.append((target, value))
+        }
+        for (target, value) in moves { result[target] = value }
+        return result
+    }
+}
+
 struct SessionClipboard {
     let profiles: [SessionProfile]
     let roots: [String]
@@ -37,8 +61,7 @@ struct SessionClipboard {
             mappedRoots[root] = target; names.insert(target)
         }
         func mapped(_ folder: String?) -> String? {
-            guard let folder, let root = roots.first(where: { folder == $0 || folder.hasPrefix($0 + "/") }), let target = mappedRoots[root] else { return destination }
-            return target + folder.dropFirst(root.count)
+            folder.flatMap { FolderPaths.moved($0, using: mappedRoots) } ?? destination
         }
         for folder in sourceFolders { if let value = mapped(folder) { names.insert(value) } }
         let ids = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, cut ? $0.id : UUID()) })
@@ -57,6 +80,6 @@ struct SessionClipboard {
     }
     private func contained(_ path: String?) -> Bool {
         guard let path else { return false }
-        return roots.contains { path == $0 || path.hasPrefix($0 + "/") }
+        return roots.contains { FolderPaths.contains(path, in: $0) }
     }
 }

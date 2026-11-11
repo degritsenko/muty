@@ -5,9 +5,18 @@ struct WorkspaceDocument: Codable {
         var profileID: UUID
         var name: String?
     }
+    struct Split: Codable {
+        var mode: String
+        var slots: [Int?]
+        var activeIndex: Int
+        var columnFraction: CGFloat? = nil
+        var rowFraction: CGFloat? = nil
+        var groups: [[Int]]? = nil
+    }
     var version = 1
     var tabs: [Tab]
     var selectedIndex: Int?
+    var split: Split? = nil
 }
 struct WorkspaceStore {
     let directory: URL
