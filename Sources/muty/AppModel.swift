@@ -103,7 +103,7 @@ final class AppModel: ObservableObject {
         var updated = folderColors
         if let color { updated[path] = color } else { updated.removeValue(forKey: path) }
         do {
-            try store.save(profiles, folders: folders, folderColors: updated)
+            try saveCatalog(profiles, folders: folders, folderColors: updated)
             folderColors = updated
         } catch { errorMessage = error.localizedDescription }
     }
@@ -132,7 +132,12 @@ final class AppModel: ObservableObject {
         let vault = VaultStore(directory: store.directory)
         self.vault = vault; self.passwordStore = keychain ?? vault
         self.workspaceStore = WorkspaceStore(directory: store.directory)
-        do { profiles = try store.load(); emptyFolders = try store.loadFolders(); folderColors = try store.loadFolderColors() }
+        do {
+            let catalog = try store.loadCatalog()
+            profiles = catalog.profiles
+            emptyFolders = catalog.folders
+            folderColors = catalog.folderColors
+        }
         catch { readOnly = true; errorMessage = error.localizedDescription }
         if vault.needsSetup && passwordStore is VaultStore {
             for index in profiles.indices { profiles[index].savePassword = false }
@@ -157,6 +162,10 @@ final class AppModel: ObservableObject {
             }
         }
         workspaceReady = true
+    }
+
+    private func saveCatalog(_ profiles: [SessionProfile], folders: [String], folderColors: [String: String]? = nil) throws {
+        try store.save(ProfileCatalog(profiles: profiles, folders: folders, folderColors: folderColors ?? self.folderColors))
     }
 
     func openStartupSession() {
@@ -262,7 +271,7 @@ final class AppModel: ObservableObject {
                 }
             }
         }
-        try store.save(updated, folders: emptyFolders)
+        try saveCatalog(updated, folders: emptyFolders)
         tabs.filter { authenticationIDs.contains($0.profile.id) || $0.profile.jumpHostID.map(authenticationIDs.contains) == true }
             .forEach { $0.revokeAuthentication() }
         profiles = updated
@@ -438,7 +447,7 @@ final class AppModel: ObservableObject {
         if let candidate { try vault.replace(candidate) }
         do {
             if let incomingButtonBar { try SendStringButtonStore.shared.restore(incomingButtonBar) }
-            try store.save(updated, folders: folders, folderColors: restoredFolderColors)
+            try saveCatalog(updated, folders: folders, folderColors: restoredFolderColors)
         }
         catch {
             progress?("Save failed. Rolling back changes…")
@@ -473,7 +482,7 @@ final class AppModel: ObservableObject {
             updated.append(try profile.validated())
         }
         let updatedFolders = Array(Set(emptyFolders + folders)).sorted()
-        try store.save(updated, folders: updatedFolders)
+        try saveCatalog(updated, folders: updatedFolders)
         let added = updated.count - profiles.count
         profiles = updated; emptyFolders = updatedFolders
         operationStatus = "Import complete: \(added) sessions added, \(imported.count - added) duplicates skipped."
@@ -528,7 +537,7 @@ final class AppModel: ObservableObject {
         var updated = profiles
         if let index = updated.firstIndex(where: { $0.id == p.id }) { updated[index] = p }
         else { updated.append(p) }
-        do { try store.save(updated, folders: emptyFolders) }
+        do { try saveCatalog(updated, folders: emptyFolders) }
         catch {
             guard writesPassword else { throw error }
             do {
@@ -605,7 +614,7 @@ final class AppModel: ObservableObject {
         }
         do {
             let names = emptyFolders + [value]
-            try store.save(profiles, folders: names)
+            try saveCatalog(profiles, folders: names)
             emptyFolders = names
             selectedFolder = value
         } catch { errorMessage = error.localizedDescription }
@@ -623,7 +632,7 @@ final class AppModel: ObservableObject {
             }
         }
         guard !mapping.isEmpty else {
-            try store.save(profiles, folders: folders, folderColors: updatedColors)
+            try saveCatalog(profiles, folders: folders, folderColors: updatedColors)
             folderColors = updatedColors
             return
         }
@@ -631,7 +640,7 @@ final class AppModel: ObservableObject {
         let updated = try buttons.movingFolders(mapping)
         let checkpoint = buttons.checkpoint()
         try buttons.replace(updated)
-        do { try store.save(profiles, folders: folders, folderColors: updatedColors) }
+        do { try saveCatalog(profiles, folders: folders, folderColors: updatedColors) }
         catch { buttons.rollback(checkpoint); throw error }
         folderColors = updatedColors
     }
@@ -670,7 +679,7 @@ final class AppModel: ObservableObject {
         do {
             let names = folders.filter { $0 != folder && !$0.hasPrefix(folder + "/") }
             let colors = folderColors.filter { $0.key != folder && !$0.key.hasPrefix(folder + "/") }
-            try store.save(updated, folders: names, folderColors: colors)
+            try saveCatalog(updated, folders: names, folderColors: colors)
             folderColors = colors
             profiles = updated; emptyFolders = names; selectedFolder = nil
         } catch { errorMessage = error.localizedDescription }
@@ -813,7 +822,7 @@ final class AppModel: ObservableObject {
     private func persist(_ updated: [SessionProfile]) -> Bool {
         guard !readOnly else { return false }
         do {
-            try store.save(updated, folders: emptyFolders)
+            try saveCatalog(updated, folders: emptyFolders)
             profiles = updated
             return true
         } catch {
@@ -856,7 +865,7 @@ final class AppModel: ObservableObject {
         var updated = profiles
         for index in updated.indices where affected.contains(updated[index].id) { updated[index].user = credential.username }
         try vault.saveCredential(credential)
-        do { try store.save(updated, folders: emptyFolders) }
+        do { try saveCatalog(updated, folders: emptyFolders) }
         catch {
             do { try vault.replace(before) }
             catch { throw MutyError("Session update and credential rollback failed. Check password storage before retrying.") }
@@ -1002,7 +1011,7 @@ final class AppModel: ObservableObject {
                 try passwordStore.delete(id: profile.id)
                 deleted.append(profile)
             }
-            try store.save(updated, folders: emptyFolders)
+            try saveCatalog(updated, folders: emptyFolders)
         } catch {
             let originalError = error
             var rollbackFailed = false
@@ -1025,7 +1034,7 @@ final class AppModel: ObservableObject {
             guard confirm("Unlink Shared Credential?", text: "The shared credential will be kept. This session will ask for its own password.", action: "Unlink") else { return false }
             var updated = profiles; updated[index].credentialID = nil; updated[index].savePassword = false
             do {
-                try store.save(updated, folders: emptyFolders)
+                try saveCatalog(updated, folders: emptyFolders)
                 tabs.filter { $0.profile.id == profile.id }.forEach { $0.revokeAuthentication() }
                 profiles = updated; return true
             } catch { errorMessage = error.localizedDescription; return false }
@@ -1037,7 +1046,7 @@ final class AppModel: ObservableObject {
             tabs.filter { $0.profile.id == profile.id || $0.profile.jumpHostID == profile.id }.forEach { $0.revokeAuthentication() }
             try passwordStore.delete(id: profile.id)
             var updated = profiles; updated[index].savePassword = false
-            do { try store.save(updated, folders: emptyFolders) }
+            do { try saveCatalog(updated, folders: emptyFolders) }
             catch {
                 do {
                     if let secret { try passwordStore.write(id: profile.id, password: secret, name: profile.name, endpoint: profile.endpoint) }
@@ -1098,7 +1107,7 @@ final class AppModel: ObservableObject {
                     changed.append(original)
                     try passwordStore.delete(id: original.0.id)
                 }
-                try store.save(updated, folders: keptFolders)
+                try saveCatalog(updated, folders: keptFolders)
             } catch {
                 let failure = error
                 var failed: [String] = []
@@ -1137,7 +1146,7 @@ final class AppModel: ObservableObject {
             tabs.filter { $0.profile.id == p.id || $0.profile.jumpHostID == p.id }.forEach { $0.revokeAuthentication() }
             try passwordStore.delete(id: p.id)
             let updated = profiles.filter { $0.id != p.id }
-            do { try store.save(updated, folders: emptyFolders) }
+            do { try saveCatalog(updated, folders: emptyFolders) }
             catch {
                 do {
                     if let secret { try passwordStore.write(id: p.id, password: secret, name: p.name, endpoint: p.endpoint) }

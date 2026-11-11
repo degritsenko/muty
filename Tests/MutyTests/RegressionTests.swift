@@ -928,7 +928,9 @@ final class RegressionTests {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = ProfileStore(directory: directory)
-        try store.save([], folders: ["Prod", "Prod/DB"])
+        var profile = SessionProfile()
+        profile.host = "example.invalid"; profile.user = "tester"; profile.folder = "Prod"
+        try store.save([profile], folders: ["Prod", "Prod/DB"])
         let model = AppModel(store: store, keychain: LockedCredentials())
         model.setFolderColor("Green", for: "Prod")
         assert(model.folderColor("Prod/DB") == "Green")
@@ -939,6 +941,11 @@ final class RegressionTests {
         model.renameFolder("Prod", to: "Archive")
         assert(model.folderColor("Archive") == "Green")
         assert(model.folderColor("Archive/DB") == "Green")
+        model.toggleFavorite(model.profiles[0])
+        try model.applyBulkEdit(
+            BulkEditRequest(folder: "Archive", profiles: model.profiles), user: nil, keyID: nil,
+            changeJump: false, jumpID: nil, changeTheme: true, terminalTheme: "nord"
+        )
         let colors = try store.loadFolderColors()
         assert(colors["Archive"] == "Green")
         let reopened = AppModel(store: store, keychain: LockedCredentials())
