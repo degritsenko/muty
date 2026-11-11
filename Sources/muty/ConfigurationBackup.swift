@@ -19,6 +19,15 @@ struct ConfigurationBackup: Codable, Identifiable {
         self.folderColors = folderColors
         self.buttonBar = buttonBar
     }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        format = try values.decodeIfPresent(String.self, forKey: .format) ?? "muty.sessions"
+        version = try values.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        sessions = try values.decode([PortableSession].self, forKey: .sessions)
+        folders = try values.decodeIfPresent([String].self, forKey: .folders) ?? []
+        folderColors = try values.decodeIfPresent([String: String].self, forKey: .folderColors) ?? [:]
+        buttonBar = try values.decodeIfPresent(ButtonBarDocument.self, forKey: .buttonBar)
+    }
     func validated() throws -> Self {
         guard format == "muty.sessions", version == 1, sessions.count <= 10000,
               Set(sessions.map(\.id)).count == sessions.count else {

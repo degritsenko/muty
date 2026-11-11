@@ -948,6 +948,38 @@ final class RegressionTests {
         assert(SessionProfile.canonicalFolder(" / Prod // DB / ") == "Prod/DB")
         assert(SessionProfile.canonicalFolder("///") == nil)
     }
+    func testLegacyConfigurationBackupWithoutFolderColors() throws {
+        let backup = ConfigurationBackup(sessions: [], folders: ["Prod"])
+        var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(backup)) as! [String: Any]
+        object.removeValue(forKey: "folderColors")
+        let decoded = try JSONDecoder().decode(ConfigurationBackup.self, from: JSONSerialization.data(withJSONObject: object))
+        assert(decoded.version == 1 && decoded.folderColors.isEmpty && decoded.folders == ["Prod"])
+    }
+    @MainActor func testConfigurationRestorePreservesFolderColors() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var local = SessionProfile()
+        local.name = "Local"; local.host = "local.invalid"; local.user = "tester"; local.folder = "Local"
+        let store = ProfileStore(directory: directory)
+        try store.save([local])
+        let model = AppModel(store: store, keychain: LockedCredentials())
+        model.setFolderColor("Blue", for: "Local")
+
+        var incoming = SessionProfile()
+        incoming.name = "Imported"; incoming.host = "imported.invalid"; incoming.user = "tester"
+        incoming.folder = "Imported/Only"
+        let backup = ConfigurationBackup(
+            sessions: [PortableSession(incoming, keyName: nil, keyFingerprint: nil)],
+            folders: [], folderColors: ["Imported": "Red", "Imported/Only": "Green"]
+        )
+        try model.importConfiguration(backup, selected: [incoming.id], keyBindings: [:])
+
+        assert(model.folderColor("Local") == "Blue")
+        assert(model.folderColor("Imported") == "Red")
+        assert(model.folderColor("Imported/Only") == "Green")
+        let persisted = try store.loadFolderColors()
+        assert(persisted["Local"] == "Blue" && persisted["Imported/Only"] == "Green")
+    }
     func testMobaXtermSessions() throws {
         let export = [
             "[Bookmarks]", "SubRep=", "ImgNum=42",
@@ -1315,6 +1347,8 @@ final class RegressionTests {
             ("profiles.legacy", tests.testLegacyProfilePreservesPasswordMode),
             ("ui.quickAddressPasteAndColor", tests.testQuickAddressAndPasteSafety),
             ("profiles.folderCanonicalization", tests.testFolderCanonicalization),
+            ("backups.legacyFolderColors", tests.testLegacyConfigurationBackupWithoutFolderColors),
+            ("backups.restoreFolderColors", tests.testConfigurationRestorePreservesFolderColors),
             ("profiles.currentFolderAndAtomicSave", tests.testCurrentFolderAndAtomicProfileSave),
             ("folders.colorPersistenceAndInheritance", tests.testFolderColorPersistenceAndInheritance),
             ("buttons.setsMigrationAndBackup", tests.testButtonSetsMigrationAndBackup),
