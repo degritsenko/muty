@@ -2,8 +2,21 @@
 
 - Work in this repository (`degritsenko/muty`).
 - Check the current branch and working tree before editing. If a branch is needed, do not use the `codex/` prefix. Keep communication concise and technical.
-- After every app change, increment the build number in `VERSION`, build `dist/muty.app` with `scripts/build-app.sh`, and verify its signature with `codesign --verify --deep --strict dist/muty.app` before handing it over. Keep the release version unless a version change is requested. Setting `MUTY_RELEASE_VERSION` to the current version when running the build script increments the build number automatically.
-- Run the existing checks appropriate to the change. Add or extend tests only when requested, required, or needed to catch a concrete regression. Use disposable profiles, servers, and credentials. Preserve the user's sessions, profiles, keys, password vault, and Keychain items.
+- Docs and instruction edits: run `git diff --check` and verify any changed links.
+- App changes: run the smallest existing check that covers the changed behavior.
+  Add tests only when requested, required, or needed for a concrete regression
+  or a critical security or data-loss risk.
+- Build once per batch when handing over a runnable app. Bump `VERSION` once,
+  run `scripts/build-app.sh`, and verify with `codesign --verify --deep --strict dist/muty.app`.
+  Keep the release version unless a version change is requested. Honor explicit
+  requests to defer the build and version bump.
+- Run full regression or integration checks when requested, when the change
+  directly affects the covered subsystem and a targeted check is insufficient,
+  or as part of the release gate.
+- Reuse passing results for unchanged code and inputs. If a check fails, inspect
+  the relevant error and rerun the affected check after correcting the cause.
+- Use disposable profiles, servers, and credentials. Preserve the user's
+  sessions, profiles, keys, password vault, and Keychain items.
 - For pull request reviews, default to a concise diff review and targeted searches for obvious issues. Do not build, run tests, or create extra scenarios unless requested or the diff reveals a specific risk that needs verification.
 - Before publishing, run `bash scripts/check-release.sh`, then verify the ZIP, its SHA-256 checksum, and the packaged app's signature, version, and architecture. Report skipped manual checks accurately. Leave broad GUI, sleep/wake, and Keychain-denial testing to explicit requests.
 - Group changelog entries and GitHub release notes under **Added**, **Fixed**, and **Changed**. Use the matching changelog section as the source for GitHub release notes and preserve its headings. Keep validation logs out of the changelog and public release notes. Use the version without the build number in GitHub release titles.
@@ -12,11 +25,7 @@
 
 ## Token-efficient workflow
 
-- Start with the task, current branch, and working-tree status. Search with `rg` or `rg --files` scoped to the relevant subsystem, then read the matching sections. Expand the scope when dependencies or findings require it.
-- Reuse information already established in the current context. Re-read files when they changed, context was lost, or an exact detail needs verification.
-- Read supporting documentation on demand. Use `docs/verification.md` for verification procedures and `docs/gui-checklist.md` for explicitly requested manual GUI checks.
-- Keep tool output bounded. Save verbose build and check logs to a temporary file, inspect exit status, and report relevant errors or a short result. Expand output when diagnosing a failure.
-- Keep changes scoped to the request. Use existing scripts and conventions. Create plans, reports, helper files, or abstractions only when requested or necessary for the task.
-- Use skills whose instructions apply to the task. Keep optional workflow steps proportional to its complexity and risk, while following mandatory checks and approval requirements above.
-- Before context compaction or a handoff, record a short summary of the goal, decisions, changed files, completed checks, unresolved issues, and next step in the conversation. Verify live Git and build state when resuming.
-- Report changed behavior, verification results, and remaining issues concisely. Avoid repeated explanations and full logs unless requested.
+- Start with the diff and relevant symbols. Expand scope only when a dependency
+  or finding requires it.
+- Keep full logs in files. Read exit status and relevant errors first.
+- Keep updates to changed findings, blockers, and verification results.

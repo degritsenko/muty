@@ -2,6 +2,12 @@
 
 All notable public changes will be documented in this file. Group release notes under Added, Fixed, and Changed.
 
+## Unreleased
+
+### Added
+
+- Send Ctrl+C from a Button Bar button with the `\x03` escape.
+
 ## 0.7.10
 
 ### Added

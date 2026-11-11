@@ -35,13 +35,18 @@ struct SendStringButton: Codable, Identifiable {
             case "p":
                 if !output.isEmpty { result.append(.text(output)); output = "" }
                 result.append(.pause)
+            case "x":
+                guard iterator.next() == "0", iterator.next() == "3" else {
+                    throw MutyError("Use \\x03 to send Ctrl+C.")
+                }
+                output.append("\u{03}")
             case "b": output.append("\u{08}")
             case "r": output.append("\r")
             case "n": output.append("\n")
             case "t": output.append("\t")
             case "e": output.append("\u{1b}")
             case "\\": output.append("\\")
-            default: throw MutyError("Supported escapes: \\r, \\n, \\t, \\e, \\p, \\b and \\\\.")
+            default: throw MutyError("Supported escapes: \\r, \\n, \\t, \\e, \\p, \\b, \\x03 and \\\\.")
             }
         }
         if !output.isEmpty { result.append(.text(output)) }
@@ -399,7 +404,7 @@ private struct ConnectedSendButton: View {
         string.string = button.string
         string.autoresizingMask = [.width]; string.textContainer?.widthTracksTextView = true
         scroll.documentView = string; contentView?.addSubview(scroll)
-        let hint = label("\\r = Enter · \\n = New line (LF) · \\t = Tab · \\e = Escape\n\\p = Pause 1 second · \\b = Backspace · \\\\ = backslash\nExample: sudo su -\\r\\p", y: 72, width: 440, height: 46)
+        let hint = label("\\r = Enter · \\n = New line (LF) · \\t = Tab · \\e = Escape\n\\p = Pause 1 second · \\b = Backspace · \\\\ = backslash\n\\x03 = Ctrl+C · Example: sudo su -\\r\\p", y: 72, width: 440, height: 46)
         hint.font = .systemFont(ofSize: 11); hint.textColor = .secondaryLabelColor
         color.frame = NSRect(x: 20, y: 140, width: 135, height: 26)
         color.addItems(withTitles: ["Default"] + SendStringButton.colors)
