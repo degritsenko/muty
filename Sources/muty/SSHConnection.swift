@@ -21,10 +21,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     let temporary: Bool
     private let deferredStart: Bool
     private(set) var ignoreSavedPassword: Bool
-    private var targetReceipt: SSHAuthenticationReceipt?
-    private var jumpReceipt: SSHAuthenticationReceipt?
-    private var pendingTargetPassword: (() throws -> Void)?
-    private var pendingJumpPassword: (() throws -> Void)?
+    private let authenticationAttempt = SSHAuthenticationAttempt()
     @Published var showingSFTP = false
     @Published private(set) var fileBrowser: SFTPBrowserModel?
     private var tunnelObservation: AnyCancellable?
@@ -47,7 +44,6 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     private var broker: AskpassBroker?
     private var started = false
     private var stopping = false
-    private var authenticationGeneration = UUID()
     private var childPID: pid_t = 0
     private var statusTimer: Timer?
     private let credentials: any CredentialStore
@@ -71,9 +67,16 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
             do { try log.write(data) }
             catch { self.stopLogging(); self.error = "Logging stopped: " + error.localizedDescription }
         }
-        terminal.optionAsMetaKey = UserDefaults.standard.object(forKey: "optionAsMetaKey") as? Bool ?? true
-        applyColorScheme(TerminalColorScheme.resolve(profile.terminalTheme ?? UserDefaults.standard.string(forKey: "terminalTheme") ?? TerminalColorScheme.mutyDark.rawValue))
-        terminal.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        let settings = TerminalSettings.resolve(
+            profileTheme: profile.terminalTheme, fontSize: UserDefaults.standard.object(forKey: "terminalFontSize") as? Double ?? 13,
+            scrollback: UserDefaults.standard.object(forKey: "terminalScrollback") as? Double ?? 10000,
+            globalTheme: UserDefaults.standard.string(forKey: "terminalTheme") ?? TerminalColorScheme.mutyDark.rawValue,
+            optionAsMetaKey: UserDefaults.standard.object(forKey: "optionAsMetaKey") as? Bool ?? true,
+            fontName: UserDefaults.standard.string(forKey: "terminalFontName") ?? ""
+        )
+        terminal.optionAsMetaKey = settings.optionAsMetaKey
+        applyColorScheme(TerminalColorScheme.resolve(settings.theme))
+        setFontSize(settings.fontSize, fontName: settings.fontName)
     }
 
     static func localShellHostName() -> String {
@@ -99,8 +102,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
             try KnownHostsStore.prepare(file: knownHostsFile)
             var args = sshOptions + (try SSHNetworking.transportArguments(p, knownHostsFile: knownHostsFile))
             if p.authentication == .password {
-                targetReceipt = try SSHAuthenticationReceipt()
-                args = targetReceipt!.arguments + args
+                args = try authenticationAttempt.createReceipt(forJump: false).arguments + args
             }
             args += (p.tunnelOnly || !p.sshEnabled) ? ["-N", "-T"] : ["-tt"]
             var env = ProcessInfo.processInfo.environment
@@ -124,8 +126,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
                 let destination = PortForward.address(p.host) + ":" + String(p.port)
                 var jumpArgs = try SSHNetworking.transportArguments(jump, knownHostsFile: knownHostsFile) + ["-W", destination, "--", jump.host]
                 if jump.authentication == .password {
-                    jumpReceipt = try SSHAuthenticationReceipt()
-                    jumpArgs = jumpReceipt!.arguments + jumpArgs
+                    jumpArgs = try authenticationAttempt.createReceipt(forJump: true).arguments + jumpArgs
                 }
                 let dir = FileManager.default.temporaryDirectory.appendingPathComponent("muty-proxy-" + id.uuidString)
                 try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
@@ -206,8 +207,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         server.interactivePrompt = { [weak self] prompt, isPassword, replacingSavedPassword in
             guard let self else { return nil }
             // A new prompt means the preceding candidate was rejected.
-            if jump { self.pendingJumpPassword = nil }
-            else { self.pendingTargetPassword = nil }
+            self.authenticationAttempt.rejectedPrompt(forJump: jump)
             let save: ((String) throws -> Void)?
             if jump {
                 if let handler = self.onSaveJumpPassword { save = { try handler(node, $0) } }
@@ -215,8 +215,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
             } else { save = self.onSavePassword }
             let stage: ((String) -> Void)? = save.map { action in
                 { [weak self] secret in
-                    if jump { self?.pendingJumpPassword = { try action(secret) } }
-                    else { self?.pendingTargetPassword = { try action(secret) } }
+                    self?.authenticationAttempt.stagePassword(forJump: jump) { try action(secret) }
                 }
             }
             let replacing = self.ignoreSavedPassword || replacingSavedPassword
@@ -241,31 +240,21 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
 
     private func promptForSecret(_ prompt: String, allowSave: Bool, endpoint: String,
                                  save saveAction: ((String) -> Void)?, canSave: Bool, replaceSaved: Bool) -> String? {
-        let generation = authenticationGeneration
+        let generation = authenticationAttempt.generation
         let panel = NativeSSHPasswordPanel(endpoint: endpoint, prompt: allowSave ? "Password:" : prompt,
                                            canSave: allowSave && canSave && saveAction != nil, replaceSaved: replaceSaved)
         defer { panel.clearSecrets() }
-        guard panel.run() == .OK, !stopping, generation == authenticationGeneration,
+        guard panel.run() == .OK, !stopping, generation == authenticationAttempt.generation,
               let (secret, remember) = panel.result else { return nil }
         if remember { saveAction?(secret) }
         return secret
     }
 
     private func commitAuthenticatedPasswords() {
-        if jumpReceipt?.authenticated == true, let action = pendingJumpPassword {
-            pendingJumpPassword = nil
-            do { try action() } catch { self.error = "Jump-host password was not saved: " + error.localizedDescription }
-        }
-        if targetReceipt?.authenticated == true, let action = pendingTargetPassword {
-            pendingTargetPassword = nil
-            do { try action(); ignoreSavedPassword = false }
-            catch { self.error = "Password was not saved: " + error.localizedDescription }
-        }
+        if authenticationAttempt.commit(onError: { self.error = $0 }) { ignoreSavedPassword = false }
     }
     private func discardPendingPasswords() {
-        pendingTargetPassword = nil; pendingJumpPassword = nil
-        targetReceipt?.clear(); targetReceipt = nil
-        jumpReceipt?.clear(); jumpReceipt = nil
+        authenticationAttempt.discard()
     }
 
     private func startLocalShell() throws {
@@ -297,8 +286,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     }
 
     func revokeAuthentication() {
-        authenticationGeneration = UUID()
-        discardPendingPasswords()
+        authenticationAttempt.invalidate()
         broker?.stop(); broker = nil; stopJumpResources()
         if !started { stopping = true; status = "Settings Changed"; releaseTransport() }
     }
@@ -369,9 +357,8 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         terminal.performFindPanelAction(item)
     }
 
-    func setFontSize(_ size: Double) {
-        let name = UserDefaults.standard.string(forKey: "terminalFontName") ?? ""
-        let font = NSFont(name: name, size: CGFloat(size)) ?? .monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
+    func setFontSize(_ size: Double, fontName: String) {
+        let font = NSFont(name: fontName, size: CGFloat(size)) ?? .monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
         guard terminal.font != font else { return }
         terminal.font = font
     }

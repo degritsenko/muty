@@ -454,7 +454,7 @@ struct ContentView: View {
                     Divider()
                     TerminalWorkspace(model: model) { connection, index in
                         SessionPane(connection: connection, model: model, fontSize: fontSize,
-                            scrollback: Int(scrollback.isFinite ? max(1000, min(50000, scrollback)) : 10000), theme: (model.profiles.first(where: { $0.id == connection.profile.id }) ?? connection.profile).terminalTheme ?? theme,
+                            scrollback: scrollback, profileTheme: (model.profiles.first(where: { $0.id == connection.profile.id }) ?? connection.profile).terminalTheme, globalTheme: theme,
                             optionAsMetaKey: optionAsMetaKey, fontName: fontName,
                             selected: model.selectedTab == connection.id, showPaneTitle: index != nil, paneIndex: index)
                     }
@@ -638,14 +638,21 @@ private struct SessionPane: View {
     @ObservedObject var connection: SSHConnection
     @ObservedObject var model: AppModel
     let fontSize: Double
-    let scrollback: Int
-    let theme: String
+    let scrollback: Double
+    let profileTheme: String?
+    let globalTheme: String
     let optionAsMetaKey: Bool
     let fontName: String
     let selected: Bool
     var showPaneTitle = false
     var paneIndex: Int?
     @ViewState private var tunnelsVisible = false
+    private var settings: TerminalSettings {
+        TerminalSettings.resolve(
+            profileTheme: profileTheme, fontSize: fontSize, scrollback: scrollback, globalTheme: globalTheme,
+            optionAsMetaKey: optionAsMetaKey, fontName: fontName
+        )
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -692,7 +699,7 @@ private struct SessionPane: View {
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
             }
             ZStack {
-                TerminalPane(connection: connection, fontSize: fontSize, selected: selected && !connection.showingSFTP)
+                TerminalPane(connection: connection, fontSize: settings.fontSize, fontName: settings.fontName, selected: selected && !connection.showingSFTP)
                     .opacity(connection.showingSFTP ? 0 : 1)
                     .allowsHitTesting(!connection.showingSFTP)
                     .accessibilityHidden(connection.showingSFTP)
@@ -719,9 +726,10 @@ private struct SessionPane: View {
         }
             .onChange(of: connection.canOpenSFTP) { _, _ in openSFTPIfNeeded() }
             .onChange(of: scrollback) { _, _ in applySettings() }
-            .onChange(of: theme) { _, _ in applySettings() }
+            .onChange(of: profileTheme) { _, _ in applySettings() }
+            .onChange(of: globalTheme) { _, _ in applySettings() }
             .onChange(of: optionAsMetaKey) { _, _ in applySettings() }
-            .onChange(of: fontName) { _, _ in connection.setFontSize(fontSize) }
+            .onChange(of: fontName) { _, _ in connection.setFontSize(settings.fontSize, fontName: settings.fontName) }
     }
 
     private func openSFTPIfNeeded() {
@@ -732,9 +740,10 @@ private struct SessionPane: View {
     }
 
     private func applySettings() {
-        connection.setScrollback(scrollback)
-        connection.setTheme(theme)
-        connection.setOptionAsMeta(optionAsMetaKey)
+        connection.setScrollback(settings.scrollback)
+        connection.setTheme(settings.theme)
+        connection.setOptionAsMeta(settings.optionAsMetaKey)
+        connection.setFontSize(settings.fontSize, fontName: settings.fontName)
     }
 }
 

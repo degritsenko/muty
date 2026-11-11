@@ -30,6 +30,39 @@ private final class DisposableCredentials: CredentialStore {
     func delete(id: UUID) throws {}
 }
 
+@MainActor
+private final class TestAuthenticationReceipt: AuthenticationReceipt {
+    var authenticated = false
+    var arguments: [String] { ["receipt"] }
+    func clear() {}
+}
+
+@MainActor
+private final class MemoryConfigurationRestorePersistence: ConfigurationRestorePersistence {
+    var vault = VaultDocument(sessionPasswords: [UUID().uuidString: "original"])
+    var buttonBar = ButtonBarDocument()
+    var catalog = ProfileCatalog(profiles: [], folders: [], folderColors: [:])
+    var failCatalogSave = false
+
+    func checkpointVault() throws -> VaultDocument { vault }
+    func checkpointButtonBar() -> any ConfigurationRestoreCheckpoint { MemoryButtonBarCheckpoint(value: buttonBar) }
+    func saveVault(_ document: VaultDocument) throws { vault = document }
+    func restoreVault(_ document: VaultDocument) throws { vault = document }
+    func saveButtonBar(_ document: ButtonBarDocument) throws { buttonBar = document }
+    func restoreButtonBar(_ checkpoint: any ConfigurationRestoreCheckpoint) {
+        if let value = checkpoint as? MemoryButtonBarCheckpoint { buttonBar = value.value }
+    }
+    func saveCatalog(_ catalog: ProfileCatalog) throws {
+        if failCatalogSave { throw MutyError("Injected profile save failure") }
+        self.catalog = catalog
+    }
+}
+
+@MainActor
+private struct MemoryButtonBarCheckpoint: ConfigurationRestoreCheckpoint {
+    let value: ButtonBarDocument
+}
+
 private final class PTYObserver: NSObject, LocalProcessTerminalViewDelegate {
     var ended = false
     var status: Int32?
@@ -51,6 +84,62 @@ final class RegressionTests {
         assert(TerminalColorScheme.resolve("Dark") == .mutyDark)
         assert(TerminalColorScheme.resolve("Light") == .mutyLight)
         assert(TerminalColorScheme.resolve("unknown") == .mutyDark)
+    }
+
+    func testTerminalSettingsResolution() {
+        let inherited = TerminalSettings.resolve(
+            profileTheme: nil, fontSize: 200, scrollback: .infinity, globalTheme: "nord",
+            optionAsMetaKey: false, fontName: "Monaco"
+        )
+        assert(inherited.fontSize == 30 && inherited.scrollback == 10000)
+        assert(inherited.theme == "nord" && !inherited.optionAsMetaKey && inherited.fontName == "Monaco")
+        let overridden = TerminalSettings.resolve(
+            profileTheme: "dracula", fontSize: .nan, scrollback: 10, globalTheme: "nord",
+            optionAsMetaKey: true, fontName: ""
+        )
+        assert(overridden.fontSize == 13 && overridden.scrollback == 1000 && overridden.theme == "dracula")
+    }
+
+    @MainActor func testAuthenticationAttemptCommitAndRevocation() throws {
+        let jump = TestAuthenticationReceipt()
+        let target = TestAuthenticationReceipt()
+        var receipts: [TestAuthenticationReceipt] = [target, jump]
+        let attempt = SSHAuthenticationAttempt(makeReceipt: { receipts.removeFirst() })
+        let targetReceipt = try attempt.createReceipt(forJump: false) as! TestAuthenticationReceipt
+        let jumpReceipt = try attempt.createReceipt(forJump: true) as! TestAuthenticationReceipt
+        var saved: [String] = []
+        var errors: [String] = []
+        attempt.stagePassword(forJump: true) { saved.append("jump") }
+        attempt.stagePassword(forJump: false) { saved.append("target") }
+        jumpReceipt.authenticated = true
+        assert(!attempt.commit { errors.append($0) })
+        assert(saved == ["jump"] && errors.isEmpty)
+        targetReceipt.authenticated = true
+        assert(attempt.commit { errors.append($0) })
+        assert(saved == ["jump", "target"])
+        let generation = attempt.generation
+        attempt.stagePassword(forJump: false) { saved.append("stale") }
+        attempt.invalidate()
+        assert(attempt.generation != generation)
+        assert(!attempt.commit { errors.append($0) } && !saved.contains("stale"))
+    }
+
+    @MainActor func testConfigurationRestoreTransactionRollback() throws {
+        let persistence = MemoryConfigurationRestorePersistence()
+        let originalVault = persistence.vault
+        persistence.failCatalogSave = true
+        let replacement = VaultDocument(sessionPasswords: [UUID().uuidString: "replacement"])
+        var buttonBar = ButtonBarDocument()
+        buttonBar.buttons = [SendStringButton()]
+        do {
+            try ConfigurationRestoreTransaction(persistence: persistence).commit(
+                vault: replacement, buttonBar: buttonBar,
+                catalog: ProfileCatalog(profiles: [], folders: ["New"], folderColors: [:])
+            )
+            fatalError("Expected profile save failure")
+        } catch {}
+        assert(persistence.vault == originalVault && persistence.buttonBar.buttons.isEmpty)
+        assert(persistence.catalog.folders.isEmpty)
     }
 
     func testSavedSessionSearch() {
@@ -928,7 +1017,9 @@ final class RegressionTests {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = ProfileStore(directory: directory)
-        try store.save([], folders: ["Prod", "Prod/DB"])
+        var profile = SessionProfile()
+        profile.host = "example.invalid"; profile.user = "tester"; profile.folder = "Prod"
+        try store.save([profile], folders: ["Prod", "Prod/DB"])
         let model = AppModel(store: store, keychain: LockedCredentials())
         model.setFolderColor("Green", for: "Prod")
         assert(model.folderColor("Prod/DB") == "Green")
@@ -939,10 +1030,23 @@ final class RegressionTests {
         model.renameFolder("Prod", to: "Archive")
         assert(model.folderColor("Archive") == "Green")
         assert(model.folderColor("Archive/DB") == "Green")
+        model.toggleFavorite(model.profiles[0])
+        try model.applyBulkEdit(
+            BulkEditRequest(folder: "Archive", profiles: model.profiles), user: nil, keyID: nil,
+            changeJump: false, jumpID: nil, changeTheme: true, terminalTheme: "nord"
+        )
         let colors = try store.loadFolderColors()
         assert(colors["Archive"] == "Green")
         let reopened = AppModel(store: store, keychain: LockedCredentials())
         assert(reopened.folderColor("Archive/DB") == "Green")
+    }
+
+    func testLegacyConfigurationBackupWithoutFolderColors() throws {
+        let backup = ConfigurationBackup(sessions: [], folders: ["Prod"])
+        var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(backup)) as! [String: Any]
+        object.removeValue(forKey: "folderColors")
+        let decoded = try JSONDecoder().decode(ConfigurationBackup.self, from: JSONSerialization.data(withJSONObject: object))
+        assert(decoded.version == 1 && decoded.folderColors.isEmpty && decoded.folders == ["Prod"])
     }
     func testFolderCanonicalization() {
         assert(SessionProfile.canonicalFolder(" / Prod // DB / ") == "Prod/DB")
@@ -1300,6 +1404,10 @@ final class RegressionTests {
             return
         }
         let cases: [(String, () throws -> Void)] = [
+            ("terminal.settingsResolution", tests.testTerminalSettingsResolution),
+            ("ssh.authenticationAttempt", tests.testAuthenticationAttemptCommitAndRevocation),
+            ("backups.restoreTransactionRollback", tests.testConfigurationRestoreTransactionRollback),
+            ("backups.legacyFolderColors", tests.testLegacyConfigurationBackupWithoutFolderColors),
             ("credentials.bulkForgetPasswords", tests.testBulkForgetPasswords),
             ("profiles.sessionAppearancePersistence", tests.testSessionAppearancePersistence),
             ("sessions.bulkAppearance", tests.testBulkSessionAppearance),

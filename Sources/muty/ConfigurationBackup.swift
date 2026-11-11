@@ -19,6 +19,24 @@ struct ConfigurationBackup: Codable, Identifiable {
         self.folderColors = folderColors
         self.buttonBar = buttonBar
     }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        format = try values.decodeIfPresent(String.self, forKey: .format) ?? "muty.sessions"
+        version = try values.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        sessions = try values.decode([PortableSession].self, forKey: .sessions)
+        folders = try values.decodeIfPresent([String].self, forKey: .folders) ?? []
+        folderColors = try values.decodeIfPresent([String: String].self, forKey: .folderColors) ?? [:]
+        buttonBar = try values.decodeIfPresent(ButtonBarDocument.self, forKey: .buttonBar)
+    }
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(format, forKey: .format)
+        try values.encode(version, forKey: .version)
+        try values.encode(sessions, forKey: .sessions)
+        try values.encode(folders, forKey: .folders)
+        try values.encode(folderColors, forKey: .folderColors)
+        try values.encodeIfPresent(buttonBar, forKey: .buttonBar)
+    }
     func validated() throws -> Self {
         guard format == "muty.sessions", version == 1, sessions.count <= 10000,
               Set(sessions.map(\.id)).count == sessions.count else {
@@ -83,7 +101,7 @@ struct PortableSession: Codable, Identifiable {
     }
 }
 
-struct ConfigurationImportPlan {
+struct ConfigurationRestorePlan {
     var profiles: [SessionProfile] = []
     var notes: [UUID: String] = [:]
     var existingIDs = Set<UUID>()
