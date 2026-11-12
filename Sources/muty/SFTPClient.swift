@@ -24,6 +24,8 @@ struct BrowserFile: Identifiable, Hashable, Sendable {
     var isSymlink: Bool
     var size: UInt64?
     var modified: Date?
+    var ownerName: String? = nil
+    var groupName: String? = nil
     var sortSize: UInt64 { size ?? 0 }
     var sortModified: Date { modified ?? .distantPast }
     static func validName(_ name: String) -> Bool {
@@ -252,11 +254,16 @@ final class SFTPClient: @unchecked Sendable {
                 let count = try response.u32()
                 guard count > 0, count <= 100000, files.count + Int(count) <= 100000 else { throw MutyError("Directory is too large or invalid.") }
                 for _ in 0..<count {
-                    let name = try response.text(); _ = try response.string(); let attrs = try response.attributes()
+                    let name = try response.text(); let longName = try response.string(); let attrs = try response.attributes()
+                    let fields = String(data: longName, encoding: .utf8)?.split(whereSeparator: \.isWhitespace) ?? []
+                    let hasUnixFormat = fields.count >= 9 && fields[0].count >= 10 && "-dlcbps".contains(fields[0].first ?? "?") && UInt64(fields[1]) != nil
+                    let ownerName = hasUnixFormat ? String(fields[2]) : nil
+                    let groupName = hasUnixFormat ? String(fields[3]) : nil
                     if name == "." || name == ".." { continue }
                     let file = try BrowserFile.join(path, name)
                     files.append(BrowserFile(name: name, path: file, isDirectory: attrs.isDirectory,
-                                             isSymlink: attrs.isSymlink, size: attrs.size, modified: attrs.modified))
+                                             isSymlink: attrs.isSymlink, size: attrs.size, modified: attrs.modified,
+                                             ownerName: ownerName, groupName: groupName))
                 }
             } catch let error as SFTPStatus where error.code == 1 { break }
         }

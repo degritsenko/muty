@@ -130,23 +130,24 @@ private struct SFTPFilePane: View {
                         LabeledContent("Type", value: file.isDirectory ? "Folder" : "File")
                         LabeledContent("Size", value: attributes.size.map { SFTPBrowserView.bytes($0) } ?? "Unavailable")
                         LabeledContent("Modified", value: attributes.modified?.formatted(date: .long, time: .standard) ?? "Unavailable")
-                        LabeledContent("Owner", value: attributes.owner.map(String.init) ?? "Unavailable")
-                        LabeledContent("Group", value: attributes.group.map(String.init) ?? "Unavailable")
+                        LabeledContent("Owner", value: file.ownerName ?? attributes.owner.map(String.init) ?? "Unavailable")
+                        LabeledContent("Group", value: file.groupName ?? attributes.group.map(String.init) ?? "Unavailable")
                     }
                     Section("Attributes") {
                         TextField("Octal mode", text: $permissions).fontDesign(.monospaced)
                             .onChange(of: permissions) { _, value in updatePermissionToggles(value) }
-                        LabeledContent("Executable") {
-                            Toggle("Set-User-ID", isOn: $setUID).labelsHidden().onChange(of: setUID) { _, _ in updateOctal() }
-                            Toggle("Set-Group-ID", isOn: $setGID).labelsHidden().onChange(of: setGID) { _, _ in updateOctal() }
-                            Toggle("Sticky", isOn: $sticky).labelsHidden().onChange(of: sticky) { _, _ in updateOctal() }
+                        if attributes.permissions == nil { Text("Permissions unavailable; enter an octal mode to edit.").foregroundStyle(.secondary) }
+                        LabeledContent("Special bits") {
+                            Toggle("Set UID", isOn: $setUID).onChange(of: setUID) { _, _ in updateOctal() }
+                            Toggle("Set GID", isOn: $setGID).onChange(of: setGID) { _, _ in updateOctal() }
+                            Toggle("Sticky", isOn: $sticky).onChange(of: sticky) { _, _ in updateOctal() }
                         }
                         permissionRow("Owner", read: $ownerRead, write: $ownerWrite, execute: $ownerExecute)
                         permissionRow("Group", read: $groupRead, write: $groupWrite, execute: $groupExecute)
                         permissionRow("Other", read: $otherRead, write: $otherWrite, execute: $otherExecute)
                     }
                 }.formStyle(.grouped)
-                Text("Owner and group IDs are read-only on this SFTP connection.").font(.caption).foregroundStyle(.secondary)
+                Text("Owner and group are read-only on this SFTP connection.").font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Spacer()
                     Button("Cancel") { propertiesPrompt = false }
@@ -181,6 +182,7 @@ private struct SFTPFilePane: View {
     }
 
     private func updateOctal() {
+        guard UInt32(permissions, radix: 8).map({ $0 <= 0o7777 }) == true else { return }
         var mode: UInt32 = 0
         if ownerRead { mode |= 0o400 }; if ownerWrite { mode |= 0o200 }; if ownerExecute { mode |= 0o100 }
         if groupRead { mode |= 0o040 }; if groupWrite { mode |= 0o020 }; if groupExecute { mode |= 0o010 }
@@ -241,7 +243,8 @@ private struct SFTPFilePane: View {
                                 do {
                                     let attributes = try await browser.properties(file)
                                     propertiesFile = file; propertiesAttributes = attributes
-                                    applyPermissionBits(attributes.permissions ?? 0)
+                                    if let mode = attributes.permissions { applyPermissionBits(mode) }
+                                    else { permissions = "" }
                                     propertiesPrompt = true
                                 }
                                 catch { browser.error = error.localizedDescription }
@@ -261,8 +264,9 @@ private struct SFTPFilePane: View {
                     selection.wrappedValue = ids; browser.removeSelection(remote: remote)
                 }.disabled(ids.isEmpty || unavailable)
             } primaryAction: { ids in
-                guard !unavailable, ids.count == 1, let file = rows.first(where: { ids.contains($0.id) }), file.isDirectory || file.isSymlink else { return }
-                navigate(file.path)
+                guard !unavailable, ids.count == 1, let file = rows.first(where: { ids.contains($0.id) }) else { return }
+                if file.isDirectory || file.isSymlink { navigate(file.path) }
+                else if remote { browser.openEditor(file, readOnly: false) }
             }
             Text("\(files.count) items").font(.system(size: 10)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)

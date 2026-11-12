@@ -89,7 +89,7 @@ struct ConfigurationImportView: View {
                 }
                 Button("Apply") {
                     guard let bulkKey else { return }
-                    for entry in backup.sessions where entry.authentication == .identityFile && bindings[entry.id] == nil { bindings[entry.id] = bulkKey }
+                    for entry in backup.sessions where selected.contains(entry.id) && entry.authentication == .identityFile && bindings[entry.id] == nil { bindings[entry.id] = bulkKey }
                 }.disabled(bulkKey == nil)
             }
             List(backup.sessions) { entry in

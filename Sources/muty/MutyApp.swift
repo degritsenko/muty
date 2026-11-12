@@ -96,16 +96,25 @@ struct MutyApp: App {
                 Button("Reset Terminal Font Size") { fontSize = 13 }.keyboardShortcut("0", modifiers: .command)
             }
             CommandGroup(before: .windowSize) {
-                Menu("Split Left / Right") {
-                    ForEach(model.tabs.filter { $0.id != model.selectedTab }) { tab in
-                        Button(tab.tabName ?? tab.profile.name) { model.split("right", secondary: tab.id) }
-                    }
-                }.disabled(model.tabs.count < 2)
-                Menu("Split Top / Bottom") {
-                    ForEach(model.tabs.filter { $0.id != model.selectedTab }) { tab in
-                        Button(tab.tabName ?? tab.profile.name) { model.split("bottom", secondary: tab.id) }
-                    }
-                }.disabled(model.tabs.count < 2)
+                if model.tabs.count <= 1 {
+                    Button("Split Left / Right") { model.split("right") }.disabled(model.tabs.isEmpty)
+                    Button("Split Top / Bottom") { model.split("bottom") }.disabled(model.tabs.isEmpty)
+                } else {
+                    Menu("Split Left / Right") {
+                        ForEach(model.tabs.filter { $0.id != model.selectedTab }) { tab in
+                            Button(tab.tabName ?? tab.profile.name) { model.split("right", secondary: tab.id) }
+                        }
+                    }.disabled(model.tabs.count < 2)
+                    Menu("Split Top / Bottom") {
+                        ForEach(model.tabs.filter { $0.id != model.selectedTab }) { tab in
+                            Button(tab.tabName ?? tab.profile.name) { model.split("bottom", secondary: tab.id) }
+                        }
+                    }.disabled(model.tabs.count < 2)
+                }
+                if model.splitGroups.count > 2 {
+                    Button("2 Panes — Left / Right") { model.split("right") }
+                    Button("2 Panes — Top / Bottom") { model.split("bottom") }
+                }
                 Button("3 Panes — Left + Two Right") { model.split("three") }.disabled(model.tabs.isEmpty)
                 Button("3 Panes — Two Left + Right") { model.split("three-left") }.disabled(model.tabs.isEmpty)
                 Button("4 Panes — Grid") { model.split("four") }.disabled(model.tabs.isEmpty)

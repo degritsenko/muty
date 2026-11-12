@@ -11,6 +11,8 @@ struct ContentView: View {
     @ViewState private var terminalQuery = ""
     @ViewState private var matchFound = true
     @ViewState private var selectedRows: Set<SessionRowID> = []
+    @ViewState private var expandedFolders: Set<String> = []
+    @FocusState private var managerListFocused: Bool
     @ViewState private var favoritesExpanded = true
     @ViewState private var sessionsExpanded = true
     @ViewState private var rootDropTarget = false
@@ -72,7 +74,7 @@ struct ContentView: View {
                         .frame(width: boundedManagerWidth(managerWidth + managerDrag))
                         .frame(maxHeight: .infinity)
                         .background(Color(nsColor: .windowBackgroundColor))
-                        .background(OutsideClickObserver(active: sessionManagerVisible && !sessionManagerPinned) { eventNumber in
+                        .background(OutsideClickObserver(active: sessionManagerVisible && !sessionManagerPinned && !showFolderPrompt) { eventNumber in
                             guard !model.deletingSessionItems else { return }
                             outsideDismissEvent = eventNumber
                             dismissedByOutsideClick = true
@@ -159,7 +161,20 @@ struct ContentView: View {
             Button("Cancel", role: .cancel) { folderName = ""; model.newFolderPrompt = false }
             Button("Create") {
                 let path = model.selectedFolder.map { $0 + "/" + folderName } ?? folderName
-                model.createFolder(path); folderName = ""; model.newFolderPrompt = false
+                let before = Set(model.folders)
+                model.createFolder(path)
+                if let created = model.selectedFolder, !before.contains(created), model.folders.contains(created) {
+                    let parts = created.split(separator: "/")
+                    for count in 1..<parts.count { expandedFolders.insert(parts.prefix(count).joined(separator: "/")) }
+                    sessionsExpanded = true
+                    search = ""
+                    sessionManagerVisible = true
+                    DispatchQueue.main.async {
+                        selectedRows = [SessionRowID.folder(created)]
+                        managerListFocused = true
+                    }
+                }
+                folderName = ""; model.newFolderPrompt = false
             }
         }
         .alert("Rename Folder", isPresented: $showRenamePrompt) {
@@ -310,7 +325,7 @@ struct ContentView: View {
                             Label("Favorites", systemImage: "star.fill").font(managerTextFont).foregroundStyle(.yellow).padding(.vertical, 2)
                         }.listRowInsets(EdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6))
                         DisclosureGroup(isExpanded: $sessionsExpanded) {
-                            FolderBranch(parent: nil, model: model, textFont: managerTextFont)
+                            FolderBranch(parent: nil, model: model, textFont: managerTextFont, expandedFolders: $expandedFolders)
                         } label: {
                             Label { Text("Sessions").font(managerTextFont) } icon: { Image(systemName: "folder.fill").foregroundStyle(.blue) }
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -327,6 +342,7 @@ struct ContentView: View {
                     }
                 }
                 .id(search)
+                .focused($managerListFocused)
                 .listStyle(.sidebar)
                 .environment(\.defaultMinListRowHeight, CGFloat(managerTextSize + 6))
                 .font(managerTextFont)
@@ -345,6 +361,14 @@ struct ContentView: View {
                             Button("Connect Selected Sessions") {
                                 connectFromManager(model.profiles.filter { selected.contains($0.id) })
                             }
+                        }
+                        if !selected.isEmpty {
+                            Menu("Move to Folder") {
+                                Button("Sessions (Root)") { model.dropSessions(selected.map { "muty-session:" + $0.uuidString }, into: nil) }
+                                ForEach(model.folders, id: \.self) { folder in
+                                    Button(folder) { model.dropSessions(selected.map { "muty-session:" + $0.uuidString }, into: folder) }
+                                }
+                            }.disabled(model.readOnly)
                         }
                         Button("Bulk Edit Selected Sessions…") { model.editSelectedSessions(ids) }.disabled(model.readOnly)
                     } else if let profile {
@@ -537,7 +561,7 @@ struct SessionTab: View {
                 HStack(spacing: 7) {
                     connectionIndicator.frame(width: 6, height: 6)
                     if let index = model.tabs.firstIndex(where: { $0.id == connection.id }), index < 9 {
-                        Text("\(index + 1)").font(.system(size: 9)).foregroundStyle(.secondary)
+                        Text("⌘\(index + 1)").font(.system(size: 9)).foregroundStyle(.secondary)
                     }
                     if connection.isLogging { Image(systemName: "record.circle.fill").foregroundStyle(.red).help("Logging session output") }
                     Text(connection.tabName ?? connection.profile.name).lineLimit(1)
@@ -801,6 +825,7 @@ private struct FolderBranch: View {
     @ObservedObject var model: AppModel
     let textFont: Font
     @ViewState private var dropTarget: String?
+    @Binding var expandedFolders: Set<String>
 
     private var children: [String] {
         model.folders.filter { path in
@@ -812,8 +837,10 @@ private struct FolderBranch: View {
 
     var body: some View {
         ForEach(children, id: \.self) { path in
-            DisclosureGroup {
-                AnyView(FolderBranch(parent: path, model: model, textFont: textFont))
+            DisclosureGroup(isExpanded: Binding(get: { expandedFolders.contains(path) }, set: { expanded in
+                if expanded { expandedFolders.insert(path) } else { expandedFolders.remove(path) }
+            })) {
+                AnyView(FolderBranch(parent: path, model: model, textFont: textFont, expandedFolders: $expandedFolders))
             } label: {
                 Label { Text(String(path.split(separator: "/").last ?? "")).font(textFont).lineLimit(1) } icon: {
                     Image(systemName: "folder.fill").foregroundStyle(model.folderColor(path).map(sessionColor) ?? .blue)

@@ -38,6 +38,8 @@ struct TerminalPaneLayout {
 struct TerminalWorkspace<Pane: View>: View {
     @ObservedObject var model: AppModel
     let pane: (SSHConnection) -> Pane
+    @ViewState private var sessionPickerIndex: Int?
+    @ViewState private var sessionQuery = ""
     private let tabBarHeight: CGFloat = 26
     var body: some View {
         GeometryReader { geometry in
@@ -101,14 +103,17 @@ struct TerminalWorkspace<Pane: View>: View {
                         .onHover { inside in if inside { NSCursor.resizeUpDown.set() } else { NSCursor.arrow.set() } }
                         .accessibilityLabel("Resize rows")
                 }
-            }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+            }.sheet(isPresented: Binding(get: { sessionPickerIndex != nil }, set: { if !$0 { sessionPickerIndex = nil } })) {
+                savedSessionPicker
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
                 .coordinateSpace(name: "mutyWorkspace").clipped()
         }
     }
 
     private func emptyPaneActions(_ group: AppModel.TabGroup, index: Int) -> some View {
         VStack(spacing: 10) {
-            sessionMenu(group, index: index) { Text("Choose Session") }
+            sessionMenu(group, index: index) { Text("Open or Move Session") }
             Button("New Local Shell") {
                 model.focusGroup(index)
                 var profile = SessionProfile()
@@ -122,26 +127,46 @@ struct TerminalWorkspace<Pane: View>: View {
     private func sessionMenu<MenuLabel: View>(_ group: AppModel.TabGroup, index: Int,
                                           @ViewBuilder label: () -> MenuLabel) -> some View {
         Menu {
-            ForEach(model.tabs) { connection in
-                let isInGroup = group.tabs.contains(connection.id)
-                Button {
-                    if isInGroup {
-                        model.selectTab(connection.id)
-                    } else {
-                        model.moveTab(connection.id, to: index)
-                    }
-                } label: {
-                    let title = connection.tabName ?? connection.profile.name
-                    if connection.id == group.selected {
-                        Label(title, systemImage: "checkmark")
-                    } else if !isInGroup {
-                        Label(title, systemImage: "arrow.right.square")
-                    } else {
-                        Text(title)
+            Button("Open Saved Session…") {
+                sessionQuery = ""
+                sessionPickerIndex = index
+            }
+            let otherTabs = model.tabs.filter { !group.tabs.contains($0.id) }
+            if !otherTabs.isEmpty {
+                Menu("Move Open Tab Here") {
+                    ForEach(otherTabs) { connection in
+                        Button(connection.tabName ?? connection.profile.name) {
+                            model.moveTab(connection.id, to: index)
+                        }
                     }
                 }
             }
         } label: { label() }
+    }
+
+    private var savedSessionPicker: some View {
+        let query = sessionQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let profiles = query.isEmpty
+            ? model.profiles.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            : SavedSessionSearch.matches(model.profiles, query: query)
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Open Saved Session").font(.headline)
+            TextField("Search sessions or folders", text: $sessionQuery)
+            if profiles.isEmpty {
+                Text(query.isEmpty ? "No saved sessions" : "No matching sessions")
+                    .foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    PaneSessionBranch(parent: nil, profiles: profiles) { profile in
+                        guard let index = sessionPickerIndex, model.splitGroups.indices.contains(index) else { return }
+                        model.focusGroup(index)
+                        sessionPickerIndex = nil
+                        model.connect(profile)
+                    }
+                }
+            }
+            HStack { Spacer(); Button("Cancel") { sessionPickerIndex = nil }.keyboardShortcut(.cancelAction) }
+        }.padding().frame(width: 420, height: 360)
     }
 
     private func tabBar(_ group: AppModel.TabGroup, connections: [UUID: SSHConnection], index: Int, split: Bool) -> some View {
@@ -177,11 +202,11 @@ struct TerminalWorkspace<Pane: View>: View {
             }
             if split && !group.tabs.isEmpty {
                 sessionMenu(group, index: index) {
-                    Image(systemName: "chevron.down").accessibilityLabel("Choose Session")
+                    Image(systemName: "chevron.down").accessibilityLabel("Open or Move Session")
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .padding(.trailing, 8)
-                .help("Choose Session")
+                .help("Open or Move Session")
             }
         }
         .background(.bar)
@@ -202,5 +227,53 @@ struct TerminalWorkspace<Pane: View>: View {
         guard let target, source != target else { return false }
         model.reorderTabs(from: source, to: target)
         return true
+    }
+}
+
+private struct PaneSessionBranch: View {
+    let parent: String?
+    let profiles: [SessionProfile]
+    let select: (SessionProfile) -> Void
+
+    private var children: [String] {
+        let prefix = parent.map { $0 + "/" } ?? ""
+        return Set(profiles.compactMap { profile -> String? in
+            guard let folder = profile.folder, folder.hasPrefix(prefix),
+                  let next = folder.dropFirst(prefix.count).split(separator: "/").first else { return nil }
+            return prefix + next
+        }).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    var body: some View {
+        ForEach(children, id: \.self) { folder in
+            PaneSessionFolder(folder: folder, profiles: profiles, select: select)
+        }
+        ForEach(profiles.filter { $0.folder == parent }) { profile in
+            Button { select(profile) } label: {
+                VStack(alignment: .leading) {
+                    Text(profile.name)
+                    Text(profile.endpoint).font(.caption).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.buttonStyle(.plain)
+        }
+    }
+}
+
+private struct PaneSessionFolder: View {
+    let folder: String
+    let profiles: [SessionProfile]
+    let select: (SessionProfile) -> Void
+    @ViewState private var expanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            AnyView(PaneSessionBranch(parent: folder, profiles: profiles, select: select))
+        } label: {
+            Label(String(folder.split(separator: "/").last ?? ""), systemImage: "folder.fill")
+        }
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
     }
 }
