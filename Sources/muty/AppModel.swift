@@ -732,10 +732,8 @@ final class AppModel: ObservableObject {
         guard password.utf8.count <= 1023, !password.contains("\n"), !password.contains("\r"), !password.contains("\0") else {
             throw MutyError("Password must be at most 1023 UTF-8 bytes and contain no newline or NUL.")
         }
-        // Revoke pending authentication before mutating a credential or its destination.
-        if revokeActiveAuthentication && (changed || authenticationChanged || !password.isEmpty || old?.savePassword != p.savePassword) {
-            tabs.filter { $0.profile.id == p.id || $0.profile.jumpHostID == p.id }.forEach { $0.revokeAuthentication() }
-        }
+        let shouldRevokeAuthentication = revokeActiveAuthentication &&
+            (changed || authenticationChanged || !password.isEmpty || old?.savePassword != p.savePassword)
         let writesPassword = p.savePassword && !password.isEmpty
         if writesPassword { try preparePasswordStorage() }
         let previousSecret = writesPassword ? try passwordStore.read(id: p.id) : nil
@@ -751,8 +749,14 @@ final class AppModel: ObservableObject {
             do {
                 if let previousSecret { try passwordStore.write(id: p.id, password: previousSecret, name: old?.name ?? p.name, endpoint: old?.endpoint ?? p.endpoint) }
                 else { try passwordStore.delete(id: p.id) }
-            } catch { throw MutyError("Profile save and password storage rollback failed. Check profiles.json and item \(p.id).") }
+            } catch {
+                if shouldRevokeAuthentication { revokeAuthentication(for: [p.id]) }
+                throw MutyError("Profile save and password storage rollback failed. Check profiles.json and item \(p.id).")
+            }
             throw error
+        }
+        if shouldRevokeAuthentication {
+            tabs.filter { $0.profile.id == p.id || $0.profile.jumpHostID == p.id }.forEach { $0.revokeAuthentication() }
         }
         profiles = updated; selectedProfile = p.id; selectedFolder = p.folder
     }
@@ -1212,8 +1216,6 @@ final class AppModel: ObservableObject {
             updated[index].savePassword = false
             updated[index].credentialID = nil
         }
-        tabs.filter { ids.contains($0.profile.id) || $0.profile.jumpHostID.map(ids.contains) == true }
-            .forEach { $0.revokeAuthentication() }
         var deleted: [SessionProfile] = []
         do {
             for profile in passwordProfiles {
@@ -1229,10 +1231,19 @@ final class AppModel: ObservableObject {
                 do { try passwordStore.write(id: profile.id, password: secret, name: profile.name, endpoint: profile.endpoint) }
                 catch { rollbackFailed = true }
             }
-            if rollbackFailed { throw MutyError("Password deletion rollback failed. Check saved passwords for the selected sessions.") }
+            if rollbackFailed {
+                revokeAuthentication(for: ids)
+                throw MutyError("Password deletion rollback failed. Check saved passwords for the selected sessions.")
+            }
             throw originalError
         }
+        revokeAuthentication(for: ids)
         profiles = updated
+    }
+
+    private func revokeAuthentication(for profileIDs: Set<UUID>) {
+        tabs.filter { profileIDs.contains($0.profile.id) || $0.profile.jumpHostID.map(profileIDs.contains) == true }
+            .forEach { $0.revokeAuthentication() }
     }
 
     @discardableResult
@@ -1252,16 +1263,19 @@ final class AppModel: ObservableObject {
         do {
             try preparePasswordStorage()
             let secret = try passwordStore.read(id: profile.id)
-            tabs.filter { $0.profile.id == profile.id || $0.profile.jumpHostID == profile.id }.forEach { $0.revokeAuthentication() }
             try passwordStore.delete(id: profile.id)
             var updated = profiles; updated[index].savePassword = false
             do { try saveCatalog(updated, folders: emptyFolders) }
             catch {
                 do {
                     if let secret { try passwordStore.write(id: profile.id, password: secret, name: profile.name, endpoint: profile.endpoint) }
-                } catch { throw MutyError("Password deletion and rollback failed. Re-enter the password for " + profile.endpoint) }
+                } catch {
+                    revokeAuthentication(for: [profile.id])
+                    throw MutyError("Password deletion and rollback failed. Re-enter the password for " + profile.endpoint)
+                }
                 throw error
             }
+            revokeAuthentication(for: [profile.id])
             profiles = updated
             return true
         } catch { errorMessage = error.localizedDescription; return false }
@@ -1310,8 +1324,6 @@ final class AppModel: ObservableObject {
             for profile in affected where profile.connectionType == .ssh {
                 originals.append((profile, try passwordStore.read(id: profile.id)))
             }
-            tabs.filter { ids.contains($0.profile.id) || $0.profile.jumpHostID.map(ids.contains) == true }
-                .forEach { $0.revokeAuthentication() }
             do {
                 for original in originals {
                     changed.append(original)
@@ -1327,10 +1339,12 @@ final class AppModel: ObservableObject {
                     catch { failed.append(profile.endpoint) }
                 }
                 if !failed.isEmpty {
+                    revokeAuthentication(for: ids)
                     throw MutyError("Deletion failed; profiles were kept. Could not restore passwords for: " + failed.joined(separator: ", "))
                 }
                 throw failure
             }
+            revokeAuthentication(for: ids)
             profiles = updated; emptyFolders = keptFolders
             folderColors = keptColors
             if selectedProfile.map(ids.contains) == true { selectedProfile = nil }
@@ -1354,7 +1368,6 @@ final class AppModel: ObservableObject {
         do {
             if !vault.needsSetup { try preparePasswordStorage() }
             let secret = try passwordStore.read(id: p.id)
-            tabs.filter { $0.profile.id == p.id || $0.profile.jumpHostID == p.id }.forEach { $0.revokeAuthentication() }
             try passwordStore.delete(id: p.id)
             let updated = profiles.filter { $0.id != p.id }
             do { try saveCatalog(updated, folders: emptyFolders) }
@@ -1362,10 +1375,12 @@ final class AppModel: ObservableObject {
                 do {
                     if let secret { try passwordStore.write(id: p.id, password: secret, name: p.name, endpoint: p.endpoint) }
                 } catch {
+                    revokeAuthentication(for: [p.id])
                     throw MutyError("Profile deletion and password storage rollback failed. The profile was kept; restore the password for item \(p.id).")
                 }
                 throw error
             }
+            revokeAuthentication(for: [p.id])
             profiles = updated
             if selectedProfile == p.id { selectedProfile = nil }
             if closeActive { active.forEach { $0.disconnect() } }

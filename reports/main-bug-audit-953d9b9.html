@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Отчёт о поиске ошибок muty — main 953d9b9</title>
+  <style>
+    :root { color-scheme: light; --ink: #182321; --muted: #53615d; --line: #d9e1dc; --paper: #f6f8f4; --card: #fff; --accent: #145c48; --warn: #9d3428; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { max-width: 900px; margin: 0 auto; padding: 48px 24px 72px; }
+    header { border-bottom: 2px solid var(--ink); padding-bottom: 24px; margin-bottom: 30px; }
+    h1 { margin: 0 0 10px; font-size: clamp(30px, 5vw, 46px); line-height: 1.1; letter-spacing: -.03em; }
+    h2 { margin: 0 0 14px; font-size: 23px; line-height: 1.25; }
+    p { margin: 9px 0; }
+    .meta { color: var(--muted); }
+    .finding { background: var(--card); border: 1px solid var(--line); border-left: 5px solid var(--warn); border-radius: 8px; padding: 24px; box-shadow: 0 10px 26px #1823210b; }
+    .label { color: var(--warn); font-size: 12px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+    .grid { display: grid; grid-template-columns: 130px 1fr; gap: 10px 16px; margin-top: 20px; }
+    .grid strong { color: var(--muted); }
+    code { overflow-wrap: anywhere; background: #edf2ed; border-radius: 4px; padding: 2px 5px; font: .9em ui-monospace, SFMono-Regular, Menlo, monospace; }
+    pre { overflow-x: auto; background: #192420; color: #edf4ee; border-radius: 6px; padding: 14px 16px; }
+    .validation { margin-top: 28px; padding: 20px 22px; border: 1px solid var(--line); border-radius: 8px; background: #eef3ed; }
+    .validation h2 { font-size: 19px; }
+    footer { margin-top: 28px; color: var(--muted); font-size: 14px; }
+    @media (max-width: 600px) { main { padding: 28px 16px 48px; } .grid { grid-template-columns: 1fr; gap: 2px; } .grid strong { margin-top: 10px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="label">Диагностика кода</p>
+    <h1>Ошибки в muty</h1>
+    <p class="meta">Целевая версия: <code>origin/main</code> на <code>953d9b9</code> · 12 ноября 2026</p>
+    <p>Последний коммит main содержит только документацию. Проверена кодовая база приложения целиком на <code>953d9b9</code>: исходники клиента, вспомогательные SSH/askpass-процессы и тесты. Прицельные воспроизводимые проверки сфокусированы на недавних и рискованных потоках, где возможны потеря данных, неправильная аутентификация или обход путей.</p>
+  </header>
+
+  <article class="finding">
+    <p class="label">Подтверждено · исправлено</p>
+    <h2>Ошибка операции удаления пароля неожиданно отзывала аутентификацию вкладок</h2>
+    <div class="grid">
+      <strong>Найденный баг</strong>
+      <p>Массовое удаление сохранённых паролей отзывает аутентификацию затронутых вкладок до удаления секретов и записи нового каталога. Если любая из операций завершается ошибкой, данные откатываются, но уже отозванная аутентификация не восстанавливается. Такой же порядок был в сохранении профиля с новым паролем, одиночном удалении пароля и удалении сессий.</p>
+      <strong>Как влиял</strong>
+      <p>Пользователь получал сообщение об ошибке, пароли и профили оставались на месте, но вкладки уже теряли askpass-брокер и ресурсы jump host. Незавершённое подключение могло оборваться или потребовать повторной аутентификации; для отложенной вкладки состояние становилось <code>Settings Changed</code>, хотя настройки не изменились.</p>
+      <strong>Как проверить</strong>
+      <p>Проверка автоматизирована без GUI. Регрессионный сценарий подменяет отказ удаления пароля и отказ записи каталога, проверяет откат секрета и неизменное состояние вкладки:</p>
+      <pre><code>bash scripts/test.sh</code></pre>
+      <p>До исправления сценарий падал: <code>35/36 passed</code>, сбой на проверке состояния соединения после неудачного массового удаления. После исправления: <code>36/36</code> регрессионных и <code>8/8</code> askpass-проверок пройдены. GUI-проверка для воспроизведения не требуется: ошибка возникает только при искусственно внедрённом отказе хранилища.</p>
+    </div>
+  </article>
+
+  <section class="validation">
+    <h2>Что охвачено</h2>
+    <p>Проведён систематический проход по подсистемам и их основным связям:</p>
+    <p><strong>Сессии и данные:</strong> каталог профилей и папок, настройки, split/workspace, clipboard cut/copy, переименование и массовое удаление.</p>
+    <p><strong>SSH и безопасность:</strong> соединения и reconnect, аутентификация и её отзыв, askpass IPC, jump host/proxy, известные host keys, ключевая библиотека, туннели и локальная оболочка.</p>
+    <p><strong>SFTP:</strong> разбор протокола, пути и атрибуты, очередь переводов, конфликты и retry, атомарные загрузки/скачивания, ссылки, свойства файлов, bookmarks и удалённый редактор.</p>
+    <p><strong>Импорт и резервные копии:</strong> SecureCRT, MobaXterm, конфигурация, зашифрованные full backups, vault, восстановление выбранных сессий и паролей.</p>
+    <p><strong>Терминал и UI-логика:</strong> преобразование подсветки вывода, отправка строк, поиск сессий, клавиатурные команды, clipboard/paste, редакторы и обработчики вкладок.</p>
+    <p>Каждый найденный по коду риск проверялся на возможность воспроизведения существующим тестовым seam; подтверждённым признан только дефект транзакционного порядка, описанный выше. Это аудит ошибок поведения, а не формальное доказательство отсутствия ошибок.</p>
+  </section>
+
+  <section class="validation">
+    <h2>Проверки и границы аудита</h2>
+    <p>Release-сборка <code>muty 0.7.11 (228)</code> создана, подпись приложения проверена через <code>codesign --verify --deep --strict</code>. При успешном откате вкладка остаётся активной; если откат самого секрета невозможен, затронутые вкладки отзывают аутентификацию для безопасности. GUI и Docker SSH/SFTP integration suite не запускались. Подтверждённых новых GUI-дефектов в проверенных потоках не найдено, поэтому ручные визуальные шаги не требуются.</p>
+    <p>Исправление подготовлено в ветке <code>fix-main-auth-revocation</code> поверх <code>main</code>.</p>
+  </section>
+  <footer>Отчёт создан для ревью исправления на актуальной ветке main. Основной кодовый путь регрессии находится в <code>AppModel</code>; тесты добавлены в <code>RegressionTests</code>.</footer>
+</main>
+</body>
+</html>
