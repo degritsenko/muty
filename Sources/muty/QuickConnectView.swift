@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 struct QuickConnectView: View {
-    @Environment(\.dismiss) private var dismiss
+    let dismiss: () -> Void
     @ObservedObject var model: AppModel
     @ViewState private var connectionType = ConnectionType.ssh
     @ViewState private var sshEnabled = true
@@ -36,7 +36,7 @@ struct QuickConnectView: View {
                         Toggle("SSH", isOn: $sshEnabled).disabled(sshEnabled && !sftpEnabled)
                         Toggle("SFTP", isOn: $sftpEnabled).disabled(sftpEnabled && !sshEnabled)
                         Spacer()
-                    }.toggleStyle(.switch).controlSize(.small)
+                    }.toggleStyle(.checkbox).controlSize(.regular)
                     TextField("Host", text: $host)
                     TextField("Port", text: $port)
                     if authentication == .password, let credentialID {
@@ -89,7 +89,7 @@ struct QuickConnectView: View {
                 } else {
                     Text("Starts your default login shell in your home directory.")
                 }
-            }.formStyle(.grouped).frame(height: connectionType == .ssh ? 430 : 150)
+            }.formStyle(.grouped).frame(maxWidth: .infinity, maxHeight: .infinity)
             Text(connectionHint)
                 .font(.caption).foregroundStyle(.secondary)
             if let error { Text(error).foregroundStyle(.red).font(.callout).textSelection(.enabled) }
@@ -122,6 +122,6 @@ struct QuickConnectView: View {
                     } catch { self.error = error.localizedDescription }
                 }.keyboardShortcut(.defaultAction)
             }
-        }.padding(24).frame(width: 480)
+        }.padding(24).frame(minWidth: 480, minHeight: 420)
     }
 }

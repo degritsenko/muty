@@ -139,6 +139,7 @@ struct KnownHostEntry: Identifiable {
 struct KnownHostsSettingsView: View {
     @ObservedObject var model: AppModel
     @StateObject private var store: KnownHostsStore
+    @ViewState private var operationError: String?
     @ViewState private var query = ""
     @ViewState private var selection = Set<Int>()
     init(model: AppModel) {
@@ -179,7 +180,7 @@ struct KnownHostsSettingsView: View {
             }
             Text("Hashed hosts can be found by their exact name. Removed entries are commented out and backed up; muty may ask to verify the server again.")
                 .font(.caption).foregroundStyle(.secondary)
-            if let error = store.error { Text(error).font(.caption).foregroundStyle(.red) }
+            if let error = operationError ?? store.error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
         }.padding()
         .onChange(of: query) { _, _ in selection = [] }
     }
@@ -191,15 +192,17 @@ struct KnownHostsSettingsView: View {
             let source = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh/known_hosts")
             let count = try store.importFrom(source)
             selection = []
+            operationError = nil
             model.operationStatus = "\(count) host keys imported into muty."
-        } catch { model.errorMessage = error.localizedDescription }
+        } catch { operationError = error.localizedDescription }
     }
     private func remove() {
         guard !model.readOnly, model.confirm("Remove Stored Host Keys?", text: "Remove \(selection.count) entries from muty? Verify the server fingerprint before trusting a replacement key. A backup of the current file will be saved. OpenSSH files are unchanged.", action: "Remove") else { return }
         do {
             let backup = try store.remove(selection)
             selection = []
+            operationError = nil
             model.operationStatus = "Host keys removed. Backup: " + backup.path
-        } catch { model.errorMessage = error.localizedDescription }
+        } catch { operationError = error.localizedDescription }
     }
 }

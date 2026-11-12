@@ -28,7 +28,7 @@ struct KeySelectionView: View {
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, event.keyCode == 53,
            event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
-           attachedSheet == nil, NSApp.modalWindow === self {
+           attachedSheet == nil {
             performClose(nil)
             return
         }
@@ -115,48 +115,51 @@ private struct GeneralSettingsView: View {
     @AppStorage("startupSessionID") private var startupSessionID = ""
     @AppStorage("startupEmptyAction") private var startupEmptyAction = "empty"
     @ViewState private var choosingStartup = false
+    @ViewState private var startupQuery = ""
     var body: some View {
         Form {
-            LabeledContent("Startup session") {
-                if choosingStartup {
-                    HStack(spacing: 6) {
-                        SavedSessionSearchField(model: model, onSelect: { profile in
-                            startupSessionID = profile.id.uuidString
-                            choosingStartup = false
-                        }, focusOnAppear: true)
-                            .frame(width: 250, height: 24)
-                        Button {
-                            startupSessionID = ""
-                            choosingStartup = false
-                        } label: { Text("None") }.help("Clear startup session")
-                        Button { choosingStartup = false } label: {
-                            Image(systemName: "xmark")
-                        }.buttonStyle(.plain).help("Cancel selection")
+            Section("On launch") {
+                Picker("Open", selection: Binding(
+                    get: { startupSessionID.isEmpty ? startupEmptyAction : "session" },
+                    set: { value in
+                        if value == "session" { startupQuery = ""; choosingStartup = true }
+                        else { startupSessionID = ""; startupEmptyAction = value }
                     }
-                } else {
-                    Button { choosingStartup = true } label: {
-                        HStack {
-                            Text(model.profiles.first { $0.id.uuidString == startupSessionID }?.name ?? "None")
-                                .lineLimit(1)
-                            Image(systemName: "chevron.up.chevron.down").font(.caption)
+                )) {
+                    Text("Empty window").tag("empty")
+                    Text("Local Shell").tag("localShell")
+                    Text("Quick Connect").tag("quickConnect")
+                    Text("Saved session…").tag("session")
+                }
+                if !startupSessionID.isEmpty {
+                    LabeledContent("Saved session") {
+                        Button(model.profiles.first { $0.id.uuidString == startupSessionID }?.name ?? "Unavailable") {
+                            startupQuery = ""; choosingStartup = true
                         }
                     }
                 }
+                Toggle("Restore previous tabs", isOn: $restoreTabs)
+                Text("Restored SSH tabs wait for reconnect. The selected startup session connects automatically.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Text("Automatically connects the selected session when muty launches.")
-                .font(.caption).foregroundStyle(.secondary)
-            Picker("When no tabs are restored", selection: $startupEmptyAction) {
-                Text("Empty window").tag("empty")
-                Text("Local Shell").tag("localShell")
-                Text("Quick Connect").tag("quickConnect")
-            }
-            Text("Used when no startup session is selected and no saved tabs were restored.")
-                .font(.caption).foregroundStyle(.secondary)
-            Toggle("Restore tabs on launch", isOn: $restoreTabs)
-            Text("Restores saved SSH and Local Shell tabs, their names and order. The startup session connects automatically. For other restored tabs, press Enter or choose Reconnect. Temporary tabs, SFTP browser state and terminal output are excluded.")
-                .font(.caption).foregroundStyle(.secondary)
 
         }.formStyle(.grouped).padding()
+        .sheet(isPresented: $choosingStartup) {
+            let query = startupQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            let profiles = query.isEmpty ? model.profiles.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending } : SavedSessionSearch.matches(model.profiles, query: query)
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Choose Startup Session").font(.headline)
+                TextField("Search sessions or folders", text: $startupQuery)
+                if profiles.isEmpty {
+                    Text(query.isEmpty ? "No saved sessions" : "No matching sessions").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List { PaneSessionBranch(parent: nil, profiles: profiles) { profile in
+                        startupSessionID = profile.id.uuidString; choosingStartup = false
+                    } }
+                }
+                HStack { Spacer(); Button("Cancel") { choosingStartup = false }.keyboardShortcut(.cancelAction) }
+            }.padding().frame(width: 420, height: 360)
+        }
         .onChange(of: restoreTabs) { _, value in model.workspacePreferenceChanged(value) }
         .onChange(of: model.profiles.map(\.id), initial: true) { _, ids in
             guard !model.readOnly, !startupSessionID.isEmpty,
@@ -217,8 +220,8 @@ private struct KeyLibraryView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("SSH Keys").font(.title2.bold()); Spacer()
-                Button("Link Key File…") { add(copy: false) }
-                Button("Import Key Copy…") { add(copy: true) }
+                Button("Link Key File…") { add(copy: false) }.help("Use the existing file at its current location.")
+                Button("Import Key Copy…") { add(copy: true) }.help("Copy the key into muty’s private storage.")
             }
             if library.busy { ProgressView("Inspecting SSH key…").controlSize(.small) }
             List(selection: $selected) {

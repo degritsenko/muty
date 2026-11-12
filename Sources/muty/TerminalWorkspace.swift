@@ -230,7 +230,7 @@ struct TerminalWorkspace<Pane: View>: View {
     }
 }
 
-private struct PaneSessionBranch: View {
+struct PaneSessionBranch: View {
     let parent: String?
     let profiles: [SessionProfile]
     let select: (SessionProfile) -> Void

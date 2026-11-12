@@ -297,7 +297,7 @@ final class AppModel: ObservableObject {
               let value = UserDefaults.standard.string(forKey: "startupSessionID"),
               let id = UUID(uuidString: value),
               let profile = profiles.first(where: { $0.id == id }) else {
-            guard !readOnly, tabs.isEmpty else { return }
+            guard !readOnly else { return }
             switch UserDefaults.standard.string(forKey: "startupEmptyAction") {
             case "localShell":
                 var profile = SessionProfile()

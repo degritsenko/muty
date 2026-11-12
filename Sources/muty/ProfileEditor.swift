@@ -45,7 +45,7 @@ struct ProfileEditor: View {
                     Toggle("SSH", isOn: $profile.sshEnabled).disabled(profile.sshEnabled && !profile.sftpEnabled)
                     Toggle("SFTP", isOn: $profile.sftpEnabled).disabled(profile.sftpEnabled && !profile.sshEnabled)
                     Spacer()
-                }.toggleStyle(.switch).controlSize(.small)
+                }.toggleStyle(.checkbox).controlSize(.regular)
             }
             if profile.connectionType == .localShell {
                 Text("Starts your default login shell in your home directory.").font(.caption).foregroundStyle(.secondary)

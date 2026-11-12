@@ -201,46 +201,102 @@ struct OutputHighlightRule: Codable, Identifiable {
 
 struct OutputHighlightSettings: View {
     @ObservedObject private var store = OutputHighlightStore.shared
+    @ViewState private var editing: OutputHighlightRule?
+    @ViewState private var deleting: OutputHighlightRule?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Toggle("Highlight terminal output", isOn: $store.enabled)
-            Text("Case-insensitive matches. Only the foreground colour of new output changes; background, copied text and session logs are untouched. Turning highlighting off affects new output only. Regular expressions are case-insensitive; invalid ones are ignored.")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("Slow regular expressions are skipped when the processing time budget is exhausted.")
-                .font(.caption).foregroundStyle(.secondary)
+            Text("Highlighting applies to new terminal output.").font(.caption).foregroundStyle(.secondary)
+                .help("Matches are case-insensitive. Only foreground color changes; copied text and logs are unchanged.")
             List {
                 ForEach($store.rules) { $rule in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Toggle("Enabled", isOn: $rule.enabled).labelsHidden()
-                            TextField("Text or regular expression", text: $rule.pattern)
-                            Picker("Color", selection: $rule.color) {
-                                ForEach(["Red", "Yellow", "Green", "Cyan", "Blue", "Magenta", "Purple", "Orange"], id: \.self) { Text($0).tag($0) }
-                            }.labelsHidden().frame(width: 100)
-                            Button { store.rules.removeAll { $0.id == rule.id } } label: { Image(systemName: "minus") }
-                        }
-                        HStack(spacing: 14) {
-                            Toggle("Regular expression", isOn: Binding(
-                                get: { rule.isRegex == true },
-                                set: { rule.isRegex = $0 }
-                            ))
-                            Toggle("Whole word", isOn: Binding(
-                                get: { rule.wholeWord == true },
-                                set: { rule.wholeWord = $0 }
-                            )).disabled(rule.isRegex == true)
-                        }.controlSize(.small)
-                    }.padding(.vertical, 2)
+                    HStack {
+                        Toggle("Enabled", isOn: $rule.enabled).labelsHidden().help("Enable rule")
+                        Text(rule.pattern.isEmpty ? "Empty pattern" : rule.pattern).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                        Circle().fill(Color(nsColor: OutputHighlightStore.color(rule.color))).frame(width: 9, height: 9)
+                        Text(rule.color).frame(width: 65, alignment: .leading)
+                        Text(rule.isRegex == true ? "Regex" : (rule.wholeWord == true ? "Whole word" : "Text"))
+                            .font(.caption).foregroundStyle(.secondary).frame(width: 70, alignment: .leading)
+                        Button("Edit") { editing = rule }
+                        Menu {
+                            Button("Duplicate") {
+                                var copy = rule; copy.id = UUID(); editing = copy
+                            }.disabled(store.rules.count >= OutputHighlightStore.maxRules)
+                            Button("Delete…", role: .destructive) { deleting = rule }
+                        } label: { Image(systemName: "ellipsis.circle") }.menuStyle(.borderlessButton).fixedSize().help("Rule actions")
+                    }
                 }
             }
             HStack {
-                Button("Add Rule") {
-                    if store.rules.count < OutputHighlightStore.maxRules { store.rules.append(.init(pattern: "")) }
-                }.disabled(store.rules.count >= OutputHighlightStore.maxRules)
+                Button("Add Rule") { editing = OutputHighlightRule(pattern: "") }.disabled(store.rules.count >= OutputHighlightStore.maxRules)
                 Button("Add Common Rules") {
                     store.rules.append(contentsOf: store.missingCommonRules.prefix(max(0, OutputHighlightStore.maxRules - store.rules.count)))
                 }.disabled(store.rules.count >= OutputHighlightStore.maxRules || store.missingCommonRules.isEmpty)
             }
         }.padding(14)
+        .sheet(item: $editing) { rule in
+            HighlightRuleEditor(rule: rule) { updated in
+                if let index = store.rules.firstIndex(where: { $0.id == updated.id }) { store.rules[index] = updated }
+                else if store.rules.count < OutputHighlightStore.maxRules { store.rules.append(updated) }
+            }
+        }
+        .alert("Delete Highlight Rule?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+            Button("Cancel", role: .cancel) { deleting = nil }
+            Button("Delete", role: .destructive) {
+                if let id = deleting?.id { store.rules.removeAll { $0.id == id } }
+                deleting = nil
+            }
+        } message: { Text(deleting?.pattern ?? "") }
+    }
+}
+
+private struct HighlightRuleEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @ViewState private var rule: OutputHighlightRule
+    @ViewState private var previewText = "ERROR: connection failed"
+    let save: (OutputHighlightRule) -> Void
+
+    init(rule: OutputHighlightRule, save: @escaping (OutputHighlightRule) -> Void) {
+        _rule = State(initialValue: rule); self.save = save
+    }
+    private var regexError: String? {
+        guard rule.isRegex == true, !rule.pattern.isEmpty else { return nil }
+        do { _ = try NSRegularExpression(pattern: rule.pattern, options: [.caseInsensitive]); return nil }
+        catch { return error.localizedDescription }
+    }
+    private var preview: AttributedString {
+        var result = AttributedString(previewText)
+        var enabledRule = rule; enabledRule.enabled = true
+        let bytes = Array(previewText.utf8)
+        let matches = OutputHighlightRuleSet(rules: [enabledRule]).matches(in: bytes, text: previewText, leadingBoundary: true, trailingBoundary: true)
+        for match in matches {
+            guard let lowerUTF8 = previewText.utf8.index(previewText.utf8.startIndex, offsetBy: match.range.lowerBound, limitedBy: previewText.utf8.endIndex),
+                  let upperUTF8 = previewText.utf8.index(previewText.utf8.startIndex, offsetBy: match.range.upperBound, limitedBy: previewText.utf8.endIndex),
+                  let lower = String.Index(lowerUTF8, within: previewText), let upper = String.Index(upperUTF8, within: previewText),
+                  let start = AttributedString.Index(lower, within: result), let end = AttributedString.Index(upper, within: result) else { continue }
+            result[start..<end].foregroundColor = Color(nsColor: OutputHighlightStore.color(rule.color))
+        }
+        return result
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Highlight Rule").font(.headline)
+            TextField("Pattern", text: $rule.pattern)
+            if let regexError { Text(regexError).font(.caption).foregroundStyle(.red) }
+            Picker("Match", selection: Binding(get: { rule.isRegex == true }, set: { rule.isRegex = $0; if $0 { rule.wholeWord = false } })) {
+                Text("Text").tag(false); Text("Regular expression").tag(true)
+            }
+            Toggle("Whole word", isOn: Binding(get: { rule.wholeWord == true }, set: { rule.wholeWord = $0 })).disabled(rule.isRegex == true)
+            Picker("Color", selection: $rule.color) {
+                ForEach(["Red", "Yellow", "Green", "Cyan", "Blue", "Magenta", "Purple", "Orange"], id: \.self) { Text($0).tag($0) }
+            }
+            Toggle("Enabled", isOn: $rule.enabled)
+            TextField("Preview text", text: $previewText)
+            Text(preview).font(.system(.body, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading).padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+            HStack { Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Save") { save(rule); dismiss() }.keyboardShortcut(.defaultAction).disabled(rule.pattern.isEmpty || regexError != nil)
+            }
+        }.padding(20).frame(width: 460)
     }
 }
