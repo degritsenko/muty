@@ -15,8 +15,12 @@ private final class LockedCredentials: CredentialStore {
 private final class BulkForgetCredentials: CredentialStore {
     var secrets: [UUID: String] = [:]
     var failDelete: UUID?
+    var failWrite: UUID?
     func read(id: UUID) throws -> String? { secrets[id] }
-    func write(id: UUID, password: String) throws { secrets[id] = password }
+    func write(id: UUID, password: String) throws {
+        if id == failWrite { throw MutyError("Injected restoration failure") }
+        secrets[id] = password
+    }
     func delete(id: UUID) throws {
         if id == failDelete { throw MutyError("Injected deletion failure") }
         secrets[id] = nil
@@ -769,12 +773,22 @@ final class RegressionTests {
         model.tabs = [connection]
         let request = BulkEditRequest(folder: nil, profiles: [first, second, shared, local])
         credentials.failDelete = second.id
+        let statusBeforeFailedForget = connection.status
         do {
             try model.forgetBulkSavedPasswords(request)
             assertionFailure("Expected deletion failure")
         } catch {}
         assert(credentials.secrets[first.id] == "first" && credentials.secrets[second.id] == "second")
         assert(model.profiles.first { $0.id == first.id }?.savePassword == true)
+        assert(connection.status == statusBeforeFailedForget)
+        credentials.failWrite = first.id
+        do {
+            try model.forgetBulkSavedPasswords(request)
+            assertionFailure("Expected rollback failure")
+        } catch {}
+        assert(connection.status == "Settings Changed")
+        credentials.secrets[first.id] = "first"
+        credentials.failWrite = nil
         credentials.failDelete = nil
         try model.forgetBulkSavedPasswords(request)
         assert(credentials.secrets[first.id] == nil && credentials.secrets[second.id] == nil)
@@ -789,6 +803,25 @@ final class RegressionTests {
             try model.forgetBulkSavedPasswords(request)
             assertionFailure("Expected stale request rejection")
         } catch {}
+
+        let failedSaveDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: failedSaveDirectory) }
+        let failedSaveStore = ProfileStore(directory: failedSaveDirectory)
+        try failedSaveStore.save([first])
+        let failedSaveCredentials = BulkForgetCredentials()
+        failedSaveCredentials.secrets[first.id] = "original"
+        let failedSaveModel = AppModel(store: failedSaveStore, keychain: failedSaveCredentials)
+        let failedSaveConnection = SSHConnection(profile: first, manual: true, credentials: failedSaveCredentials, deferredStart: true)
+        failedSaveModel.tabs = [failedSaveConnection]
+        let statusBeforeFailedSave = failedSaveConnection.status
+        try FileManager.default.removeItem(at: failedSaveStore.file)
+        try FileManager.default.createDirectory(at: failedSaveStore.file, withIntermediateDirectories: true)
+        do {
+            try failedSaveModel.save(first, password: "replacement", reuse: false)
+            assertionFailure("Expected catalog save failure")
+        } catch {}
+        assert(failedSaveCredentials.secrets[first.id] == "original")
+        assert(failedSaveConnection.status == statusBeforeFailedSave)
     }
 
     @MainActor func testSessionAppearancePersistence() throws {
