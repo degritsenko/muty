@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.7.12
+
+### Added
+
+- Open saved sessions from a folder tree in a split pane, or move an open tab from another pane.
+- Return to two panes from three- and four-pane layouts; split a single session into two panes.
+- Move multiple selected sessions to a folder.
+- Open remote files for editing with a double-click and show owner and group names when provided by the SFTP server.
+
+### Fixed
+
+- Keep Session Manager focused on a newly created folder.
+- Avoid applying zero permissions when the SFTP server does not provide a file mode, and label special permission bits.
+- Apply backup key selection only to selected sessions.
+- Preserve tab authentication when profile or password changes fail and are rolled back. Thanks to @zurkiryy for PR #8.
+
+### Changed
+
+- Show tab shortcuts with the Command symbol and collapse folders by default in the pane session picker.
+
 ## 0.7.11
 
 ### Added
