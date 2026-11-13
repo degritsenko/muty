@@ -197,6 +197,9 @@ struct ButtonBarDocument: Codable {
     func saveSet(name: String, id: UUID? = nil) throws -> UUID {
         var updated = document
         let set = ButtonBarSet(id: id ?? UUID(), name: name.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard set.name.caseInsensitiveCompare("Default") != .orderedSame else {
+            throw MutyError("Default is reserved for the built-in button set.")
+        }
         if let index = updated.sets.firstIndex(where: { $0.id == set.id }) { updated.sets[index] = set }
         else { updated.sets.append(set) }
         try replace(updated)
@@ -262,18 +265,27 @@ struct SendStringButtonBar: View {
             }
         }
     }
-    private var title: String { store.document.sets.first { $0.id == selectedSet }?.name ?? "Default" }
+    private func setLabel(_ set: ButtonBarSet) -> String {
+        set.name.caseInsensitiveCompare("Default") == .orderedSame ? set.name + " (Custom)" : set.name
+    }
+    private var title: String { store.document.sets.first { $0.id == selectedSet }.map(setLabel) ?? "Default" }
     private var setPicker: some View {
             Menu {
+                if let tabSelection {
+                    Button { followFolder() } label: {
+                        if tabSelection.wrappedValue == nil { Label("Follow Folder", systemImage: "checkmark") }
+                        else { Text("Follow Folder") }
+                    }
+                }
                 Button("Default") { selectedSet = nil }
-                ForEach(store.document.sets) { set in Button(set.name) { selectedSet = set.id } }
+                ForEach(store.document.sets) { set in Button(setLabel(set)) { selectedSet = set.id } }
                 Divider()
                 Button("New Set…") { setToRename = nil; setName = ""; editingSet = true }
                 Button("Add Starter Sets") {
                     perform { if let id = try store.addStarterSets() { selectedSet = id } }
                 }
                 if let selectedSet {
-                    Button("Rename Set…") { setToRename = selectedSet; setName = title; editingSet = true }
+                    Button("Rename Set…") { setToRename = selectedSet; setName = store.document.sets.first { $0.id == selectedSet }?.name ?? ""; editingSet = true }
                     Button("Remove Set…") {
                         guard model.confirm("Remove Button Set?", text: "Its buttons will move to Default.", action: "Remove") else { return }
                         perform { try store.removeSet(selectedSet); followFolder() }
@@ -301,6 +313,11 @@ struct SendStringButtonBar: View {
 
     var body: some View {
         HStack(spacing: 6) {
+            if let connection = model.selectedConnection {
+                let target = connection.profile.connectionType == .ssh ? connection.profile.endpoint : "Local Shell"
+                Label(target, systemImage: "terminal")
+                    .lineLimit(1).frame(maxWidth: 160).help(target)
+            }
             ScrollView(.horizontal) {
                 HStack(spacing: 5) {
                     ForEach(store.document.buttons.filter { $0.setID == selectedSet }) { button in
@@ -352,10 +369,13 @@ struct SendStringButtonBar: View {
         Menu("Move to Set") {
             Button("Default") { perform { var copy = button; copy.setID = nil; try store.save(copy) } }
             ForEach(store.document.sets) { set in
-                Button(set.name) { perform { var copy = button; copy.setID = set.id; try store.save(copy) } }
+                Button(setLabel(set)) { perform { var copy = button; copy.setID = set.id; try store.save(copy) } }
             }
         }
-        Button("Delete", role: .destructive) { perform { try store.remove(button) } }
+        Button("Delete…", role: .destructive) {
+            guard model.confirm("Delete Button?", text: "Remove “" + button.title + "” from this button set?", action: "Delete") else { return }
+            perform { try store.remove(button) }
+        }
     }
     private func edit(_ button: SendStringButton?) {
         var value = button ?? SendStringButton()
@@ -371,24 +391,31 @@ private struct ConnectedSendButton: View {
     @ObservedObject var connection: SSHConnection
     let button: SendStringButton
     @ObservedObject var model: AppModel
+    private var canSend: Bool {
+        connection.running && !connection.showingSFTP &&
+            (connection.profile.connectionType != .ssh ||
+             (connection.transportReady && connection.profile.sshEnabled && !connection.profile.tunnelOnly))
+    }
     var body: some View {
         Button(button.title) {
-            guard model.selectedConnection?.id == connection.id, connection.running, !connection.showingSFTP else { return }
+            guard model.selectedConnection?.id == connection.id, canSend else { return }
             let pid = connection.terminal.process.shellPid
             if button.confirm == true {
                 guard model.confirm("Send Button Command?", text: connection.profile.name + "\n" + connection.profile.endpoint + "\n\n" + button.string, action: "Send") else { return }
             }
-            guard model.selectedConnection?.id == connection.id, connection.running, !connection.showingSFTP,
+            guard model.selectedConnection?.id == connection.id, canSend,
                   connection.terminal.process.shellPid == pid else { return }
             do {
                 let actions = try SendStringButton.actions(button.string)
-                connection.terminal.sendButtonActions(actions)
+                connection.terminal.sendButtonActions(actions) {
+                    model.selectedConnection?.id == connection.id && canSend
+                }
                 connection.terminal.window?.makeFirstResponder(connection.terminal)
             } catch { model.errorMessage = error.localizedDescription }
         }
         .tint(button.color.map { Color(nsColor: OutputHighlightStore.color($0)) })
         .foregroundStyle(button.color.map { Color(nsColor: OutputHighlightStore.color($0)) } ?? .primary)
-        .disabled(!connection.running || connection.showingSFTP).help(button.string)
+        .disabled(!canSend).help(button.string)
     }
 }
 

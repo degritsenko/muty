@@ -529,13 +529,12 @@ private struct SessionButtonBar: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            Divider()
-            SendStringButtonBar(model: model, tabSelection: $connection.buttonBarSelection)
+        if !connection.showingSFTP {
+            VStack(spacing: 0) {
+                Divider()
+                SendStringButtonBar(model: model, tabSelection: $connection.buttonBarSelection)
+            }
         }
-        .opacity(connection.showingSFTP ? 0 : 1)
-        .allowsHitTesting(!connection.showingSFTP)
-        .accessibilityHidden(connection.showingSFTP)
     }
 }
 

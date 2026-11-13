@@ -552,7 +552,7 @@ final class ReconnectTerminalView: LocalProcessTerminalView {
             }
         }
     }
-    func sendButtonActions(_ actions: [SendStringAction]) {
+    func sendButtonActions(_ actions: [SendStringAction], canContinue: @escaping @MainActor () -> Bool) {
         cancelPendingPaste()
         guard process.running else { return }
         let pid = process.shellPid
@@ -561,7 +561,7 @@ final class ReconnectTerminalView: LocalProcessTerminalView {
             guard let self else { return }
             defer { if self.pasteGeneration == generation { self.cancelPendingPaste() } }
             for action in actions {
-                guard !Task.isCancelled, self.pasteGeneration == generation,
+                guard !Task.isCancelled, self.pasteGeneration == generation, canContinue(),
                       self.process.running, self.process.shellPid == pid else { return }
                 switch action {
                 case .text(let text): self.send(txt: text)

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.1
+
+### Fixed
+
+- Open the private-key file chooser from Quick Connect.
+- Send Button Bar commands only to a ready terminal and show the active target. Stop queued commands if their terminal is no longer active when a pause ends.
+- Restore folder-based button set selection and confirm button deletion.
+
 ## 0.8.0
 
 ### Added

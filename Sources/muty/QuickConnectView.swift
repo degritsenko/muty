@@ -53,37 +53,20 @@ struct QuickConnectView: View {
                         CredentialSelectionView(vault: model.vault, credentialID: $credentialID,
                                                 sessionCredentialsTitle: "Enter password when prompted")
                     } else if authentication == .identityFile {
-                        LabeledContent("SSH Key") {
-                            Menu {
-                                ForEach(model.keyLibrary.keys) { key in
-                                    Button(key.name) {
-                                        keyID = key.id
-                                        identityFile = nil
-                                        error = nil
-                                    }
-                                }
-                                Divider()
-                                Button("Choose File…") {
-                            let panel = NSOpenPanel()
-                            panel.canChooseDirectories = false
-                            panel.allowsMultipleSelection = false
-                            panel.showsHiddenFiles = true
-                            panel.message = "Choose a private SSH key for this connection. It will not be added to the key library."
-                            if panel.runModal() == .OK, let file = panel.url {
-                                do {
-                                    try SSHKeyLibrary.validateConnectionKey(file)
-                                    identityFile = file.path
-                                    keyID = nil
-                                    error = nil
-                                } catch { self.error = error.localizedDescription }
+                        Picker("SSH Key", selection: $keyID) {
+                            Text(identityFile.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Select a key")
+                                .tag(nil as UUID?)
+                            ForEach(model.keyLibrary.keys) { key in
+                                Text(key.name).tag(Optional(key.id))
                             }
-                                }
-                            } label: {
-                                Text(model.keyLibrary.keys.first(where: { $0.id == keyID })?.name ??
-                                     identityFile.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Select a key")
-                                    .lineLimit(1)
-                            }
-                            .help(identityFile ?? model.keyLibrary.keys.first(where: { $0.id == keyID })?.path ?? "Choose a library key or a private-key file")
+                        }
+                        .pickerStyle(.menu)
+                        .onChange(of: keyID) { _, selectedKey in
+                            if selectedKey != nil { identityFile = nil }
+                            error = nil
+                        }
+                        LabeledContent("Key File") {
+                            Button("Choose File…") { chooseKeyFile() }
                         }
                     }
                 } else {
@@ -124,4 +107,23 @@ struct QuickConnectView: View {
             }
         }.padding(24).frame(minWidth: 480, minHeight: 420)
     }
+
+    private func chooseKeyFile() {
+        guard let window = NSApp.modalWindow else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        panel.message = "Choose a private SSH key for this connection. It will not be added to the key library."
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let file = panel.url else { return }
+            do {
+                try SSHKeyLibrary.validateConnectionKey(file)
+                identityFile = file.path
+                keyID = nil
+                error = nil
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+
 }
