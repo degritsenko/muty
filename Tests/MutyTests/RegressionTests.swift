@@ -237,6 +237,7 @@ final class RegressionTests {
         let connection = SSHConnection(profile: p, manual: true, temporary: true)
         model.saveTemporaryProfile(connection)
         guard let first = model.editing?.profile else { fatalError("missing draft") }
+        assert(model.editing?.fromTemporaryTab == true && model.editing?.original == nil)
         try model.save(first, password: "", reuse: false)
         model.saveTemporaryProfile(connection)
         guard let second = model.editing?.profile else { fatalError("missing draft") }
@@ -1155,6 +1156,44 @@ final class RegressionTests {
         model.reconnect(current)
         assert(model.splitSlots.isEmpty && model.splitMode == "none")
         assert(model.selectedTab == model.tabs[1].id)
+
+        try model.vault.initialize(masterPassword: nil)
+        let firstCredential = SavedCredential(title: "First", username: "tester", password: "disposable-first")
+        var secondCredential = SavedCredential(title: "Second", username: "tester", password: "disposable-second")
+        try model.vault.saveCredential(firstCredential)
+        try model.vault.saveCredential(secondCredential)
+        var ssh = SessionProfile()
+        ssh.host = "example.invalid"; ssh.credentialID = firstCredential.id
+        ssh = try model.effectiveProfile(ssh).validated()
+        let shared = SSHConnection(profile: ssh, manual: false, temporary: true, credentials: model.vault, deferredStart: true)
+        model.tabs = [shared]; model.selectedTab = shared.id
+        var cosmetic = ssh; cosmetic.color = "Blue"
+        try model.updateTemporaryTab(shared, profile: cosmetic)
+        assert(model.tabs.first === shared && shared.profile.credentialID == firstCredential.id)
+        assert(shared.profile.user == "tester" && shared.profile.savePassword)
+
+        var changedCredential = cosmetic; changedCredential.credentialID = secondCredential.id
+        try model.updateTemporaryTab(shared, profile: changedCredential)
+        let reassigned = model.tabs[0]
+        assert(reassigned !== shared && reassigned.profile.credentialID == secondCredential.id)
+        assert(reassigned.resolveJumpProfile != nil && reassigned.onTerminalOutput != nil)
+        secondCredential.username = "another-user"
+        try model.vault.saveCredential(secondCredential)
+        try model.updateTemporaryTab(reassigned, profile: reassigned.profile)
+        let renamedUser = model.tabs[0]
+        assert(renamedUser !== reassigned && renamedUser.profile.user == "another-user")
+
+        var forwarding = renamedUser.profile; forwarding.forwards = [PortForward()]
+        model.confirmSessionSettingsChange = { _, _ in false }
+        try model.updateTemporaryTab(renamedUser, profile: forwarding)
+        assert(model.tabs.first === renamedUser && renamedUser.profile.forwards.isEmpty)
+        model.confirmSessionSettingsChange = { _, _ in true }
+        try model.updateTemporaryTab(renamedUser, profile: forwarding)
+        let forwarded = model.tabs[0]
+        assert(forwarded !== renamedUser && forwarded.profile.forwards == forwarding.forwards)
+        forwarding.tunnelOnly = true
+        try model.updateTemporaryTab(forwarded, profile: forwarding)
+        assert(model.tabs.first !== forwarded && model.tabs.first?.profile.tunnelOnly == true)
     }
 
     @MainActor func testCurrentFolderAndAtomicProfileSave() throws {

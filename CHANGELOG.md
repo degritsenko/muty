@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.8.0
+
+### Added
+
+- Copy, cut and paste files and folders in both SFTP panes with Command-C, Command-X and Command-V. Create adjacent copies with an available name.
+- Remove non-empty remote folders recursively in the SFTP browser, with current-path progress and cancellation.
+- Mark background terminal output by changing the existing session indicator from green to blue until the output is viewed.
+
+### Fixed
+
+- Keep SFTP navigation available during remote deletion and limit deletion-progress updates.
+- Recheck remote parent directories before deletion batches and verify move sources before cleanup. Report the saved copy and remaining source when move cleanup is interrupted.
+- Route SFTP clipboard shortcuts to the focused file pane.
+- Avoid false terminal activity indicators when opening SFTP, changing split layouts or resizing the window.
+- Preserve shared credentials when editing temporary tabs, apply the selected username, and restart after credential or forwarding changes are confirmed.
+- Restore Jump Host and terminal-activity handlers when temporary tab settings replace a connection.
+- Restore the Quick Connect shortcut and Escape handling, and center its window.
+- Allow keyboard layout switching in master-password fields.
+- Show Host Keys operation errors inside Settings.
+
+### Changed
+
+- Pipeline SFTP file reads, writes and parent-directory checks. Use server-side Remote-to-Remote copying when supported, with download/upload fallback.
+- Edit syntax-highlighting rules in a dedicated editor with preview and regex validation. Support duplication and confirm deletion.
+- Group startup options in one settings section and choose the startup session from a searchable folder tree. Expand session-picker folders during search.
+- Make Quick Connect resizable and align its controls with session settings.
+- Distinguish saved-profile settings from temporary-tab settings and explain when changes apply. Confirm that Save as Session creates a profile while the current tab remains temporary.
+- Show file-transfer progress and confirm transfers between the Local and Remote panes.
+- Clarify the difference between linking an SSH key file and importing a private copy.
+
 ## 0.7.12
 
 ### Added

@@ -517,7 +517,7 @@ private struct TemporaryTabEditorSheet: ViewModifier {
     @ObservedObject var model: AppModel
     func body(content: Content) -> some View {
         content.sheet(item: Binding(get: { model.editingTabConnection }, set: { model.editingTab = $0?.id })) { connection in
-            ProfileEditor(model: model, draft: ProfileDraft(connection.profile), onSave: { updated in
+            ProfileEditor(model: model, draft: ProfileDraft(connection.profile, fromTemporaryTab: true), onSave: { updated in
                 try model.updateTemporaryTab(connection, profile: updated)
             })
         }
@@ -625,7 +625,7 @@ struct SessionTab: View {
                 renaming = true
             }
             Button("Duplicate Tab") { model.duplicateTab(connection) }
-            Button("Session Settings…") {
+            Button(connection.temporary ? "Temporary Tab Settings…" : "Saved Session Settings…") {
                 if connection.temporary { model.editingTab = connection.id }
                 else if let profile = model.profiles.first(where: { $0.id == connection.profile.id }) {
                     model.editing = ProfileDraft(profile)

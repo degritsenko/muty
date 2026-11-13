@@ -22,6 +22,20 @@ struct ProfileEditor: View {
         _port = State(initialValue: String(initial.port))
     }
 
+    private var title: String {
+        if draft.original == nil { return draft.fromTemporaryTab ? "Save as Session" : "New Session" }
+        return (draft.fromTemporaryTab ? "Temporary Tab Settings — " : "Saved Session Settings — ") + draft.profile.name
+    }
+
+    private var saveHint: String {
+        if draft.original == nil {
+            return draft.fromTemporaryTab ? "Creates a saved profile. The current tab remains temporary." :
+                "Creates a saved profile in Session Manager."
+        }
+        return draft.fromTemporaryTab ? "Connection changes require a restart. Colors and themes apply immediately." :
+            "Connection changes apply on reconnect. Colors and themes apply immediately."
+    }
+
     private var generalSettings: some View {
         VStack(alignment: .leading, spacing: 12) {
             Form {
@@ -67,7 +81,7 @@ struct ProfileEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(draft.original == nil ? "New Session" : "Session Settings — " + draft.profile.name).font(.title2.bold())
+            Text(title).font(.title2.bold())
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(profile.connectionType == .ssh ? ["General", "SSH", "Port Forwarding"] : ["General"], id: \.self) { item in
@@ -131,7 +145,7 @@ struct ProfileEditor: View {
             }.frame(height: 430)
             if let error { Text(error).foregroundStyle(.red).font(.callout).textSelection(.enabled) }
             HStack {
-                Text("Changes apply on the next connection.").font(.caption).foregroundStyle(.secondary)
+                Text(saveHint).font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save") {
@@ -146,7 +160,12 @@ struct ProfileEditor: View {
                         if updated.authentication != .password { updated.credentialID = nil }
                         if updated.authentication != .identityFile { updated.keyID = nil; updated.identityFile = nil }
                         if let onSave { try onSave(updated) }
-                        else { try model.save(updated, password: "", reuse: false) }
+                        else {
+                            try model.save(updated, password: "", reuse: false)
+                            if draft.fromTemporaryTab {
+                                model.operationStatus = "Session saved. The current tab remains temporary."
+                            }
+                        }
                         dismiss()
                     } catch { self.error = error.localizedDescription }
                 }.keyboardShortcut(.defaultAction)

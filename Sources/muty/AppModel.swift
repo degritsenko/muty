@@ -5,13 +5,16 @@ struct ProfileDraft: Identifiable {
     let id = UUID()
     var profile: SessionProfile
     let original: SessionProfile?
-    init(_ profile: SessionProfile) {
+    let fromTemporaryTab: Bool
+    init(_ profile: SessionProfile, fromTemporaryTab: Bool = false) {
         self.profile = profile
         original = profile
+        self.fromTemporaryTab = fromTemporaryTab
     }
-    init(new profile: SessionProfile = SessionProfile()) {
+    init(new profile: SessionProfile = SessionProfile(), fromTemporaryTab: Bool = false) {
         self.profile = profile
         original = nil
+        self.fromTemporaryTab = fromTemporaryTab
     }
 }
 
@@ -992,7 +995,7 @@ final class AppModel: ObservableObject {
         var draft = connection.profile
         draft.id = UUID()
         draft.savePassword = false
-        editing = ProfileDraft(new: draft)
+        editing = ProfileDraft(new: draft, fromTemporaryTab: true)
     }
 
     func updateTemporaryTab(_ connection: SSHConnection, profile value: SessionProfile) throws {
@@ -1002,19 +1005,22 @@ final class AppModel: ObservableObject {
         var updated = value
         updated.id = connection.profile.id
         updated.savePassword = false
-        updated.credentialID = nil
-        updated = try updated.validated()
+        if updated.authentication != .password { updated.credentialID = nil }
+        updated = try effectiveProfile(updated).validated()
         let original = connection.profile
         let transportChanged = updated.connectionType != original.connectionType ||
             updated.host != original.host || updated.port != original.port || updated.user != original.user ||
             updated.jumpHostID != original.jumpHostID || updated.authentication != original.authentication ||
             updated.keyID != original.keyID || updated.identityFile != original.identityFile ||
-            updated.sshEnabled != original.sshEnabled || updated.sftpEnabled != original.sftpEnabled
+            updated.credentialID != original.credentialID ||
+            updated.sshEnabled != original.sshEnabled || updated.sftpEnabled != original.sftpEnabled ||
+            updated.forwards != original.forwards || updated.tunnelOnly != original.tunnelOnly
         if transportChanged {
-            guard confirmSessionSettings("Apply Session Settings?", text: "The current connection will restart with the updated settings.") else { return }
+            guard confirmSessionSettings("Apply Temporary Tab Settings?", text: "This tab will restart with the updated connection settings.") else { return }
             connection.disconnect()
             let replacement = SSHConnection(profile: updated, manual: connection.manual, temporary: true,
                                             credentials: passwordStore, transferQueueID: connection.transferQueueID)
+            configurePasswordSaving(replacement)
             replaceTab(connection, with: replacement)
         } else {
             connection.profile = updated
