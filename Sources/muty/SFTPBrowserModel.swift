@@ -47,6 +47,12 @@ struct SFTPBookmark: Codable, Identifiable {
     @Published var error: String?
     private let client: SFTPClient
     private var job: Task<Void, Never>?
+    private var removalJob: Task<Void, Never>?
+    private var removalClient: SFTPClient?
+    private var removalNeedsRefresh = false
+    private var removalError: String?
+    @Published private(set) var removing = false
+    @Published private(set) var removalPath = ""
     private struct EditorKey: Hashable {
         let path: String
         let readOnly: Bool
@@ -122,10 +128,19 @@ struct SFTPBookmark: Codable, Identifiable {
             navigateRemote(transferQueue.remotePath ?? saved ?? ".", restoring: true)
         }
     }
-    func disconnect() { disconnected = true; transferQueue.detach(owner: id); job?.cancel(); client.shutdown(); editors.values.forEach { $0.connectionEnded() } }
+    func disconnect() {
+        disconnected = true
+        transferQueue.detach(owner: id)
+        job?.cancel()
+        removalJob?.cancel()
+        removalClient?.shutdown()
+        client.shutdown()
+        editors.values.forEach { $0.connectionEnded() }
+    }
     func cancel() {
         transferQueue.cancel(owner: id)
         job?.cancel(); client.cancel()
+        removalJob?.cancel(); removalClient?.cancel()
     }
     func navigateLocal(_ path: String) {
         guard !busy else { return }
@@ -192,7 +207,10 @@ struct SFTPBookmark: Codable, Identifiable {
             } catch is CancellationError { status = "Cancelled" }
             catch { self.error = error.localizedDescription; status = "Failed" }
             busy = false; progress = nil; job = nil
-            if !refreshAfter { processTransfers() }
+            if !refreshAfter {
+                refreshAfterRemovalIfNeeded()
+                processTransfers()
+            }
             if refreshAfter && !disconnected {
                 let message = error
                 navigateLocal(localPath)
@@ -208,15 +226,140 @@ struct SFTPBookmark: Codable, Identifiable {
             }
         }
     }
+    private struct FileClipboard {
+        let id = UUID()
+        var files: [BrowserFile]
+        let remote: Bool
+        let cut: Bool
+    }
+    @Published private var fileClipboard: FileClipboard?
+    var canPasteFiles: Bool { fileClipboard != nil && !busy && !disconnected && !removing }
+
+    func copyFiles(_ ids: Set<String>, remote: Bool, cut: Bool) {
+        let files = (remote ? remoteFiles : localFiles).filter { ids.contains($0.id) }
+        guard !files.isEmpty else { return }
+        fileClipboard = FileClipboard(files: files, remote: remote, cut: cut)
+    }
+
+    func pasteFiles(remote: Bool) {
+        guard canPasteFiles, let clipboard = fileClipboard else { return }
+        let destination = remote ? remotePath : localPath
+        guard !destination.isEmpty else { return }
+        let action = clipboard.cut ? "Moving" : "Copying"
+        let sink = SFTPProgressSink { [weak self] in self?.progress = $0 }
+        let report: (String, UInt64, UInt64?) -> Void = { name, bytes, total in
+            sink.update(name: action + "… " + name, bytes: bytes, total: total)
+        }
+        let removalProgress: (String) -> Void = { path in
+            sink.update(name: "Removing… " + path, bytes: 1, total: nil)
+        }
+        let completeMove: (BrowserFile) -> Void = { [weak self] file in
+            DispatchQueue.main.async { [weak self = self] in
+                guard let self, self.fileClipboard?.id == clipboard.id else { return }
+                self.fileClipboard?.files.removeAll { $0.id == file.id }
+                if self.fileClipboard?.files.isEmpty == true { self.fileClipboard = nil }
+            }
+        }
+        run(action + "…", refreshAfter: true, work: { client in
+            for file in clipboard.files {
+                try client.checkCancellation()
+                report(file.path, 0, nil)
+                var target = try BrowserFile.join(destination, file.name)
+                if clipboard.remote == remote, file.isDirectory,
+                   target.hasPrefix(file.path + "/") {
+                    throw MutyError("A folder cannot be pasted into itself or its subfolders.")
+                }
+                let exists: (String) throws -> Bool = { path in
+                    if remote { return try client.attributes(path) != nil }
+                    return FileManager.default.fileExists(atPath: path)
+                }
+                if clipboard.cut && clipboard.remote == remote && target == file.path { continue }
+                if try exists(target) {
+                    target = try self.availableCopyDestination(target, exists: exists)
+                }
+                var moveSnapshot: [String: BrowserFile] = [:]
+                if clipboard.cut && clipboard.remote != remote {
+                    if clipboard.remote { moveSnapshot = try client.moveSourceSnapshot(file.path) }
+                    else {
+                        let entries = try SFTPMoveVerification.snapshot(URL(fileURLWithPath: file.path), checkCancellation: client.checkCancellation)
+                        moveSnapshot = Dictionary(uniqueKeysWithValues: entries.map { ($0.path, $0) })
+                    }
+                }
+                if clipboard.remote && remote && clipboard.cut {
+                    try client.rename(file.path, target)
+                } else if !clipboard.remote && !remote {
+                    if clipboard.cut { try FileManager.default.moveItem(atPath: file.path, toPath: target) }
+                    else { try FileManager.default.copyItem(atPath: file.path, toPath: target) }
+                } else {
+                    let staging = FileManager.default.temporaryDirectory.appendingPathComponent("muty-paste-" + UUID().uuidString, isDirectory: true)
+                    defer { try? FileManager.default.removeItem(at: staging) }
+                    if clipboard.remote {
+                        if remote, try client.copyRemote(file.path, to: target, progress: report) {
+                            // Server-side copy completed without local staging.
+                        } else if remote {
+                            try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+                            let temporary = staging.appendingPathComponent("item", isDirectory: file.isDirectory)
+                            try client.download(file.path, to: temporary, replace: false, progress: report)
+                            try client.upload(temporary, to: target, replace: false, progress: report)
+                        } else {
+                            try client.download(file.path, to: URL(fileURLWithPath: target), replace: false, progress: report)
+                        }
+                    } else {
+                        try client.upload(URL(fileURLWithPath: file.path), to: target, replace: false, progress: report)
+                    }
+                    if clipboard.cut {
+                        completeMove(file)
+                        do {
+                            if clipboard.remote {
+                                if try client.attributes(file.path) != nil {
+                                    try client.removeTree(file.path, expected: moveSnapshot, progress: removalProgress)
+                                }
+                            } else {
+                                try SFTPMoveVerification.remove(Array(moveSnapshot.values), checkCancellation: client.checkCancellation,
+                                                                progress: removalProgress)
+                            }
+                        } catch {
+                            let message = "Copy saved at " + target + ". Source cleanup incomplete at " +
+                                          file.path + ". " + error.localizedDescription
+                            DispatchQueue.main.sync { [weak self = self] in self?.error = message }
+                            throw MutyError(message)
+                        }
+                        continue
+                    }
+                }
+                if clipboard.cut { completeMove(file) }
+            }
+        })
+    }
+
+    private func availableCopyDestination(_ path: String, exists: (String) throws -> Bool) throws -> String {
+        let source = URL(fileURLWithPath: path)
+        let parent = source.deletingLastPathComponent().path
+        let name = source.lastPathComponent
+        let ext = source.pathExtension
+        let stem = ext.isEmpty ? name : String(name.dropLast(ext.count + 1))
+        for index in 1...10_000 {
+            let suffix = index == 1 ? " copy" : " copy \(index)"
+            let candidateName = ext.isEmpty ? stem + suffix : stem + suffix + "." + ext
+            let candidate = try BrowserFile.join(parent, candidateName)
+            if try !exists(candidate) { return candidate }
+        }
+        throw MutyError("Could not choose a free copy name for " + name)
+    }
+
     func uploadSelection() { upload(localFiles.filter { localSelection.contains($0.id) }.map { URL(fileURLWithPath: $0.path) }) }
     func upload(_ files: [URL]) {
-        guard !files.isEmpty else { return }
-        processTransfers(request: .upload(files, to: remotePath))
+        guard !files.isEmpty, !busy, !disconnected, !remotePath.isEmpty else { return }
+        let destination = remotePath
+        guard confirm("Copy to Remote?", files.map(\.lastPathComponent).joined(separator: "\n") + "\n\nDestination: " + destination, action: "Copy") else { return }
+        processTransfers(request: .upload(files, to: destination))
     }
     func downloadSelection() { download(remoteFiles.filter { remoteSelection.contains($0.id) }) }
     func download(_ files: [BrowserFile]) {
-        guard !files.isEmpty else { return }
-        processTransfers(request: .download(files, to: localPath))
+        guard !files.isEmpty, !busy, !disconnected else { return }
+        let destination = localPath
+        guard confirm("Copy to Local?", files.map(\.name).joined(separator: "\n") + "\n\nDestination: " + destination, action: "Copy") else { return }
+        processTransfers(request: .download(files, to: destination))
     }
     func pauseTransfers() { transferQueue.pause(owner: id) }
     func resumeTransfers() {
@@ -257,12 +400,13 @@ struct SFTPBookmark: Codable, Identifiable {
             } catch is CancellationError { status = "Cancelled" }
             catch { self.error = error.localizedDescription; status = "Failed" }
             busy = false; progress = nil; job = nil
-            if !disconnected { refresh() }
+            if removalNeedsRefresh { refreshAfterRemovalIfNeeded() }
+            else if !disconnected { refresh() }
         }
     }
     func currentPermissions(_ file: BrowserFile) async throws -> String {
         guard !busy, !disconnected else { throw MutyError("Wait for the current SFTP operation to finish.") }
-        busy = true; defer { busy = false }
+        busy = true; defer { busy = false; refreshAfterRemovalIfNeeded() }
         let mode = try await client.perform { client -> UInt32 in
             try client.validateDirectoryAncestors(file.path)
             guard let attributes = try client.attributes(file.path), !attributes.isSymlink, let mode = attributes.permissions else { throw MutyError("Permissions are unavailable.") }
@@ -272,7 +416,7 @@ struct SFTPBookmark: Codable, Identifiable {
     }
     func properties(_ file: BrowserFile) async throws -> SFTPAttributes {
         guard !busy, !disconnected else { throw MutyError("Wait for the current SFTP operation to finish.") }
-        busy = true; defer { busy = false }
+        busy = true; defer { busy = false; refreshAfterRemovalIfNeeded() }
         return try await client.perform { client in
             try client.validateDirectoryAncestors(file.path)
             guard let attributes = try client.attributes(file.path), !attributes.isSymlink else {
@@ -295,7 +439,7 @@ struct SFTPBookmark: Codable, Identifiable {
                 guard let self, !self.disconnected else { throw MutyError("SSH connection ended.") }
                 guard !self.busy else { throw MutyError("Another SFTP operation is running. Try saving again when it finishes.") }
                 self.busy = true; self.status = "Saving file…"
-                defer { self.busy = false }
+                defer { self.busy = false; self.refreshAfterRemovalIfNeeded() }
                 let directory = self.remotePath
                 let result = try await self.client.perform { client in
                     let snapshot = try client.saveDocument(file.path, bytes: bytes, expected: expected)
@@ -355,15 +499,45 @@ struct SFTPBookmark: Codable, Identifiable {
         } catch { self.error = error.localizedDescription }
     }
     func removeSelection(remote: Bool) {
-        guard !busy else { return }
+        guard !busy, !remote || (!removing && !disconnected) else { return }
         let files = remote ? remoteFiles.filter { remoteSelection.contains($0.id) } : localFiles.filter { localSelection.contains($0.id) }
         guard !files.isEmpty else { return }
-        let detail = files.map(\.name).joined(separator: "\n") + (remote ? "\n\nOnly files and empty folders are removed." : "\n\nItems will be moved to Trash.")
+        let detail = files.map(\.name).joined(separator: "\n") + (remote ? "\n\nSelected folders and all their contents will be permanently removed. Symbolic links are removed without following them." : "\n\nItems will be moved to Trash.")
         guard confirm(remote ? "Remove Remote Items?" : "Move to Trash?", detail, action: remote ? "Remove" : "Move to Trash") else { return }
         if remote {
-            run("Removing…", refreshAfter: true, work: { client in
-                for file in files { try client.checkCancellation(); try client.remove(file.path, directory: file.isDirectory && !file.isSymlink) }
-            })
+            guard !removing, !disconnected else { return }
+            let channel = client.independentChannel()
+            removalClient = channel
+            removing = true
+            error = nil
+            removalError = nil
+            removalJob = Task { [weak self] in
+                guard let self else { return }
+                let progress = SFTPProgressSink { [weak self, weak channel] value in
+                    guard let self, let channel, self.removalClient === channel else { return }
+                    self.removalPath = value.name
+                }
+                defer {
+                    channel.shutdown()
+                    removalClient = nil
+                    removalJob = nil
+                    removing = false
+                    removalPath = ""
+                }
+                do {
+                    try await channel.perform { client in
+                        for file in files {
+                            try client.removeTree(file.path) { progress.update(name: $0, bytes: 1, total: nil) }
+                        }
+                    }
+                } catch is CancellationError { }
+                catch {
+                    removalError = error.localizedDescription
+                    self.error = removalError
+                }
+                removalNeedsRefresh = true
+                refreshAfterRemovalIfNeeded()
+            }
         } else {
             do {
                 for file in files { try FileManager.default.trashItem(at: URL(fileURLWithPath: file.path), resultingItemURL: nil) }
@@ -371,6 +545,19 @@ struct SFTPBookmark: Codable, Identifiable {
             } catch { self.error = error.localizedDescription }
         }
     }
+    private func refreshAfterRemovalIfNeeded() {
+        guard removalNeedsRefresh, !busy, !disconnected else { return }
+        removalNeedsRefresh = false
+        let message = removalError
+        removalError = nil
+        let directory = remotePath
+        run("Refreshing…", work: { try $0.list(directory) }) { entries in
+            self.remoteFiles = entries
+            self.remoteSelection = []
+            self.error = message
+        }
+    }
+
     private func confirm(_ title: String, _ text: String, action: String) -> Bool {
         app?.confirm(title, text: text, action: action) ?? false
     }
@@ -385,3 +572,51 @@ struct SFTPBookmark: Codable, Identifiable {
     }
 }
 struct RemoteFileDrag: Codable { let browser: UUID; let paths: [String] }
+
+
+private enum SFTPMoveVerification {
+    static func snapshot(_ source: URL, depth: Int = 0,
+                         checkCancellation: () throws -> Void) throws -> [BrowserFile] {
+        try checkCancellation()
+        guard depth < 128 else { throw MutyError("Folder nesting exceeds 128 levels.") }
+        guard FileManager.default.fileExists(atPath: source.path) else { return [] }
+        guard source.resolvingSymlinksInPath().path == source.standardizedFileURL.path else { throw MutyError("The move source became a symbolic link.") }
+        let attrs = try source.resourceValues(forKeys: [
+            .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey
+        ])
+        guard attrs.isSymbolicLink == false, attrs.isDirectory == true || attrs.isRegularFile == true else {
+            throw MutyError("The move source changed: " + source.path)
+        }
+        let entry = BrowserFile(name: source.lastPathComponent, path: source.path,
+                                isDirectory: attrs.isDirectory == true, isSymlink: false,
+                                size: attrs.fileSize.map { UInt64($0) }, modified: attrs.contentModificationDate)
+        var entries = [entry]
+        if entry.isDirectory {
+            for child in try FileManager.default.contentsOfDirectory(at: source, includingPropertiesForKeys: nil) {
+                entries += try snapshot(child, depth: depth + 1, checkCancellation: checkCancellation)
+            }
+        }
+        return entries
+    }
+    static func remove(_ expected: [BrowserFile], checkCancellation: () throws -> Void,
+                       progress: (String) -> Void) throws {
+        for entry in expected.sorted(by: { $0.path.count > $1.path.count }) {
+            try checkCancellation()
+            let source = URL(fileURLWithPath: entry.path)
+            guard source.resolvingSymlinksInPath().path == source.standardizedFileURL.path else { throw MutyError("The move source became a symbolic link.") }
+            let attrs = try source.resourceValues(forKeys: [
+                .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey
+            ])
+            guard attrs.isSymbolicLink == false, (attrs.isDirectory == true) == entry.isDirectory,
+                  entry.isDirectory || (attrs.isRegularFile == true && attrs.fileSize.map { UInt64($0) } == entry.size &&
+                                        attrs.contentModificationDate == entry.modified) else {
+                throw MutyError("The move source changed: " + entry.path)
+            }
+            try checkCancellation()
+            // rmdir refuses newly added files instead of recursively deleting them.
+            let result = entry.isDirectory ? Darwin.rmdir(entry.path) : Darwin.unlink(entry.path)
+            guard result == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            progress(entry.path)
+        }
+    }
+}

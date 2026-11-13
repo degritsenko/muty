@@ -3,6 +3,7 @@ import AppKit
 
 struct SessionManagerCommands: NSViewRepresentable {
     var active: Bool
+    var scopedToSuperview = false
     var copy: () -> Void
     var cut: () -> Void
     var paste: () -> Void
@@ -18,8 +19,17 @@ struct SessionManagerCommands: NSViewRepresentable {
         let view = NSView(); context.coordinator.view = view
         context.coordinator.monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak coordinator = context.coordinator] event in
             guard let coordinator, coordinator.parent.active, event.window === coordinator.view?.window,
-                  event.window?.firstResponder is NSTableView,
                   event.modifierFlags.intersection([.command, .shift, .control, .option]) == .command else { return event }
+            if coordinator.parent.scopedToSuperview {
+                guard let table = event.window?.firstResponder as? NSTableView,
+                      let scope = coordinator.view?.superview,
+                      table.enclosingScrollView != nil else { return event }
+                let tableFrame = table.convert(table.bounds, to: nil)
+                let scopeFrame = scope.convert(scope.bounds, to: nil)
+                guard scopeFrame.contains(NSPoint(x: tableFrame.midX, y: tableFrame.midY)) else { return event }
+            } else {
+                guard event.window?.firstResponder is NSTableView else { return event }
+            }
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "c": coordinator.parent.copy()
             case "x": coordinator.parent.cut()

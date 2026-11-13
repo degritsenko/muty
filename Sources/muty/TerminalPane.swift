@@ -8,26 +8,35 @@ struct TerminalPane: NSViewRepresentable {
     var onSelect: () -> Void
     var isCurrentSelection: () -> Bool
 
+    final class Container: NSView {
+        var terminal: NSView?
+        var freezeTerminalSize = false
+
+        override func layout() {
+            super.layout()
+            guard !freezeTerminalSize, let terminal else { return }
+            terminal.frame = bounds
+        }
+    }
+
     final class Coordinator { var selected = false }
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSView {
-        let container = NSView()
+        let container = Container()
         let terminal = connection.terminal
-        terminal.translatesAutoresizingMaskIntoConstraints = false
+        container.terminal = terminal
         container.addSubview(terminal)
-        NSLayoutConstraint.activate([
-            terminal.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            terminal.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            terminal.topAnchor.constraint(equalTo: container.topAnchor),
-            terminal.bottomAnchor.constraint(equalTo: container.bottomAnchor)
-        ])
         connection.setFontSize(fontSize)
         DispatchQueue.main.async { connection.start() }
         return container
     }
 
     func updateNSView(_ view: NSView, context: Context) {
+        if let container = view as? Container {
+            container.freezeTerminalSize = connection.showingSFTP
+            container.needsLayout = true
+        }
         connection.setFontSize(fontSize)
         connection.terminal.onTerminalClick = onSelect
         let becameSelected = selected && !context.coordinator.selected

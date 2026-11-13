@@ -152,7 +152,11 @@ struct KnownHostsSettingsView: View {
                 Text("Host Keys").font(.title2.bold())
                 Spacer()
                 Button("Import from OpenSSH…", action: importOpenSSH).disabled(model.readOnly)
-                Button("Refresh") { selection = []; store.reload() }
+                Button("Refresh") {
+                    selection = []
+                    operationError = nil
+                    store.reload()
+                }
             }
             Text("muty uses its own known_hosts file. OpenSSH files are unchanged.")
                 .font(.caption).foregroundStyle(.secondary)

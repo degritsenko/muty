@@ -153,7 +153,7 @@ private struct GeneralSettingsView: View {
                 if profiles.isEmpty {
                     Text(query.isEmpty ? "No saved sessions" : "No matching sessions").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    List { PaneSessionBranch(parent: nil, profiles: profiles) { profile in
+                    List { PaneSessionBranch(parent: nil, profiles: profiles, searching: !query.isEmpty) { profile in
                         startupSessionID = profile.id.uuidString; choosingStartup = false
                     } }
                 }

@@ -824,6 +824,237 @@ final class RegressionTests {
         assert(failedSaveConnection.status == statusBeforeFailedSave)
     }
 
+    @MainActor func testSFTPRemoveTree() throws {
+        let root = URL(fileURLWithPath: "/private/tmp", isDirectory: true).appendingPathComponent("muty-remove-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("tree")
+        try FileManager.default.createDirectory(at: directory.appendingPathComponent("nested/empty"), withIntermediateDirectories: true)
+        let external = root.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: external, withIntermediateDirectories: true)
+        try Data("keep".utf8).write(to: external.appendingPathComponent("keep"))
+        try Data("delete".utf8).write(to: directory.appendingPathComponent("nested/file"))
+        for index in 0..<200 {
+            try Data("delete".utf8).write(to: directory.appendingPathComponent("nested/file-\(index)"))
+        }
+        try FileManager.default.createSymbolicLink(at: directory.appendingPathComponent("link"), withDestinationURL: external)
+        let client = SFTPClient(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
+        defer { client.shutdown() }
+        try runSFTPTest { try await client.perform { try $0.removeTree(directory.path) } }
+        assert(!FileManager.default.fileExists(atPath: directory.path))
+        assert(FileManager.default.fileExists(atPath: external.appendingPathComponent("keep").path))
+    }
+
+    @MainActor func testSFTPPipelinedTransfers() throws {
+        let root = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("muty-pipeline-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let payload = Data((0..<(2 * 1024 * 1024 + 123)).map { UInt8(truncatingIfNeeded: $0 / 32768 + $0) })
+        let source = root.appendingPathComponent("source")
+        try payload.write(to: source)
+        let uploaded = root.appendingPathComponent("uploaded")
+        let downloaded = root.appendingPathComponent("downloaded")
+        let client = SFTPClient(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
+        defer { client.shutdown() }
+        try runSFTPTest {
+            try await client.perform { client in
+                try client.upload(source, to: uploaded.path, replace: false, progress: { _, _, _ in })
+                try client.download(uploaded.path, to: downloaded, replace: false, progress: { _, _, _ in })
+                let copy = root.appendingPathComponent("copy")
+                guard try client.copyRemote(uploaded.path, to: copy.path, progress: { _, _, _ in }) else {
+                    throw MutyError("The local OpenSSH test server did not advertise copy-data.")
+                }
+                let copiedFileMatches = try Data(contentsOf: copy) == payload
+                assert(copiedFileMatches)
+                let empty = root.appendingPathComponent("empty")
+                try Data().write(to: empty)
+                let emptyCopy = root.appendingPathComponent("empty-copy")
+                let copiedEmptyOnServer = try client.copyRemote(empty.path, to: emptyCopy.path, progress: { _, _, _ in })
+                assert(copiedEmptyOnServer)
+                let emptyCopyIsEmpty = try Data(contentsOf: emptyCopy).isEmpty
+                assert(emptyCopyIsEmpty)
+                let folder = root.appendingPathComponent("folder")
+                try FileManager.default.createDirectory(at: folder.appendingPathComponent("nested"), withIntermediateDirectories: true)
+                try payload.write(to: folder.appendingPathComponent("nested/data"))
+                let folderCopy = root.appendingPathComponent("folder-copy")
+                let copiedFolderOnServer = try client.copyRemote(folder.path, to: folderCopy.path, progress: { _, _, _ in })
+                assert(copiedFolderOnServer)
+                let copiedFolderMatches = try Data(contentsOf: folderCopy.appendingPathComponent("nested/data")) == payload
+                assert(copiedFolderMatches)
+            }
+        }
+        let uploadedMatches = try Data(contentsOf: uploaded) == payload
+        assert(uploadedMatches)
+        let downloadedMatches = try Data(contentsOf: downloaded) == payload
+        assert(downloadedMatches)
+
+        // Ordinary WRITE failures must drain the whole window before cleanup
+        // and the next request reuse the channel.
+        let denied = SFTPClient(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: ["-P", "write"])
+        defer { denied.shutdown() }
+        try runSFTPTest {
+            try await denied.perform { client in
+                do {
+                    try client.upload(source, to: root.appendingPathComponent("denied").path,
+                                      replace: false, progress: { _, _, _ in })
+                    assertionFailure("Expected denied WRITE")
+                } catch let error as SFTPStatus { assert(error.code != 0) }
+                let channelStillUsable = try client.attributes(root.path)?.isDirectory == true
+                assert(channelStillUsable)
+            }
+        }
+        try runSFTPTest {
+            do {
+                try await client.perform { client in
+                    try client.upload(source, to: root.appendingPathComponent("cancelled").path, replace: false) { _, bytes, _ in
+                        if bytes > 0 { client.cancel() }
+                    }
+                }
+                assertionFailure("Expected cancelled upload with pending replies")
+            } catch is CancellationError {}
+            try await client.perform { client in
+                try client.upload(source, to: root.appendingPathComponent("retry").path,
+                                  replace: false, progress: { _, _, _ in })
+            }
+        }
+        let retried = try Data(contentsOf: root.appendingPathComponent("retry"))
+        assert(retried == payload)
+        assert(!FileManager.default.fileExists(atPath: root.appendingPathComponent("cancelled").path))
+        let deniedClose = SFTPClient(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: ["-P", "close"])
+        defer { deniedClose.shutdown() }
+        try runSFTPTest {
+            do {
+                try await deniedClose.perform { client in
+                    _ = try client.copyRemote(source.path, to: root.appendingPathComponent("uncommitted").path,
+                                              progress: { _, _, _ in })
+                }
+                assertionFailure("Expected failed destination CLOSE")
+            } catch let error as SFTPStatus { assert(error.code != 0) }
+        }
+        assert(!FileManager.default.fileExists(atPath: root.appendingPathComponent("uncommitted").path))
+        let remnants = try FileManager.default.contentsOfDirectory(atPath: root.path)
+        assert(!remnants.contains { $0.hasPrefix(".muty-") })
+    }
+
+    @MainActor func testSFTPRemovalRevalidatesParents() throws {
+        let root = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("muty-remove-race-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("tree")
+        let outside = root.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        for index in 0..<100 {
+            try Data("delete".utf8).write(to: directory.appendingPathComponent("file-\(index)"))
+            try Data("keep".utf8).write(to: outside.appendingPathComponent("file-\(index)"))
+        }
+        let client = SFTPClient(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
+        defer { client.shutdown() }
+        try runSFTPTest {
+            try await client.perform { client in
+                var replaced = false
+                do {
+                    try client.removeTree(directory.path) { path in
+                        guard !replaced, path != directory.path else { return }
+                        try! FileManager.default.moveItem(at: directory, to: root.appendingPathComponent("moved"))
+                        try! FileManager.default.createSymbolicLink(at: directory, withDestinationURL: outside)
+                        replaced = true
+                    }
+                    assertionFailure("Expected changed parent rejection")
+                } catch { assert(replaced) }
+                // file-99 belongs to a later request window.
+                let outsideFilePreserved = try Data(contentsOf: outside.appendingPathComponent("file-99")) == Data("keep".utf8)
+                assert(outsideFilePreserved)
+                let channelStillUsable = try client.attributes(root.path)?.isDirectory == true
+                assert(channelStillUsable)
+            }
+        }
+    }
+
+    @MainActor func testSFTPCutConflicts() throws {
+        let root = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("muty-cut-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("source")
+        let destination = root.appendingPathComponent("destination")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        try Data("move".utf8).write(to: source.appendingPathComponent("file"))
+        try Data("keep".utf8).write(to: destination.appendingPathComponent("file"))
+        let app = AppModel(store: ProfileStore(directory: root.appendingPathComponent("profile")), keychain: DisposableCredentials())
+        let client = SFTPClient(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
+        defer { client.shutdown() }
+        let browser = SFTPBrowserModel(client: client, app: app, sessionID: UUID(), transferQueue: SFTPTransferQueue())
+        browser.start()
+        try runSFTPTest {
+            while browser.busy { try await Task.sleep(nanoseconds: 5_000_000) }
+        }
+        browser.navigateLocal(source.path)
+        browser.copyFiles([source.appendingPathComponent("file").path], remote: false, cut: true)
+        browser.navigateLocal(destination.path)
+        browser.pasteFiles(remote: false)
+        try runSFTPTest {
+            while browser.busy { try await Task.sleep(nanoseconds: 5_000_000) }
+            await Task.yield()
+        }
+        assert(browser.error == nil)
+        let existingFilePreserved = try Data(contentsOf: destination.appendingPathComponent("file")) == Data("keep".utf8)
+        assert(existingFilePreserved)
+        let movedFileMatches = try Data(contentsOf: destination.appendingPathComponent("file copy")) == Data("move".utf8)
+        assert(movedFileMatches)
+        assert(!FileManager.default.fileExists(atPath: source.appendingPathComponent("file").path))
+        assert(!browser.canPasteFiles)
+
+        // A committed copy survives failed source cleanup. Its Cut entry is
+        // consumed so Paste cannot repeat an already completed copy.
+        let remoteParent = root.appendingPathComponent("remote")
+        let remoteFolder = remoteParent.appendingPathComponent("folder")
+        try FileManager.default.createDirectory(at: remoteFolder, withIntermediateDirectories: true)
+        try Data("preserve".utf8).write(to: remoteFolder.appendingPathComponent("data"))
+        let movingClient = SFTPClient(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: ["-P", "remove"])
+        defer { movingClient.shutdown() }
+        let moving = SFTPBrowserModel(client: movingClient, app: app, sessionID: UUID(), transferQueue: SFTPTransferQueue())
+        moving.navigateRemote(remoteParent.path)
+        try runSFTPTest {
+            while moving.busy { try await Task.sleep(nanoseconds: 5_000_000) }
+        }
+        moving.navigateLocal(destination.path)
+        moving.copyFiles([remoteFolder.path], remote: true, cut: true)
+        moving.pasteFiles(remote: false)
+        try runSFTPTest {
+            while moving.busy { try await Task.sleep(nanoseconds: 5_000_000) }
+        }
+        assert(moving.error?.contains("Copy saved at") == true)
+        assert(moving.error?.contains(remoteFolder.path) == true)
+        assert(!moving.canPasteFiles)
+        let committed = destination.appendingPathComponent("folder/data")
+        let copied = try Data(contentsOf: committed)
+        assert(copied == Data("preserve".utf8))
+        assert(FileManager.default.fileExists(atPath: remoteFolder.appendingPathComponent("data").path))
+        moving.pasteFiles(remote: false)
+        assert(!FileManager.default.fileExists(atPath: destination.appendingPathComponent("folder copy").path))
+    }
+
+    @MainActor func testUnreadTerminalOutput() throws {
+        let directory = URL(fileURLWithPath: "/private/tmp", isDirectory: true).appendingPathComponent("muty-activity-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let model = AppModel(store: ProfileStore(directory: directory))
+        let a = SSHConnection(profile: SessionProfile(), manual: true, deferredStart: true)
+        let b = SSHConnection(profile: SessionProfile(), manual: true, deferredStart: true)
+        model.tabs = [a, b]; model.selectedTab = a.id
+        model.noteTerminalOutput(a); assert(!a.hasUnreadOutput)
+        a.showingSFTP = true; model.noteTerminalOutput(a); assert(a.hasUnreadOutput)
+        a.showingSFTP = false; a.hasUnreadOutput = false
+        var parser = OutputHighlightTransformer()
+        parser.consume(Array("\u{1b}[3".utf8)[...]); assert(!parser.containsVisibleText)
+        parser.consume(Array("1m\u{1b}]0;title\u{07}".utf8)[...]); assert(!parser.containsVisibleText)
+        parser.consume(Array("hello".utf8)[...]); assert(parser.containsVisibleText)
+        model.noteTerminalOutput(b); assert(b.hasUnreadOutput)
+        model.selectTab(b.id); assert(!b.hasUnreadOutput)
+        model.split("right", secondary: a.id)
+        model.noteTerminalOutput(a); model.noteTerminalOutput(b)
+        assert(!a.hasUnreadOutput && !b.hasUnreadOutput)
+        model.split("none"); model.noteTerminalOutput(a)
+        assert(a.hasUnreadOutput == (model.selectedTab != a.id))
+    }
+
     @MainActor func testSessionAppearancePersistence() throws {
         var profile = SessionProfile()
         profile.host = "example.invalid"; profile.user = "tester"
@@ -1478,6 +1709,11 @@ final class RegressionTests {
         }
         let cases: [(String, () throws -> Void)] = [
             ("credentials.bulkForgetPasswords", tests.testBulkForgetPasswords),
+            ("sftp.removeTree", tests.testSFTPRemoveTree),
+            ("sftp.pipelinedTransfers", tests.testSFTPPipelinedTransfers),
+            ("sftp.removalRevalidatesParents", tests.testSFTPRemovalRevalidatesParents),
+            ("sftp.cutConflicts", tests.testSFTPCutConflicts),
+            ("terminal.unreadOutput", tests.testUnreadTerminalOutput),
             ("profiles.sessionAppearancePersistence", tests.testSessionAppearancePersistence),
             ("sessions.bulkAppearance", tests.testBulkSessionAppearance),
             ("sessions.temporaryTabSettings", tests.testTemporaryTabSettings),

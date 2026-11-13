@@ -529,10 +529,13 @@ private struct SessionButtonBar: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        if !connection.showingSFTP {
+        VStack(spacing: 0) {
             Divider()
             SendStringButtonBar(model: model, tabSelection: $connection.buttonBarSelection)
         }
+        .opacity(connection.showingSFTP ? 0 : 1)
+        .allowsHitTesting(!connection.showingSFTP)
+        .accessibilityHidden(connection.showingSFTP)
     }
 }
 
@@ -576,7 +579,9 @@ struct SessionTab: View {
         if !connection.running && connection.status != "Not Started" {
             Circle().fill(.red).help("Disconnected").accessibilityLabel("Disconnected")
         } else if connection.running && (connection.profile.connectionType == .localShell || connection.transportReady) {
-            Circle().fill(.green).help("Session active").accessibilityLabel("Session active")
+            Circle().fill(connection.hasUnreadOutput ? Color.blue : Color.green)
+                .help(connection.hasUnreadOutput ? "New terminal output" : "Session active")
+                .accessibilityLabel(connection.hasUnreadOutput ? "Session active, new terminal output" : "Session active")
         } else {
             Circle().fill(.yellow).help("Connecting / waiting for SSH transport").accessibilityLabel("Connecting")
         }
@@ -683,19 +688,21 @@ private struct SessionPane: View {
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
             }
-            ZStack {
-                TerminalPane(connection: connection, fontSize: fontSize, selected: selected && !connection.showingSFTP,
-                             onSelect: { [weak model, weak connection] in
-                                 if let connection { model?.selectTab(connection.id) }
-                             }, isCurrentSelection: { model.selectedTab == connection.id })
-                    .opacity(connection.showingSFTP ? 0 : 1)
-                    .allowsHitTesting(!connection.showingSFTP)
-                    .accessibilityHidden(connection.showingSFTP)
-                if connection.showingSFTP, let browser = connection.fileBrowser {
-                    SFTPBrowserView(browser: browser, endpoint: connection.profile.endpoint)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(nsColor: .windowBackgroundColor))
+            TerminalPane(connection: connection, fontSize: fontSize, selected: selected && !connection.showingSFTP,
+                         onSelect: { [weak model, weak connection] in
+                             if let connection { model?.selectTab(connection.id) }
+                         }, isCurrentSelection: { model.selectedTab == connection.id })
+                .opacity(connection.showingSFTP ? 0 : 1)
+                .allowsHitTesting(!connection.showingSFTP)
+                .accessibilityHidden(connection.showingSFTP)
+                .overlay {
+                    if connection.showingSFTP, let browser = connection.fileBrowser {
+                        SFTPBrowserView(browser: browser, endpoint: connection.profile.endpoint)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(Color(nsColor: .windowBackgroundColor))
+                            .clipped()
+                    }
                 }
-            }
             if showStatusBar && (connection.profile.connectionType == .ssh || connection.error != nil || (!connection.running && connection.status != "Not Started")) {
                 Divider()
                 ConnectionStatusBar(connection: connection)

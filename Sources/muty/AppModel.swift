@@ -67,7 +67,7 @@ final class AppModel: ObservableObject {
     }
 
     func split(_ mode: String, secondary: UUID? = nil) {
-        defer { persistWorkspace() }
+        defer { clearVisibleOutputIndicators(); persistWorkspace() }
         guard let count = Self.paneCount(for: mode), !tabs.isEmpty else { resetSplit(); return }
         var groups = splitGroups
         if groups.isEmpty {
@@ -124,6 +124,7 @@ final class AppModel: ObservableObject {
         splitGroups[group].selected = id
         activeSplitIndex = group
         selectedTab = id
+        clearVisibleOutputIndicators()
         persistWorkspace()
         return true
     }
@@ -146,6 +147,7 @@ final class AppModel: ObservableObject {
             splitGroups[activeSplitIndex].selected = id
         }
         selectedTab = id
+        clearVisibleOutputIndicators()
         persistWorkspace()
     }
 
@@ -1105,7 +1107,22 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func noteTerminalOutput(_ connection: SSHConnection) {
+        let visible = splitGroups.isEmpty ? selectedTab == connection.id : splitGroups.contains { $0.selected == connection.id }
+        if !connection.hasUnreadOutput && (!visible || connection.showingSFTP) && tabs.contains(where: { $0.id == connection.id }) { connection.hasUnreadOutput = true }
+    }
+
+    private func clearVisibleOutputIndicators() {
+        let visible = splitGroups.isEmpty ? Set([selectedTab].compactMap { $0 }) : Set(splitGroups.compactMap(\.selected))
+        for tab in tabs where tab.hasUnreadOutput && visible.contains(tab.id) && !tab.showingSFTP { tab.hasUnreadOutput = false }
+    }
+
     private func configurePasswordSaving(_ connection: SSHConnection) {
+        connection.onTerminalOutput = { [weak self, weak connection] in
+            guard let self, let connection else { return }
+            self.noteTerminalOutput(connection)
+        }
+        connection.onTerminalShown = { [weak self] in self?.clearVisibleOutputIndicators() }
         let connectionID = connection.id
         connection.resolveJumpProfile = { [weak self] id in
             guard let self, let node = self.profiles.first(where: { $0.id == id }) else { throw MutyError("Jump host was deleted. Select another session.") }
@@ -1144,6 +1161,7 @@ final class AppModel: ObservableObject {
                 ? (tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].id)
                 : splitGroups[activeSplitIndex].selected
         }
+        clearVisibleOutputIndicators()
         persistWorkspace()
     }
 

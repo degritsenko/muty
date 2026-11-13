@@ -164,7 +164,7 @@ final class SFTPTransferAdapter: SFTPTransferExecuting {
 }
 
 // Called on the protocol queue; throttle UI publication for large transfers.
-private final class SFTPProgressSink: @unchecked Sendable {
+final class SFTPProgressSink: @unchecked Sendable {
   private var last = Date.distantPast
   private let publish: @MainActor (SFTPProgress) -> Void
   init(publish: @escaping @MainActor (SFTPProgress) -> Void) { self.publish = publish }

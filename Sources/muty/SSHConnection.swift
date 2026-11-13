@@ -26,7 +26,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     private var jumpReceipt: SSHAuthenticationReceipt?
     private var pendingTargetPassword: (() throws -> Void)?
     private var pendingJumpPassword: (() throws -> Void)?
-    @Published var showingSFTP = false
+    @Published var showingSFTP = false { didSet { if !showingSFTP { onTerminalShown?() } } }
     @Published private(set) var fileBrowser: SFTPBrowserModel?
     private var tunnelObservation: AnyCancellable?
     @Published private(set) var activeTunnels: ActiveTunnelManager? {
@@ -40,6 +40,9 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     @Published private(set) var running = false
     @Published private(set) var error: String?
     @Published private(set) var remoteTitle: String?
+    @Published var hasUnreadOutput = false
+    var onTerminalOutput: (() -> Void)?
+    var onTerminalShown: (() -> Void)?
     @Published private(set) var isLogging = false
     @Published private(set) var logURL: URL?
     private var outputLog: SessionOutputLog?
@@ -68,10 +71,12 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         super.init()
         terminal.processDelegate = self
         terminal.onOutput = { [weak self] data in
-            guard let self, let log = self.outputLog else { return }
+            guard let self, !data.isEmpty else { return }
+            guard let log = self.outputLog else { return }
             do { try log.write(data) }
             catch { self.stopLogging(); self.error = "Logging stopped: " + error.localizedDescription }
         }
+        terminal.onVisibleOutput = { [weak self] in self?.onTerminalOutput?() }
         terminal.optionAsMetaKey = UserDefaults.standard.object(forKey: "optionAsMetaKey") as? Bool ?? true
         applyColorScheme(TerminalColorScheme.resolve(profile.terminalTheme ?? UserDefaults.standard.string(forKey: "terminalTheme") ?? TerminalColorScheme.mutyDark.rawValue))
         terminal.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -463,7 +468,9 @@ final class ReconnectTerminalView: LocalProcessTerminalView {
         super.performFindPanelAction(sender)
     }
     var onOutput: ((Data) -> Void)?
+    var onVisibleOutput: (() -> Void)?
     override func dataReceived(slice: ArraySlice<UInt8>) {
+        guard !slice.isEmpty else { return }
         onOutput?(Data(slice))
         // SwiftTerm delivers process output on LocalProcess's dispatch queue, which defaults to
         // the main queue; the highlight store is main-actor isolated.
@@ -473,10 +480,12 @@ final class ReconnectTerminalView: LocalProcessTerminalView {
                 // Keep the parser state in sync while disabled, so enabling in the middle of
                 // an escape sequence cannot inject SGR bytes into it.
                 highlightTransformer.consume(slice)
+                if highlightTransformer.containsVisibleText { onVisibleOutput?() }
                 super.dataReceived(slice: slice)
                 return
             }
             let segments = highlightTransformer.process(slice, ruleSet: store.ruleSet)
+            if highlightTransformer.containsVisibleText { onVisibleOutput?() }
             OutputHighlightApplier.feed(segments,
                 currentForeground: { self.getTerminal().currentAttribute.fg },
                 feed: { self.feed(byteArray: $0[...]) })

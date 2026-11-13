@@ -39,18 +39,18 @@ struct SFTPBrowserView: View {
                 SFTPFilePane(browser: browser, remote: true, title: "Remote · " + endpoint)
             }
             SFTPTransfersView(queue: browser.transferQueue, browser: browser)
-            if browser.busy || browser.disconnected {
+            if browser.busy || browser.removing || browser.disconnected {
             Divider()
             HStack(spacing: 10) {
                 if browser.disconnected { Text("SSH connection ended").foregroundStyle(.secondary) }
-                else if browser.busy {
+                else if browser.busy || browser.removing {
                     if let progress = browser.progress {
                         Text(progress.name).lineLimit(1).truncationMode(.middle)
                         if let total = progress.total, total > 0 {
                             ProgressView(value: min(Double(progress.bytes) / Double(total), 1)).frame(width: 110)
                             Text(Self.bytes(progress.bytes) + " / " + Self.bytes(total)).monospacedDigit()
                         } else { ProgressView().controlSize(.small) }
-                    } else { ProgressView().controlSize(.small); Text(browser.status) }
+                    } else { ProgressView().controlSize(.small); Text(browser.removing ? "Removing… " + browser.removalPath : browser.status).lineLimit(1).truncationMode(.middle) }
                     Spacer(minLength: 4)
                     Button("Cancel") { browser.cancel() }
                 } else { Text(browser.status).foregroundStyle(.secondary); Spacer(minLength: 0) }
@@ -228,6 +228,10 @@ private struct SFTPFilePane: View {
                 ForEach(rows) { file in TableRow(file).itemProvider { file.name == ".." ? nil : drag(file) } }
                     .onInsert(of: remote ? [.fileURL] : [UTType(exportedAs: Self.dragType, conformingTo: .data)]) { _, providers in _ = drop(providers) }
             }
+            .background(SessionManagerCommands(active: !unavailable, scopedToSuperview: true,
+                copy: { browser.copyFiles(selectedFiles, remote: remote, cut: false) },
+                cut: { browser.copyFiles(selectedFiles, remote: remote, cut: true) },
+                paste: { browser.pasteFiles(remote: remote) }))
             .contextMenu(forSelectionType: String.self) { selected in
                 let ids = selected.intersection(Set(files.map(\.id)))
                 if remote {
@@ -253,6 +257,10 @@ private struct SFTPFilePane: View {
                     }.disabled(ids.count != 1 || unavailable)
                     Divider()
                 }
+                Button("Copy") { browser.copyFiles(ids, remote: remote, cut: false) }.disabled(ids.isEmpty || unavailable)
+                Button("Cut") { browser.copyFiles(ids, remote: remote, cut: true) }.disabled(ids.isEmpty || unavailable)
+                Button("Paste") { browser.pasteFiles(remote: remote) }.disabled(!browser.canPasteFiles)
+                Divider()
                 Button("Copy to " + (remote ? "Local" : "Remote")) { transfer(ids) }
                     .disabled(ids.isEmpty || browser.busy || browser.disconnected || browser.remotePath.isEmpty)
                 Button("New File…") { newItem(file: true) }.disabled(unavailable)
@@ -262,7 +270,7 @@ private struct SFTPFilePane: View {
                 }.disabled(ids.count != 1 || unavailable)
                 Button(remote ? "Remove…" : "Move to Trash…", role: .destructive) {
                     selection.wrappedValue = ids; browser.removeSelection(remote: remote)
-                }.disabled(ids.isEmpty || unavailable)
+                }.disabled(ids.isEmpty || unavailable || browser.removing)
             } primaryAction: { ids in
                 guard !unavailable, ids.count == 1, let file = rows.first(where: { ids.contains($0.id) }) else { return }
                 if file.isDirectory || file.isSymlink { navigate(file.path) }

@@ -63,6 +63,8 @@ import AppKit
         contentView?.addSubview(protected)
         password.frame = NSRect(x: 20, y: 184, width: 410, height: 26)
         password.placeholderString = "Master password"; password.delegate = self
+        (password.cell as? NSSecureTextFieldCell)?.allowedInputSourceLocales = nil
+        (confirmation.cell as? NSSecureTextFieldCell)?.allowedInputSourceLocales = nil
         confirmation.frame = NSRect(x: 20, y: 150, width: 410, height: 26)
         confirmation.placeholderString = "Confirm master password"; confirmation.delegate = self
         contentView?.addSubview(password); contentView?.addSubview(confirmation)

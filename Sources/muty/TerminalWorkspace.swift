@@ -35,6 +35,21 @@ struct TerminalPaneLayout {
     }
 }
 
+private struct TerminalTabSize: ViewModifier {
+    let size: CGSize
+    let visible: Bool
+    @ViewState private var lastSize: CGSize?
+
+    func body(content: Content) -> some View {
+        let displayedSize = visible ? size : (lastSize ?? size)
+        content
+            .frame(width: displayedSize.width, height: displayedSize.height)
+            .onChange(of: displayedSize, initial: true) { _, newSize in
+                lastSize = newSize
+            }
+    }
+}
+
 struct TerminalWorkspace<Pane: View>: View {
     @ObservedObject var model: AppModel
     let pane: (SSHConnection) -> Pane
@@ -53,7 +68,10 @@ struct TerminalWorkspace<Pane: View>: View {
                     let index = groups.firstIndex { $0.selected == connection.id }
                     let frame = layout.frames[min(index ?? 0, layout.frames.count - 1)]
                     pane(connection)
-                        .frame(width: frame.width, height: max(1, frame.height - tabBarHeight))
+                        .modifier(TerminalTabSize(
+                            size: CGSize(width: frame.width, height: max(1, frame.height - tabBarHeight)),
+                            visible: index != nil
+                        ))
                         .clipped()
                         .offset(x: frame.minX, y: frame.minY + tabBarHeight)
                         .opacity(index != nil ? 1 : 0)
@@ -157,7 +175,7 @@ struct TerminalWorkspace<Pane: View>: View {
                     .foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    PaneSessionBranch(parent: nil, profiles: profiles) { profile in
+                    PaneSessionBranch(parent: nil, profiles: profiles, searching: !query.isEmpty) { profile in
                         guard let index = sessionPickerIndex, model.splitGroups.indices.contains(index) else { return }
                         model.focusGroup(index)
                         sessionPickerIndex = nil
@@ -233,6 +251,7 @@ struct TerminalWorkspace<Pane: View>: View {
 struct PaneSessionBranch: View {
     let parent: String?
     let profiles: [SessionProfile]
+    let searching: Bool
     let select: (SessionProfile) -> Void
 
     private var children: [String] {
@@ -246,7 +265,7 @@ struct PaneSessionBranch: View {
 
     var body: some View {
         ForEach(children, id: \.self) { folder in
-            PaneSessionFolder(folder: folder, profiles: profiles, select: select)
+            PaneSessionFolder(folder: folder, profiles: profiles, select: select, searching: searching)
         }
         ForEach(profiles.filter { $0.folder == parent }) { profile in
             Button { select(profile) } label: {
@@ -263,13 +282,26 @@ private struct PaneSessionFolder: View {
     let folder: String
     let profiles: [SessionProfile]
     let select: (SessionProfile) -> Void
-    @ViewState private var expanded = false
+    let searching: Bool
+    @ViewState private var expanded: Bool
+
+    init(folder: String, profiles: [SessionProfile], select: @escaping (SessionProfile) -> Void, searching: Bool) {
+        self.folder = folder
+        self.profiles = profiles
+        self.select = select
+        self.searching = searching
+        _expanded = State(initialValue: searching)
+    }
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
-            AnyView(PaneSessionBranch(parent: folder, profiles: profiles, select: select))
+            AnyView(PaneSessionBranch(parent: folder, profiles: profiles, searching: searching, select: select))
         } label: {
             Label(String(folder.split(separator: "/").last ?? ""), systemImage: "folder.fill")
+        }
+        .onChange(of: searching) { _, searching in expanded = searching }
+        .onChange(of: profiles.map(\.id)) { _, _ in
+            if searching { expanded = true }
         }
         .transaction { transaction in
             transaction.animation = nil

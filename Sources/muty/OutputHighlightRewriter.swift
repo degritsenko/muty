@@ -314,6 +314,7 @@ struct OutputHighlightTransformer {
         case stringEscape
     }
 
+    private(set) var containsVisibleText = false
     private var state: ParserState = .ground
     private var text: [UInt8] = []
     private var lastRenderedWasWord = false
@@ -335,6 +336,7 @@ struct OutputHighlightTransformer {
     }
 
     private mutating func scan(_ bytes: ArraySlice<UInt8>, ruleSet: OutputHighlightRuleSet?) {
+        containsVisibleText = false
         outputSegments.removeAll(keepingCapacity: true)
         rawBytes.removeAll(keepingCapacity: true)
         var index = 0
@@ -351,6 +353,7 @@ struct OutputHighlightTransformer {
                     rawBytes.append(byte)
                     lastRenderedWasWord = false
                 default:
+                    containsVisibleText = true
                     text.append(byte)
                 }
             } else {

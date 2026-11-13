@@ -98,10 +98,15 @@ final class SFTPClient: @unchecked Sendable {
     private var busy = false
     private var generation = UUID()
     private var posixRename = false
+    private var copyData = false
     private var pendingCleanup: [(String, Bool)] = []
     init(executable: URL = URL(fileURLWithPath: "/usr/bin/ssh"), arguments: [String]) {
         self.executable = executable; self.arguments = arguments
     }
+    func independentChannel() -> SFTPClient {
+        SFTPClient(executable: executable, arguments: arguments)
+    }
+
     func perform<T>(_ action: @escaping (SFTPClient) throws -> T) async throws -> T {
         try Task.checkCancellation()
         return try await withCheckedThrowingContinuation { continuation in
@@ -172,13 +177,14 @@ final class SFTPClient: @unchecked Sendable {
         while response.remaining > 0 {
             let name = try response.text(), version = try response.string()
             if name == "posix-rename@openssh.com" && version == Data("1".utf8) { posixRename = true }
+            if name == "copy-data" && version == Data("1".utf8) { copyData = true }
         }
         initiated = true
     }
     private func disconnectProcess() {
         lock.lock(); let process = self.process; self.process = nil; lock.unlock()
         if let process, process.isRunning { process.terminate() }
-        try? input?.close(); try? output?.close(); input = nil; output = nil; initiated = false; posixRename = false
+        try? input?.close(); try? output?.close(); input = nil; output = nil; initiated = false; posixRename = false; copyData = false
         if let process {
             if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
             // Foundation reaps via terminationHandler. waitUntilExit on this
@@ -188,11 +194,26 @@ final class SFTPClient: @unchecked Sendable {
     private func readExactly(_ count: Int) throws -> Data {
         guard let output else { throw MutyError("SFTP channel is closed.") }
         var value = Data()
+        var lastProgress = ProcessInfo.processInfo.systemUptime
         while value.count < count {
+            try checkCancellation()
+            var descriptor = pollfd(fd: output.fileDescriptor, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&descriptor, 1, 250)
+            if ready < 0 {
+                if errno == EINTR { continue }
+                throw MutyError("Could not read the SFTP response.")
+            }
+            if ready == 0 {
+                guard ProcessInfo.processInfo.systemUptime - lastProgress < 30 else {
+                    throw MutyError("The SFTP server did not respond for 30 seconds. The operation may be partially completed; refresh the folder before retrying.")
+                }
+                continue
+            }
             guard let next = try output.read(upToCount: count - value.count), !next.isEmpty else {
                 throw MutyError("SFTP channel ended. The server may not provide SFTP, or the SSH connection ended.")
             }
             value.append(next)
+            lastProgress = ProcessInfo.processInfo.systemUptime
         }
         return value
     }
@@ -217,6 +238,61 @@ final class SFTPClient: @unchecked Sendable {
         }
         return (type, response)
     }
+    // Only the protocol queue calls this method. Drain ordinary failures before
+    // returning so the next request cannot consume another operation's reply.
+    private func pipeline(_ requests: [(UInt8, SFTPPacket)],
+                          response: (Int, UInt8, inout SFTPReader) throws -> Void) throws {
+        guard requests.count <= 32 else { throw MutyError("SFTP request window exceeded.") }
+        // Long path requests and REALPATH replies must fit the pipe window.
+        // WRITE bodies are large, but their replies contain only status.
+        let controlBytes = requests.reduce(0) { $0 + ($1.0 == 6 ? 128 : $1.1.data.count + 9) }
+        if controlBytes > 8192 && requests.count > 1 {
+            let middle = requests.count / 2
+            try pipeline(Array(requests[..<middle]), response: response)
+            try pipeline(Array(requests[middle...])) { index, kind, reply in
+                try response(index + middle, kind, &reply)
+            }
+            return
+        }
+        var pending: [UInt32: Int] = [:]
+        var firstFailure: Error?
+        do {
+            for (index, request) in requests.enumerated() {
+                try checkCancellation()
+                serial &+= 1
+                var packet = SFTPPacket()
+                packet.byte(request.0); packet.u32(serial)
+                packet.data.append(request.1.data)
+                try send(packet)
+                pending[serial] = index
+            }
+            while !pending.isEmpty {
+                var reply = try receive()
+                let kind = try reply.byte()
+                let id = try reply.u32()
+                guard let index = pending.removeValue(forKey: id) else {
+                    throw MutyError("Unexpected SFTP response ID.")
+                }
+                do {
+                    if kind == 101 {
+                        let code = try reply.u32()
+                        let message = try reply.text()
+                        _ = try reply.string()
+                        if code != 0 { throw SFTPStatus(code: code, message: message) }
+                    }
+                    try response(index, kind, &reply)
+                } catch {
+                    if firstFailure == nil { firstFailure = error }
+                }
+            }
+        } catch {
+            // Cancellation, framing and I/O errors can leave replies outstanding.
+            // Invalidate the channel before handle/temporary-file cleanup runs.
+            disconnectProcess()
+            throw error
+        }
+        if let firstFailure { throw firstFailure }
+    }
     private func handle(_ type: UInt8, _ build: (inout SFTPPacket) -> Void) throws -> Data {
         var (kind, value) = try request(type, build)
         guard kind == 102 else { throw MutyError("Invalid SFTP handle response.") }
@@ -224,6 +300,11 @@ final class SFTPClient: @unchecked Sendable {
     }
     private func status(_ type: UInt8, _ build: (inout SFTPPacket) -> Void) throws {
         guard try request(type, build).0 == 101 else { throw MutyError("Invalid SFTP status response.") }
+    }
+    private func handleAttributes(_ handle: Data) throws -> SFTPAttributes {
+        var (kind, reply) = try request(8) { $0.string(handle) }
+        guard kind == 105 else { throw MutyError("Invalid SFTP handle attributes.") }
+        return try reply.attributes()
     }
     private func close(_ handle: Data) throws { try status(4) { $0.string(handle) } }
     func canonical(_ path: String) throws -> String {
@@ -279,6 +360,87 @@ final class SFTPClient: @unchecked Sendable {
         return try handle(3) { $0.string(path); $0.u32(2 | 8 | 32); $0.u32(4); $0.u32(0o600) }
     }
     func remove(_ path: String, directory: Bool) throws { try status(directory ? 15 : 13) { $0.string(path) } }
+    private func removeFiles(_ paths: [String], expected: [String: BrowserFile]?,
+                             progress: (String) -> Void) throws {
+        for start in stride(from: 0, to: paths.count, by: 32) {
+            let batch = Array(paths[start..<min(start + 32, paths.count)])
+            // The parent may have changed while recursive child removal ran.
+            // Recheck immediately before each mutation window.
+            try validateDirectoryAncestors(batch[0])
+            if let expected {
+                for path in batch {
+                    guard let original = expected[path], let current = try attributes(path),
+                          current.isRegular, !current.isSymlink,
+                          current.size == original.size, current.modified == original.modified else {
+                        throw MutyError("The move source changed: " + path)
+                    }
+                }
+            }
+            let requests: [(UInt8, SFTPPacket)] = batch.map { path in
+                var packet = SFTPPacket(); packet.string(path)
+                return (13, packet)
+            }
+            try pipeline(requests) { index, kind, _ in
+                guard kind == 101 else { throw MutyError("Invalid SFTP removal response.") }
+                progress(batch[index])
+            }
+        }
+    }
+
+    func removeTree(_ path: String, depth: Int = 0, expected: [String: BrowserFile]? = nil,
+                    progress: (String) -> Void = { _ in }) throws {
+        try checkCancellation()
+        guard path.hasPrefix("/"), path != "/", depth <= 128 else { throw MutyError("Invalid path or excessive directory depth: " + path) }
+        do {
+            progress(path)
+            try validateDirectoryAncestors(path)
+            guard let attrs = try attributes(path), attrs.permissions != nil else { throw MutyError("Cannot determine file type") }
+            if let expected {
+                guard let original = expected[path], !attrs.isSymlink,
+                      attrs.isDirectory == original.isDirectory,
+                      original.isDirectory || (attrs.isRegular && attrs.size == original.size && attrs.modified == original.modified) else {
+                    throw MutyError("The move source changed: " + path)
+                }
+            }
+            if attrs.isDirectory && !attrs.isSymlink {
+                guard try canonical(path) == path else { throw MutyError("Directory changed or became a symbolic link") }
+                let entries = try list(path)
+                if let expected, entries.contains(where: { expected[$0.path] == nil }) {
+                    throw MutyError("New files appeared in the move source: " + path)
+                }
+                for entry in entries where entry.isDirectory && !entry.isSymlink {
+                    try removeTree(entry.path, depth: depth + 1, expected: expected, progress: progress)
+                }
+                // REMOVE unlinks the entry itself, including symbolic links.
+                let files = entries.filter { !$0.isDirectory || $0.isSymlink }.map(\.path)
+                try removeFiles(files, expected: expected, progress: progress)
+                try validateDirectoryAncestors(path)
+                guard let current = try attributes(path), current.isDirectory, !current.isSymlink,
+                      try canonical(path) == path else { throw MutyError("Directory changed during removal") }
+                try remove(path, directory: true)
+            } else {
+                try remove(path, directory: false)
+            }
+        } catch is CancellationError { throw CancellationError() }
+        catch { throw MutyError("Could not remove " + path + ": " + error.localizedDescription) }
+    }
+    func moveSourceSnapshot(_ path: String, depth: Int = 0) throws -> [String: BrowserFile] {
+        try checkCancellation()
+        guard depth < 128 else { throw MutyError("Folder nesting exceeds 128 levels.") }
+        try validateDirectoryAncestors(path)
+        guard let attrs = try attributes(path) else { return [:] }
+        guard !attrs.isSymlink, attrs.isDirectory || attrs.isRegular else { throw MutyError("The move source changed: " + path) }
+        let entry = BrowserFile(name: (path as NSString).lastPathComponent, path: path,
+                                isDirectory: attrs.isDirectory, isSymlink: false,
+                                size: attrs.size, modified: attrs.modified)
+        var entries = [path: entry]
+        if attrs.isDirectory {
+            for child in try list(path) {
+                entries.merge(try moveSourceSnapshot(child.path, depth: depth + 1)) { _, latest in latest }
+            }
+        }
+        return entries
+    }
     func rename(_ old: String, _ new: String, replace: Bool = false) throws {
         try checkCancellation()
         if replace {
@@ -343,10 +505,24 @@ final class SFTPClient: @unchecked Sendable {
         defer { if !handleClosed { try? close(handle) } }
         var offset: UInt64 = 0
         progress(local.lastPathComponent, 0, UInt64(info.st_size))
-        while let data = try file.read(upToCount: 32768), !data.isEmpty {
-            try checkCancellation()
-            try status(6) { $0.string(handle); $0.u64(offset); $0.string(data) }
-            offset += UInt64(data.count); progress(local.lastPathComponent, offset, UInt64(info.st_size))
+        var acknowledged: UInt64 = 0
+        while true {
+            var requests: [(UInt8, SFTPPacket)] = []
+            var lengths: [UInt64] = []
+            for _ in 0..<32 {
+                try checkCancellation()
+                guard let data = try file.read(upToCount: 32768), !data.isEmpty else { break }
+                var packet = SFTPPacket()
+                packet.string(handle); packet.u64(offset); packet.string(data)
+                requests.append((6, packet)); lengths.append(UInt64(data.count))
+                offset += UInt64(data.count)
+            }
+            if requests.isEmpty { break }
+            try pipeline(requests) { index, kind, _ in
+                guard kind == 101 else { throw MutyError("Invalid SFTP write response.") }
+                acknowledged += lengths[index]
+                progress(local.lastPathComponent, acknowledged, UInt64(info.st_size))
+            }
         }
         guard offset == UInt64(info.st_size) else { throw MutyError("Source file changed while uploading. Try again.") }
         if let ownership {
@@ -361,6 +537,86 @@ final class SFTPClient: @unchecked Sendable {
             try status(10) { $0.string(handle); $0.u32(4); $0.u32((permissions ?? UInt32(info.st_mode)) & 0o777) }
         }
         try close(handle); handleClosed = true
+    }
+    // Return false only when the server did not advertise copy-data.
+    // The caller retains its download/upload fallback for those servers.
+    func copyRemote(_ source: String, to destination: String,
+                    progress: (String, UInt64, UInt64?) -> Void) throws -> Bool {
+        guard copyData else { return false }
+        try validateDirectoryAncestors(source)
+        try validateDirectoryAncestors(destination)
+        guard try attributes(destination) == nil else { throw MutyError("Destination already exists.") }
+        let parent = (destination as NSString).deletingLastPathComponent
+        let temporary = try BrowserFile.join(parent, ".muty-copy-" + UUID().uuidString)
+        do {
+            try copyRemoteItem(source, to: temporary, depth: 0, progress: progress)
+            try checkCancellation()
+            try validateDirectoryAncestors(destination)
+            try rename(temporary, destination)
+            forgetTemporary(temporary)
+            return true
+        } catch let error as SFTPStatus where error.code == 8 {
+            try? cleanup()
+            copyData = false
+            return false
+        } catch {
+            try? cleanup()
+            throw error
+        }
+    }
+    private func copyRemoteItem(_ source: String, to destination: String, depth: Int,
+                                progress: (String, UInt64, UInt64?) -> Void) throws {
+        try checkCancellation()
+        guard depth < 64 else { throw MutyError("Folder nesting exceeds 64 levels.") }
+        try validateDirectoryAncestors(source)
+        try validateDirectoryAncestors(destination)
+        guard let attrs = try attributes(source), !attrs.isSymlink else {
+            throw MutyError("File is missing or is a symbolic link: " + source)
+        }
+        if attrs.isDirectory {
+            guard try canonical(source) == source else { throw MutyError("Remote directory changed.") }
+            let entries = try list(source)
+            try mkdir(destination); pendingCleanup.append((destination, true))
+            for entry in entries {
+                try copyRemoteItem(entry.path, to: BrowserFile.join(destination, entry.name),
+                                   depth: depth + 1, progress: progress)
+            }
+        } else {
+            let (readHandle, opened) = try openReadFile(source)
+            defer { if initiated { try? close(readHandle) } }
+            guard let size = opened.size else {
+                throw SFTPStatus(code: 8, message: "Server-side copying requires a file size.")
+            }
+            let writeHandle = try openNewFile(destination)
+            pendingCleanup.append((destination, false))
+            var writeClosed = false
+            defer { if !writeClosed && initiated { try? close(writeHandle) } }
+            var offset: UInt64 = 0
+            let name = (source as NSString).lastPathComponent
+            progress(name, 0, opened.size)
+            repeat {
+                try checkCancellation()
+                let length = min(UInt64(8 * 1024 * 1024), size - offset)
+                // A zero-length request copies through EOF, including empty files.
+                try status(200) {
+                    $0.string("copy-data"); $0.string(readHandle); $0.u64(offset); $0.u64(length)
+                    $0.string(writeHandle); $0.u64(offset)
+                }
+                offset += length
+                progress(name, offset, opened.size)
+            } while offset < size
+            let copied = try handleAttributes(writeHandle)
+            guard opened.size == nil || copied.size == opened.size else { throw MutyError("Remote file changed while copying.") }
+            let finalSource = try handleAttributes(readHandle)
+            guard finalSource.isRegular, finalSource.size == opened.size, finalSource.modified == opened.modified else {
+                throw MutyError("Remote file changed while copying.")
+            }
+            try status(10) {
+                $0.string(writeHandle); $0.u32(4); $0.u32((opened.permissions ?? 0o600) & 0o777)
+            }
+            try close(writeHandle)
+            writeClosed = true
+        }
     }
     func download(_ remote: String, to local: URL, replace: Bool, progress: (String, UInt64, UInt64?) -> Void) throws {
         guard let attrs = try attributes(remote), !attrs.isSymlink else { throw MutyError("File is missing or is a symbolic link: " + remote) }
@@ -408,11 +664,31 @@ final class SFTPClient: @unchecked Sendable {
     }
     func validateDirectoryAncestors(_ path: String) throws {
         var parent = (path as NSString).deletingLastPathComponent
+        var ancestors: [String] = []
         while !parent.isEmpty {
-            guard let a = try attributes(parent), a.isDirectory, !a.isSymlink,
-                  try canonical(parent) == parent else { throw MutyError("A directory changed or became a symbolic link: " + parent) }
+            ancestors.append(parent)
             if parent == "/" { break }
             parent = (parent as NSString).deletingLastPathComponent
+        }
+        for start in stride(from: 0, to: ancestors.count, by: 16) {
+            let batch = Array(ancestors[start..<min(start + 16, ancestors.count)])
+            let requests: [(UInt8, SFTPPacket)] = batch.flatMap { path -> [(UInt8, SFTPPacket)] in
+                var packet = SFTPPacket(); packet.string(path)
+                return [(7, packet), (16, packet)]
+            }
+            try pipeline(requests) { index, kind, reply in
+                let path = batch[index / 2]
+                let valid: Bool
+                if index.isMultiple(of: 2) {
+                    guard kind == 105 else { throw MutyError("Invalid SFTP attributes response.") }
+                    let attrs = try reply.attributes()
+                    valid = attrs.isDirectory && !attrs.isSymlink
+                } else {
+                    guard kind == 104, try reply.u32() == 1 else { throw MutyError("Invalid SFTP path response.") }
+                    valid = try reply.text() == path
+                }
+                guard valid else { throw MutyError("A directory changed or became a symbolic link: " + path) }
+            }
         }
     }
     func setPermissions(_ path: String, _ mode: UInt32) throws {
@@ -460,36 +736,95 @@ final class SFTPClient: @unchecked Sendable {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         return directory
     }
+    private func openReadFile(_ remote: String) throws -> (Data, SFTPAttributes) {
+        guard let before = try attributes(remote), before.isRegular, !before.isSymlink else {
+            throw MutyError("Remote file changed or is not regular.")
+        }
+        let remoteHandle = try handle(3) { $0.string(remote); $0.u32(1); $0.u32(0) }
+        do {
+            let opened = try handleAttributes(remoteHandle)
+            guard opened.isRegular, before.size == opened.size, before.modified == opened.modified,
+                  let after = try attributes(remote), after.isRegular, !after.isSymlink,
+                  after.size == opened.size, after.modified == opened.modified else {
+                throw MutyError("Remote file changed while opening. Try again.")
+            }
+            return (remoteHandle, opened)
+        } catch {
+            try? close(remoteHandle)
+            throw error
+        }
+    }
+    private func downloadBlocks(_ handle: Data, to file: FileHandle, size: UInt64,
+                                progress: (UInt64) -> Void) throws {
+        var nextOffset: UInt64 = 0
+        var received: UInt64 = 0
+        var shortReads: [(UInt64, UInt32)] = []
+        while nextOffset < size || !shortReads.isEmpty {
+            var ranges = Array(shortReads.prefix(32))
+            shortReads.removeFirst(ranges.count)
+            while ranges.count < 32 && nextOffset < size {
+                let length = UInt32(min(32768, size - nextOffset))
+                ranges.append((nextOffset, length))
+                nextOffset += UInt64(length)
+            }
+            let requests: [(UInt8, SFTPPacket)] = ranges.map { offset, length in
+                var packet = SFTPPacket()
+                packet.string(handle); packet.u64(offset); packet.u32(length)
+                return (5, packet)
+            }
+            try pipeline(requests) { index, kind, reply in
+                guard kind == 103 else { throw MutyError("Invalid SFTP data response.") }
+                let (offset, length) = ranges[index]
+                let data = try reply.string()
+                guard !data.isEmpty, data.count <= Int(length) else { throw MutyError("Invalid SFTP file data.") }
+                try file.seek(toOffset: offset)
+                try file.write(contentsOf: data)
+                received += UInt64(data.count)
+                if data.count < Int(length) {
+                    shortReads.append((offset + UInt64(data.count), length - UInt32(data.count)))
+                }
+                progress(received)
+            }
+        }
+        guard received == size else { throw MutyError("Remote file changed while downloading. Try again.") }
+    }
     private func downloadFile(_ remote: String, to local: URL, size: UInt64?, maximumBytes: UInt64? = nil, progress: (String, UInt64, UInt64?) -> Void) throws {
         let fd = open(local.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         defer { try? file.close() }
-        guard let before = try attributes(remote), before.isRegular, !before.isSymlink else { throw MutyError("Remote file changed or is not regular.") }
-        let remoteHandle = try handle(3) { $0.string(remote); $0.u32(1); $0.u32(0) }
-        defer { try? close(remoteHandle) }
-        var (kind, handleResponse) = try request(8) { $0.string(remoteHandle) }
-        guard kind == 105 else { throw MutyError("Invalid SFTP handle attributes.") }
-        let opened = try handleResponse.attributes()
-        guard opened.isRegular, before.size == opened.size, before.modified == opened.modified,
-              let after = try attributes(remote), !after.isSymlink, after.size == opened.size, after.modified == opened.modified else {
-            throw MutyError("Remote file changed while opening. Try again.")
+        let (remoteHandle, opened) = try openReadFile(remote)
+        defer { if initiated { try? close(remoteHandle) } }
+        let expectedSize = opened.size ?? size
+        if let maximumBytes, let expectedSize, expectedSize > maximumBytes {
+            throw MutyError("The editor supports files up to 1 MiB.")
         }
         var offset: UInt64 = 0
         progress((remote as NSString).lastPathComponent, 0, size)
-        while true {
-            try checkCancellation()
-            do {
-                var (kind, response) = try request(5) { $0.string(remoteHandle); $0.u64(offset); $0.u32(32768) }
-                guard kind == 103 else { throw MutyError("Invalid SFTP data response.") }
-                let data = try response.string()
-                guard !data.isEmpty, data.count <= 32768, offset <= UInt64.max - UInt64(data.count) else { throw MutyError("Invalid SFTP file data.") }
-                if let maximumBytes, offset + UInt64(data.count) > maximumBytes { throw MutyError("The editor supports files up to 1 MiB.") }
-                try file.write(contentsOf: data); offset += UInt64(data.count)
-                progress((remote as NSString).lastPathComponent, offset, size)
-            } catch let error as SFTPStatus where error.code == 1 { break }
+        if let expectedSize {
+            try downloadBlocks(remoteHandle, to: file, size: expectedSize) { bytes in
+                offset = bytes
+                progress((remote as NSString).lastPathComponent, bytes, expectedSize)
+            }
+        } else {
+            while true {
+                try checkCancellation()
+                do {
+                    var (kind, response) = try request(5) { $0.string(remoteHandle); $0.u64(offset); $0.u32(32768) }
+                    guard kind == 103 else { throw MutyError("Invalid SFTP data response.") }
+                    let data = try response.string()
+                    guard !data.isEmpty, data.count <= 32768, offset <= UInt64.max - UInt64(data.count) else { throw MutyError("Invalid SFTP file data.") }
+                    if let maximumBytes, offset + UInt64(data.count) > maximumBytes { throw MutyError("The editor supports files up to 1 MiB.") }
+                    try file.write(contentsOf: data); offset += UInt64(data.count)
+                    progress((remote as NSString).lastPathComponent, offset, size)
+                } catch let error as SFTPStatus where error.code == 1 { break }
+            }
         }
         guard size == nil || offset == size else { throw MutyError("Remote file changed while downloading. Try again.") }
+        let final = try handleAttributes(remoteHandle)
+        guard final.isRegular, final.size == opened.size, final.modified == opened.modified else {
+            throw MutyError("Remote file changed while downloading. Try again.")
+        }
         try file.synchronize(); try file.close()
     }
 }
