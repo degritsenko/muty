@@ -21,6 +21,7 @@
 - Before publishing, run `bash scripts/check-release.sh`, then verify the ZIP, its SHA-256 checksum, and the packaged app's signature, version, and architecture. Report skipped manual checks accurately. Leave broad GUI, sleep/wake, and Keychain-denial testing to explicit requests.
 - Group changelog entries and GitHub release notes under **Added**, **Fixed**, and **Changed**. Use the matching changelog section as the source for GitHub release notes and preserve its headings. Keep validation logs out of the changelog and public release notes. Use the version without the build number in GitHub release titles.
 - Prepare changes and app builds locally first. Present the changes, verification results, clickable links to README.md and CHANGELOG.md, and a proposed commit message for the user's review.
+- Write commit subjects that name the affected feature and describe the concrete change. For commits with multiple changes, add a body summarizing the main changes and why they were made. For release commits, include the version alongside the main change instead of using a version-only subject.
 - Create commits, push commits, create or push tags, and publish GitHub releases only when the user explicitly authorizes the corresponding actions. A generic instruction such as “делай” authorizes local preparation only unless those actions are explicitly named. Do not infer publication approval from a discussion of release readiness.
 
 ## Token-efficient workflow
