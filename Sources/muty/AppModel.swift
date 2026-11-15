@@ -22,11 +22,23 @@ struct ProfileDraft: Identifiable {
 final class AppModel: ObservableObject {
     @Published var profiles: [SessionProfile] = []
     private var transferQueues: [String: SFTPTransferQueue] = [:]
-    func transferQueue(for id: UUID, endpoint: String, jump: SessionProfile?) -> SFTPTransferQueue {
+    private var transferQueueStores: [String: SFTPTransferQueueStore] = [:]
+    func transferQueue(for id: UUID, profileID: UUID?, endpoint: String, jump: SessionProfile?) -> SFTPTransferQueue {
         let route = jump.map { $0.id.uuidString + ":" + $0.endpoint } ?? ""
         let key = id.uuidString + ":" + endpoint + "\0" + route
         if let queue = transferQueues[key] { return queue }
-        let queue = SFTPTransferQueue(); transferQueues[key] = queue; return queue
+        let scope = (profileID?.uuidString ?? "Quick Connect") + "\0" + endpoint + "\0" + route
+        let persistence: SFTPTransferQueueStore?
+        if readOnly {
+            persistence = nil
+        } else {
+            let disk = transferQueueStores[scope] ?? SFTPTransferQueueStore(directory: store.directory, scope: scope)
+            transferQueueStores[scope] = disk
+            persistence = disk
+        }
+        let queue = persistence?.makeQueue() ?? SFTPTransferQueue()
+        transferQueues[key] = queue
+        return queue
     }
     @Published var sessionClipboard: SessionClipboard?
     @Published var selectedProfile: UUID?
@@ -1413,9 +1425,17 @@ final class AppModel: ObservableObject {
 
     func shutdown(completion: @escaping () -> Void) {
         persistWorkspace()
-        tabs.forEach { $0.disconnect() }
-        vault.lock()
-        SSHConnection.cleanup.notify(queue: .main, execute: completion)
+        let connections = tabs
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                for browser in connections.compactMap(\.fileBrowser) {
+                    group.addTask { await browser.finishForQuit() }
+                }
+            }
+            connections.forEach { $0.disconnect() }
+            vault.lock()
+            SSHConnection.cleanup.notify(queue: .main, execute: completion)
+        }
     }
 
     func confirm(_ title: String, text: String, action: String = "Continue", cancel: String = "Cancel") -> Bool {

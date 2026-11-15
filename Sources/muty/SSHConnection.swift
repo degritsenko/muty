@@ -186,7 +186,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         }
         if fileBrowser == nil {
             let args = transport.clientArguments() + ["-T", "-p", String(profile.port), "-l", profile.user, "-s", "--", profile.host, "sftp"]
-            let queue = app.transferQueue(for: transferQueueID, endpoint: profile.endpoint, jump: connectedJumpProfile)
+            let queue = app.transferQueue(for: transferQueueID, profileID: temporary ? nil : profile.id, endpoint: profile.endpoint, jump: connectedJumpProfile)
             fileBrowser = SFTPBrowserModel(client: SFTPClient(arguments: args), app: app, sessionID: profile.id, transferQueue: queue, endpoint: profile.endpoint, jumpEndpoint: connectedJumpProfile?.endpoint, temporary: temporary)
         }
         showingSFTP = true

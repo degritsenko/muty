@@ -56,12 +56,17 @@ struct SFTPBrowserView: View {
                 } else { Text(browser.status).foregroundStyle(.secondary); Spacer(minLength: 0) }
             }.font(.system(size: 11)).controlSize(.small).padding(.horizontal, 8).frame(height: 24)
             }
-            if let error = browser.error {
+            if let error = browser.error ?? browser.moveCleanupNotice {
                 HStack {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
                     Text(error).font(.caption).textSelection(.enabled)
                     Spacer()
-                    Button { browser.error = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
+                    if browser.moveCleanupNotice != nil {
+                        Button("Retry Cleanup") { browser.retryMoveCleanup() }.disabled(!browser.canRetryMoveCleanup)
+                        Button("Keep Copy") { browser.keepMoveCopy() }.disabled(browser.busy)
+                    } else {
+                        Button { browser.error = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
+                    }
                 }.padding(8).background(Color.orange.opacity(0.1))
             }
         }.onAppear { browser.start() }

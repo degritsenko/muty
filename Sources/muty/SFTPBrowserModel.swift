@@ -137,6 +137,14 @@ struct SFTPBookmark: Codable, Identifiable {
         client.shutdown()
         editors.values.forEach { $0.connectionEnded() }
     }
+    func finishForQuit() async {
+        disconnected = true
+        transferQueue.detach(owner: id)
+        job?.cancel()
+        removalJob?.cancel()
+        removalClient?.shutdown()
+        await client.finishForQuit()
+    }
     func cancel() {
         transferQueue.cancel(owner: id)
         job?.cancel(); client.cancel()
@@ -232,8 +240,73 @@ struct SFTPBookmark: Codable, Identifiable {
         let remote: Bool
         let cut: Bool
     }
+    private struct PendingMoveCleanup {
+        let clipboardID: UUID
+        let source: String
+        let target: String
+        let sourceRemote: Bool
+        let sourceSnapshot: [String: BrowserFile]
+        var targetSnapshot: [String: BrowserFile]?
+
+        var notice: String { "Copy saved at " + target + ". Source cleanup incomplete at " + source + "." }
+
+        func removeSource(using client: SFTPClient, retry: Bool, progress: (String) -> Void) throws {
+            if sourceRemote {
+                if try client.attributes(source) != nil {
+                    try client.removeTree(source, expected: sourceSnapshot, progress: progress)
+                }
+            } else {
+                try SFTPMoveVerification.remove(Array(sourceSnapshot.values), allowMissing: retry,
+                                                checkCancellation: client.checkCancellation, progress: progress)
+            }
+        }
+
+        func snapshotTarget(using client: SFTPClient) throws -> [String: BrowserFile] {
+            if !sourceRemote { return try client.moveSourceSnapshot(target) }
+            let entries = try SFTPMoveVerification.snapshot(URL(fileURLWithPath: target),
+                                                           checkCancellation: client.checkCancellation)
+            return Dictionary(uniqueKeysWithValues: entries.map { ($0.path, $0) })
+        }
+    }
+    @Published private var pendingMoveCleanup: PendingMoveCleanup?
     @Published private var fileClipboard: FileClipboard?
-    var canPasteFiles: Bool { fileClipboard != nil && !busy && !disconnected && !removing }
+    var canPasteFiles: Bool { pendingMoveCleanup == nil && fileClipboard != nil && !busy && !disconnected && !removing }
+    var moveCleanupNotice: String? { pendingMoveCleanup?.notice }
+    var canRetryMoveCleanup: Bool { pendingMoveCleanup?.targetSnapshot != nil && !busy && !disconnected && !removing }
+
+    func keepMoveCopy() {
+        guard !busy, let move = pendingMoveCleanup else { return }
+        completeMove(move.source, clipboardID: move.clipboardID)
+        pendingMoveCleanup = nil
+        error = nil
+    }
+
+    func retryMoveCleanup() {
+        guard canRetryMoveCleanup, let move = pendingMoveCleanup, let expected = move.targetSnapshot else { return }
+        let sink = SFTPProgressSink { [weak self] in self?.progress = $0 }
+        run("Removing move source…", refreshAfter: true, work: { client in
+            guard try move.snapshotTarget(using: client) == expected else {
+                throw MutyError("The saved copy changed or is missing. " + move.notice)
+            }
+            do {
+                try move.removeSource(using: client, retry: true) { path in
+                    sink.update(name: "Removing… " + path, bytes: 1, total: nil)
+                }
+            } catch {
+                throw MutyError(move.notice + " " + error.localizedDescription)
+            }
+            DispatchQueue.main.sync { [weak self] in
+                self?.completeMove(move.source, clipboardID: move.clipboardID)
+                self?.pendingMoveCleanup = nil
+            }
+        })
+    }
+
+    private func completeMove(_ path: String, clipboardID: UUID) {
+        guard fileClipboard?.id == clipboardID else { return }
+        fileClipboard?.files.removeAll { $0.id == path }
+        if fileClipboard?.files.isEmpty == true { fileClipboard = nil }
+    }
 
     func copyFiles(_ ids: Set<String>, remote: Bool, cut: Bool) {
         let files = (remote ? remoteFiles : localFiles).filter { ids.contains($0.id) }
@@ -254,10 +327,8 @@ struct SFTPBookmark: Codable, Identifiable {
             sink.update(name: "Removing… " + path, bytes: 1, total: nil)
         }
         let completeMove: (BrowserFile) -> Void = { [weak self] file in
-            DispatchQueue.main.async { [weak self = self] in
-                guard let self, self.fileClipboard?.id == clipboard.id else { return }
-                self.fileClipboard?.files.removeAll { $0.id == file.id }
-                if self.fileClipboard?.files.isEmpty == true { self.fileClipboard = nil }
+            DispatchQueue.main.async { [weak self] in
+                self?.completeMove(file.path, clipboardID: clipboard.id)
             }
         }
         run(action + "…", refreshAfter: true, work: { client in
@@ -308,23 +379,21 @@ struct SFTPBookmark: Codable, Identifiable {
                         try client.upload(URL(fileURLWithPath: file.path), to: target, replace: false, progress: report)
                     }
                     if clipboard.cut {
-                        completeMove(file)
+                        var move = PendingMoveCleanup(clipboardID: clipboard.id, source: file.path, target: target,
+                                                      sourceRemote: clipboard.remote, sourceSnapshot: moveSnapshot)
                         do {
-                            if clipboard.remote {
-                                if try client.attributes(file.path) != nil {
-                                    try client.removeTree(file.path, expected: moveSnapshot, progress: removalProgress)
-                                }
-                            } else {
-                                try SFTPMoveVerification.remove(Array(moveSnapshot.values), checkCancellation: client.checkCancellation,
-                                                                progress: removalProgress)
-                            }
+                            let snapshot = try move.snapshotTarget(using: client)
+                            guard !snapshot.isEmpty else { throw MutyError("The saved copy is missing.") }
+                            move.targetSnapshot = snapshot
+                            try move.removeSource(using: client, retry: false, progress: removalProgress)
                         } catch {
-                            let message = "Copy saved at " + target + ". Source cleanup incomplete at " +
-                                          file.path + ". " + error.localizedDescription
-                            DispatchQueue.main.sync { [weak self = self] in self?.error = message }
+                            let message = move.notice + " " + error.localizedDescription
+                            DispatchQueue.main.sync { [weak self] in
+                                self?.pendingMoveCleanup = move
+                                self?.error = message
+                            }
                             throw MutyError(message)
                         }
-                        continue
                     }
                 }
                 if clipboard.cut { completeMove(file) }
@@ -366,10 +435,18 @@ struct SFTPBookmark: Codable, Identifiable {
         transferQueue.resume(owner: id)
         processTransfers()
     }
-    func retryTransfers(id: UUID? = nil) {
-        guard !busy, !disconnected else { return }
-        transferQueue.retry(owner: self.id, id: id)
+    func startTransfers() {
+        guard !busy, !disconnected, !remotePath.isEmpty else { return }
+        transferQueue.start(owner: id)
         processTransfers()
+    }
+    func retryTransfers(id: UUID? = nil) {
+        guard !busy, !disconnected, !remotePath.isEmpty else { return }
+        let isolated = id.flatMap { id in
+            transferQueue.items.first { $0.id == id && ($0.state == .interrupted || transferQueue.awaitingStart) }?.id
+        }
+        transferQueue.retry(owner: self.id, id: id)
+        processTransfers(only: isolated)
     }
     private func resolveConflict(_ transfer: SFTPTransfer) -> SFTPConflictResolution {
         let alert = NSAlert(); alert.messageText = "File already exists"
@@ -382,9 +459,10 @@ struct SFTPBookmark: Codable, Identifiable {
         return SFTPConflictResolution(choice: choices.indices.contains(index) ? choices[index] : .cancel,
                                       applyToAll: alert.suppressionButton?.state == .on)
     }
-    private func processTransfers(request: SFTPTransferRequest? = nil) {
+    private func processTransfers(request: SFTPTransferRequest? = nil, only transferID: UUID? = nil) {
         guard !busy, !disconnected, !remotePath.isEmpty,
-              request != nil || (transferQueue.hasPending && !transferQueue.paused) else { return }
+              request != nil || (transferQueue.hasPending && !transferQueue.paused &&
+                                  (!transferQueue.awaitingStart || transferID != nil)) else { return }
         busy = true; progress = nil
         if let request {
             error = nil
@@ -395,7 +473,7 @@ struct SFTPBookmark: Codable, Identifiable {
         }
         job = Task { [self] in
             do {
-                try await transferQueue.run(owner: id, request: request, resolveConflict: resolveConflict,
+                try await transferQueue.run(owner: id, request: request, only: transferID, resolveConflict: resolveConflict,
                     progress: { [weak self] in self?.progress = $0 }, status: { self.status = $0 })
             } catch is CancellationError { status = "Cancelled" }
             catch { self.error = error.localizedDescription; status = "Failed" }
@@ -598,15 +676,21 @@ private enum SFTPMoveVerification {
         }
         return entries
     }
-    static func remove(_ expected: [BrowserFile], checkCancellation: () throws -> Void,
+    static func remove(_ expected: [BrowserFile], allowMissing: Bool, checkCancellation: () throws -> Void,
                        progress: (String) -> Void) throws {
         for entry in expected.sorted(by: { $0.path.count > $1.path.count }) {
             try checkCancellation()
             let source = URL(fileURLWithPath: entry.path)
             guard source.resolvingSymlinksInPath().path == source.standardizedFileURL.path else { throw MutyError("The move source became a symbolic link.") }
-            let attrs = try source.resourceValues(forKeys: [
-                .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey
-            ])
+            let attrs: URLResourceValues
+            do {
+                attrs = try source.resourceValues(forKeys: [
+                    .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey
+                ])
+            } catch let error as NSError where allowMissing && error.domain == NSCocoaErrorDomain &&
+                (error.code == NSFileReadNoSuchFileError || error.code == NSFileNoSuchFileError) {
+                continue
+            }
             guard attrs.isSymbolicLink == false, (attrs.isDirectory == true) == entry.isDirectory,
                   entry.isDirectory || (attrs.isRegularFile == true && attrs.fileSize.map { UInt64($0) } == entry.size &&
                                         attrs.contentModificationDate == entry.modified) else {
@@ -615,7 +699,11 @@ private enum SFTPMoveVerification {
             try checkCancellation()
             // rmdir refuses newly added files instead of recursively deleting them.
             let result = entry.isDirectory ? Darwin.rmdir(entry.path) : Darwin.unlink(entry.path)
-            guard result == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            if result != 0 {
+                let code = POSIXErrorCode(rawValue: errno) ?? .EIO
+                if allowMissing && code == .ENOENT { continue }
+                throw POSIXError(code)
+            }
             progress(entry.path)
         }
     }

@@ -142,6 +142,33 @@ final class SFTPClient: @unchecked Sendable {
         if let pid, pid > 0 { _ = kill(pid, SIGTERM) }
         queue.async { [self] in disconnectProcess() }
     }
+    func finishForQuit() async {
+        shutdown()
+        let paths = await withCheckedContinuation { continuation in
+            queue.async { [self] in continuation.resume(returning: pendingCleanup) }
+        }
+        guard !paths.isEmpty else { return }
+
+        // The upload channel may have outstanding replies from cancellation.
+        // Keep the SSH master alive and use a separate SFTP channel for cleanup.
+        let cleaner = independentChannel()
+        let timeout = DispatchWorkItem { cleaner.shutdown() }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3, execute: timeout)
+        defer { timeout.cancel(); cleaner.shutdown() }
+        try? await cleaner.perform { client in
+            for (path, directory) in paths.reversed() {
+                try client.checkCancellation()
+                do {
+                    try client.validateDirectoryAncestors(path)
+                    try client.remove(path, directory: directory)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    // Continue cleaning other exact paths if one removal fails.
+                }
+            }
+        }
+    }
     deinit { if let process, process.isRunning { process.terminate() } }
     func setPaused(_ value: Bool) {
         lock.lock()

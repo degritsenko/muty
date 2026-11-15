@@ -920,6 +920,21 @@ final class RegressionTests {
         let retried = try Data(contentsOf: root.appendingPathComponent("retry"))
         assert(retried == payload)
         assert(!FileManager.default.fileExists(atPath: root.appendingPathComponent("cancelled").path))
+        let quitting = SFTPClient(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
+        try runSFTPTest {
+            do {
+                try await quitting.perform { client in
+                    try client.upload(source, to: root.appendingPathComponent("quit").path, replace: false) { _, bytes, _ in
+                        if bytes > 0 { client.cancel() }
+                    }
+                }
+                assertionFailure("Expected an interrupted upload")
+            } catch is CancellationError {}
+            let interruptedFiles = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            assert(interruptedFiles.contains { $0.hasPrefix(".muty-upload-") })
+            await quitting.finishForQuit()
+        }
+        assert(!FileManager.default.fileExists(atPath: root.appendingPathComponent("quit").path))
         let deniedClose = SFTPClient(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: ["-P", "close"])
         defer { deniedClose.shutdown() }
         try runSFTPTest {
@@ -1003,8 +1018,8 @@ final class RegressionTests {
         assert(!FileManager.default.fileExists(atPath: source.appendingPathComponent("file").path))
         assert(!browser.canPasteFiles)
 
-        // A committed copy survives failed source cleanup. Its Cut entry is
-        // consumed so Paste cannot repeat an already completed copy.
+        // A committed copy survives failed cleanup. Retry removes only
+        // the original source and requires the saved copy to be unchanged.
         let remoteParent = root.appendingPathComponent("remote")
         let remoteFolder = remoteParent.appendingPathComponent("folder")
         try FileManager.default.createDirectory(at: remoteFolder, withIntermediateDirectories: true)
@@ -1030,7 +1045,47 @@ final class RegressionTests {
         assert(copied == Data("preserve".utf8))
         assert(FileManager.default.fileExists(atPath: remoteFolder.appendingPathComponent("data").path))
         moving.pasteFiles(remote: false)
+        assert(moving.canRetryMoveCleanup)
+        try FileManager.default.removeItem(at: remoteFolder.appendingPathComponent("data"))
+        let extra = committed.deletingLastPathComponent().appendingPathComponent("extra")
+        try Data().write(to: extra)
+        moving.retryMoveCleanup()
+        try runSFTPTest {
+            while moving.busy { try await Task.sleep(nanoseconds: 5_000_000) }
+        }
+        assert(moving.error?.contains("The saved copy changed") == true)
+        assert(FileManager.default.fileExists(atPath: remoteFolder.path))
+        try FileManager.default.removeItem(at: extra)
+        moving.keepMoveCopy()
+        assert(moving.moveCleanupNotice == nil)
+        assert(!moving.canPasteFiles)
         assert(!FileManager.default.fileExists(atPath: destination.appendingPathComponent("folder copy").path))
+
+        // A second move can finish cleanup once the blocked child is gone.
+        try Data("retry".utf8).write(to: remoteFolder.appendingPathComponent("data"))
+        moving.navigateRemote(remoteParent.path)
+        try runSFTPTest {
+            while moving.busy { try await Task.sleep(nanoseconds: 5_000_000) }
+        }
+        moving.copyFiles([remoteFolder.path], remote: true, cut: true)
+        moving.pasteFiles(remote: false)
+        try runSFTPTest {
+            while moving.busy { try await Task.sleep(nanoseconds: 5_000_000) }
+        }
+        assert(moving.canRetryMoveCleanup)
+        try FileManager.default.removeItem(at: remoteFolder.appendingPathComponent("data"))
+        moving.retryMoveCleanup()
+        try runSFTPTest {
+            while moving.busy { try await Task.sleep(nanoseconds: 5_000_000) }
+        }
+        assert(moving.error == nil)
+        assert(moving.moveCleanupNotice == nil)
+        assert(!moving.canPasteFiles)
+        assert(!FileManager.default.fileExists(atPath: remoteFolder.path))
+        let retriedCopy = try Data(contentsOf: destination.appendingPathComponent("folder copy/data"))
+        assert(retriedCopy == Data("retry".utf8))
+        let destinationEntries = try FileManager.default.contentsOfDirectory(atPath: destination.path)
+        assert(destinationEntries.count == 4)
     }
 
     @MainActor func testUnreadTerminalOutput() throws {
@@ -1760,6 +1815,7 @@ final class RegressionTests {
             ("sftp.queueConflictsAndRetry", SFTPQueueTests.conflictsAndRetry),
             ("sftp.queuePauseCancelAndRetry", SFTPQueueTests.pauseCancelAndRetry),
             ("sftp.queueOwnerReplacement", SFTPQueueTests.ownerReplacement),
+            ("sftp.queueRecovery", SFTPQueueTests.recovery),
             ("terminal.colorSchemeCatalog", tests.testTerminalColorSchemeCatalog),
             ("sessions.savedSessionSearch", tests.testSavedSessionSearch),
             ("ui.editorEscapeAndCompletedTransfers", tests.testEditorEscapeAndCompletedTransfers),

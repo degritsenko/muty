@@ -170,6 +170,65 @@ enum SFTPQueueTests {
     }
   }
 
+  static func recovery() throws {
+    try runSFTPTest {
+      let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let store = SFTPTransferQueueStore(directory: directory, scope: "test")
+      let queue = store.makeQueue()
+      let old = MemoryTransferExecutor()
+      let owner = UUID()
+      queue.attach(owner: owner, executor: old)
+      var gate: CheckedContinuation<Void, Never>?
+      old.copyHook = { await withCheckedContinuation { gate = $0 } }
+      let task = Task {
+        try await queue.run(owner: owner, request: request(["a", "b"]), resolveConflict: replace)
+      }
+      while gate == nil { await Task.yield() }
+      assert(queue.items.map(\.state) == [.copying, .waiting])
+      let savedIDs = queue.items.map(\.id)
+      let nextStore = SFTPTransferQueueStore(directory: directory, scope: "test")
+      queue.detach(owner: owner)
+      gate?.resume()
+      try await task.value
+
+      let firstTab = nextStore.makeQueue()
+      let restored = nextStore.makeQueue()
+      let otherScope = SFTPTransferQueueStore(directory: directory, scope: "other")
+      assert(firstTab.items.isEmpty && restored.items.isEmpty && otherScope.recovered.isEmpty)
+      assert(nextStore.recovered.map(\.id) == savedIDs)
+      let current = MemoryTransferExecutor()
+      restored.attach(owner: owner, executor: current)
+      restored.restore(owner: owner)
+      assert(nextStore.recovered.isEmpty)
+      assert(restored.items.map(\.state) == [.interrupted, .waiting])
+      assert(restored.items.map(\.id) == savedIDs)
+      restored.clearFinished()
+      try await restored.run(owner: owner, resolveConflict: replace)
+      assert(current.copied.isEmpty && restored.items.count == 2 && restored.awaitingStart)
+      current.files["/destination/a"] = Data("existing".utf8)
+      var conflicts = 0
+      restored.retry(owner: owner, id: savedIDs[0])
+      try await restored.run(owner: owner, only: savedIDs[0], resolveConflict: { _ in
+        conflicts += 1
+        return .init(choice: .keepBoth)
+      })
+      assert(conflicts == 1 && restored.awaitingStart)
+      assert(restored.items.map(\.state) == [.done, .waiting] && current.copied == ["/source/a"])
+      assert(current.files["/destination/a"] == Data("existing".utf8))
+      assert(restored.items.first?.destination == "/destination/a.copy1")
+      restored.detach(owner: owner)
+      assert(restored.items.isEmpty && nextStore.recovered.map(\.id) == savedIDs)
+      firstTab.attach(owner: owner, executor: current)
+      firstTab.restore(owner: owner)
+      firstTab.start(owner: owner)
+      try await firstTab.run(owner: owner, resolveConflict: replace)
+      assert(current.copied == ["/source/a", "/source/b"])
+      assert(firstTab.items.map(\.state) == [.done, .done])
+      assert(firstTab.persistenceError == nil)
+    }
+  }
+
   static func ownerReplacement() throws {
     try runSFTPTest {
       let queue = SFTPTransferQueue()

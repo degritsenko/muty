@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.2
+
+### Added
+
+- Restore a saved SFTP queue from any tab connected to the same profile and route. Restart an interrupted file from the beginning or start waiting transfers separately.
+- Add an Empty Pane option to both two-pane split menus when multiple tabs are open.
+
+### Fixed
+
+- Reject Quick Connect addresses whose username conflicts with the selected shared credential.
+- Allow retrying source cleanup after a cross-pane SFTP move has saved its copy. Verify the saved copy before retrying.
+- Clean up staged SFTP uploads before closing SSH connections on quit.
+
+### Changed
+
+- Remove the active terminal label from the Button Bar.
+
 ## 0.8.1
 
 ### Fixed

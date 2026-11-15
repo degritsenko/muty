@@ -313,11 +313,6 @@ struct SendStringButtonBar: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            if let connection = model.selectedConnection {
-                let target = connection.profile.connectionType == .ssh ? connection.profile.endpoint : "Local Shell"
-                Label(target, systemImage: "terminal")
-                    .lineLimit(1).frame(maxWidth: 160).help(target)
-            }
             ScrollView(.horizontal) {
                 HStack(spacing: 5) {
                     ForEach(store.document.buttons.filter { $0.setID == selectedSet }) { button in

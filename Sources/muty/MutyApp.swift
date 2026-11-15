@@ -101,11 +101,13 @@ struct MutyApp: App {
                     Button("Split Top / Bottom") { model.split("bottom") }.disabled(model.tabs.isEmpty)
                 } else {
                     Menu("Split Left / Right") {
+                        if model.splitMode == "none" { Button("Empty Pane") { model.split("right") } }
                         ForEach(model.tabs.filter { $0.id != model.selectedTab }) { tab in
                             Button(tab.tabName ?? tab.profile.name) { model.split("right", secondary: tab.id) }
                         }
                     }.disabled(model.tabs.count < 2)
                     Menu("Split Top / Bottom") {
+                        if model.splitMode == "none" { Button("Empty Pane") { model.split("bottom") } }
                         ForEach(model.tabs.filter { $0.id != model.selectedTab }) { tab in
                             Button(tab.tabName ?? tab.profile.name) { model.split("bottom", secondary: tab.id) }
                         }

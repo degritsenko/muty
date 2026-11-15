@@ -92,6 +92,9 @@ struct QuickConnectView: View {
                                 selectedUser = try model.vault.credential(credentialID).username
                             } else { selectedUser = user }
                             let address = try ConnectionAddress.parse(host, defaultUser: selectedUser, defaultPort: number)
+                            if authentication == .password, credentialID != nil, address.user != selectedUser {
+                                throw MutyError("The username in Host does not match the selected credential (\(selectedUser)).")
+                            }
                             profile.host = address.host; profile.port = address.port; profile.user = address.user
                             profile.authentication = authentication
                             profile.credentialID = authentication == .password ? credentialID : nil
