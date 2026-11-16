@@ -2,8 +2,6 @@
 
 Native SSH and SFTP client for macOS. Built with SwiftUI and SwiftTerm, powered by macOS OpenSSH. No account or cloud service required.
 
-![Active SSH terminal session connected to a demo Alpine Linux server](docs/ssh-session.png)
-
 - SSH and local shell tabs with split panes and independent tab groups.
 - Two-pane SFTP browser with transfer queue, bookmarks and remote text editor.
 - Saved sessions, folder colors, search, shared credentials and encrypted backups.
@@ -12,8 +10,6 @@ Native SSH and SFTP client for macOS. Built with SwiftUI and SwiftTerm, powered 
 - Import sessions from SecureCRT and MobaXterm.
 
 ![Split workspace with a local shell above the SFTP browser and an SSH terminal on the right](docs/split-workspace.png)
-
-![Two-pane SFTP browser connected to a disposable demo server](docs/screenshot.png)
 
 ## Download
 
