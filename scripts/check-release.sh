@@ -8,4 +8,4 @@ git diff --check
 bash scripts/build-app.sh
 plutil -lint dist/muty.app/Contents/Info.plist
 codesign --verify --deep --strict dist/muty.app
-printf '%s\n' 'Automated gate passed. GUI/sleep-wake/Keychain-denial acceptance is separate; see docs/stability-results.md.'
+printf '%s\n' 'Automated gate passed. GUI/sleep-wake/Keychain-denial acceptance is separate.'
