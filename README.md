@@ -11,6 +11,8 @@ Native SSH and SFTP client for macOS. Built with SwiftUI and SwiftTerm, powered 
 - Jump hosts, port forwarding and tunnel-only sessions.
 - Import sessions from SecureCRT and MobaXterm.
 
+![Split workspace with a local shell above the SFTP browser and an SSH terminal on the right](docs/split-workspace.png)
+
 ![Two-pane SFTP browser connected to a disposable demo server](docs/screenshot.png)
 
 ## Download
