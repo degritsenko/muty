@@ -70,7 +70,7 @@ Checkpoint 9:
 - Silent transport loss passed via docker pause, with test-only ServerAliveInterval=1/ServerAliveCountMax=2; child exited with error. Production defaults (30s/3) are not timing-verified.
 - Restart fixture now rediscovers Docker's ephemeral port and waits for SSH readiness; initial restart test failed before auth due fixture readiness/port assumptions.
 - Final integration rerun: 14/14 passed. Regression/helper suite remains 10/10 + 8/8 from same test build.
-- Added scripts/check-release.sh and docs/gui-checklist.md. Release gate script has syntax validation only, not yet run as a whole; remaining GUI/manual checks explicitly NOT RUN.
+- Added scripts/check-release.sh and a GUI checklist. Release gate script has syntax validation only, not yet run as a whole; remaining GUI/manual checks explicitly NOT RUN.
 
 Mandatory release gate — COMPLETE (user reduced scope):
 - bash scripts/check-release.sh succeeded: 10/10 regressions, 8/8 helper, 14/14 integration, release build, shell syntax/diff checks, plist/codesign.
