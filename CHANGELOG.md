@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.3
+
+### Added
+
+- Open a selected HTTP or HTTPS URL from the terminal context menu.
+
+### Fixed
+
+- Avoid terminal hangs caused by automatic link detection. Keep explicit OSC 8 hyperlinks available with Command-click.
+- Make the horizontal pane divider easier to drag, including beside SFTP panes.
+- Keep the SSH transport available while cleaning staged SFTP uploads when closing a tab or disconnecting.
+- Write and flush session logs in the background with a bounded buffer to keep the interface responsive on slow storage.
+- Release unused SFTP transfer queues and their database connections after tabs close or are replaced.
+
+### Changed
+
+- Disable automatic URL and file-path detection in terminal output.
+- Update the README workspace screenshot and remove obsolete screenshots and internal verification reports.
+
 ## 0.8.2
 
 ### Added
