@@ -1,32 +1,31 @@
 # muty workspace rules
 
-- Work in this repository (`degritsenko/muty`).
-- Check the current branch and working tree before editing. If a branch is needed, do not use the `codex/` prefix. Keep communication concise and technical.
-- Docs and instruction edits: run `git diff --check` and verify any changed links.
-- App changes: run the smallest existing check that covers the changed behavior.
-  Add tests only when requested, required, or needed for a concrete regression
-  or a critical security or data-loss risk.
-- Build once per batch when handing over a runnable app. Bump `VERSION` once,
-  run `scripts/build-app.sh`, and verify with `codesign --verify --deep --strict dist/muty.app`.
-  Keep the release version unless a version change is requested. Honor explicit
-  requests to defer the build and version bump.
-- Run full regression or integration checks when requested, when the change
-  directly affects the covered subsystem and a targeted check is insufficient,
-  or as part of the release gate.
-- Reuse passing results for unchanged code and inputs. If a check fails, inspect
-  the relevant error and rerun the affected check after correcting the cause.
-- Use disposable profiles, servers, and credentials. Preserve the user's
-  sessions, profiles, keys, password vault, and Keychain items.
-- For pull request reviews, default to a concise diff review and targeted searches for obvious issues. Do not build, run tests, or create extra scenarios unless requested or the diff reveals a specific risk that needs verification.
-- Before publishing, run `bash scripts/check-release.sh`, then verify the ZIP, its SHA-256 checksum, and the packaged app's signature, version, and architecture. Report skipped manual checks accurately. Leave broad GUI, sleep/wake, and Keychain-denial testing to explicit requests.
-- Group changelog entries and GitHub release notes under **Added**, **Fixed**, and **Changed**. Use the matching changelog section as the source for GitHub release notes and preserve its headings. Keep validation logs out of the changelog and public release notes. Use the version without the build number in GitHub release titles.
-- Prepare changes and app builds locally first. Present the changes, verification results, clickable links to README.md and CHANGELOG.md, and a proposed commit message for the user's review.
-- Write commit subjects that name the affected feature and describe the concrete change. For commits with multiple changes, add a body summarizing the main changes and why they were made. For release commits, include the version alongside the main change instead of using a version-only subject.
-- Create commits, push commits, create or push tags, and publish GitHub releases only when the user explicitly authorizes the corresponding actions. A generic instruction such as “делай” authorizes local preparation only unless those actions are explicitly named. Do not infer publication approval from a discussion of release readiness.
+## Repository and user data
 
-## Token-efficient workflow
+- Work in `degritsenko/muty`. Check the branch and working tree before editing and preserve unrelated local changes. Use `slowhands/` for new branches.
+- Use disposable profiles, servers, and credentials for checks. Preserve user sessions, profiles, keys, password vault, and Keychain items.
 
-- Start with the diff and relevant symbols. Expand scope only when a dependency
-  or finding requires it.
-- Keep full logs in files. Read exit status and relevant errors first.
-- Keep updates to changed findings, blockers, and verification results.
+## Workflow and communication
+
+- Keep communication concise and technical. Start with the diff and relevant symbols; expand scope when findings require it. Keep full logs in files and report relevant results, blockers, and skipped checks.
+- Use subagents for worthwhile independent reviews or parallel tasks. Prefer Terra for scoped coding and Luna for quick inspection or summaries when available. Report model changes and the model used by each subagent. The lead agent verifies findings and integrates changes.
+- Get user agreement before removing existing functionality or changing how a dependency is sourced, including vendoring or adopting a fork, unless already authorized.
+- Prepare work locally first. Report changes and verification results. Include README.md and CHANGELOG.md links when those files changed or when preparing a release. Propose a commit message when handing over code changes.
+
+## Verification and local builds
+
+- For docs and instructions, run `git diff --check` and verify changed links.
+- For app changes, run the smallest existing check covering the behavior. Add tests only when requested, required, or necessary for a concrete regression or critical security/data-loss risk. Run full suites when requested, required for release, or targeted checks are insufficient.
+- Reuse passing results for unchanged code and inputs. Diagnose failures and rerun affected checks after fixing their cause.
+- Reviews start with the diff and targeted searches. Build or test when requested or needed to resolve a concrete risk.
+- When handing over a runnable app, build once per batch with `scripts/build-app.sh` and verify `codesign --verify --deep --strict dist/muty.app`. Increment only the build number in `VERSION` once, preserving the release version unless requested. Avoid double increments if the script advances the build. Honor explicit build deferrals.
+
+## Commits and publication
+
+- Commit, push, create or push tags, and publish releases only with explicit authorization for each action. “Делай” authorizes local preparation. Release-readiness discussion grants no publication authorization.
+- Commit subjects name the affected feature and concrete change. For multiple changes, add a body explaining the main changes and reasons. Release commits include the version and the substantive change.
+
+## Release preparation
+
+- Before publishing, run `bash scripts/check-release.sh`. Verify the ZIP, SHA-256 checksum, and packaged app signature, version, and architecture. Report skipped manual checks. Broad GUI, sleep/wake, and Keychain-denial campaigns require an explicit request.
+- Group changelog entries and release notes under **Added**, **Fixed**, and **Changed**. Derive release notes from the matching changelog section, preserve its headings, and keep validation logs in the handover report. Release titles use the version without a build number.
