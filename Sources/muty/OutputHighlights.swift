@@ -228,6 +228,8 @@ struct OutputHighlightSettings: View {
                     }
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
             HStack {
                 Button("Add Rule") { editing = OutputHighlightRule(pattern: "") }.disabled(store.rules.count >= OutputHighlightStore.maxRules)
                 Button("Add Common Rules") {

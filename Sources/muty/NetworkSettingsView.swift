@@ -41,7 +41,8 @@ struct ForwardingSettingsView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             }.padding(.vertical, 3).tag(rule.id)
                         }
-                    }.listStyle(.bordered)
+                    }.listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                     HStack {
                         Button { add() } label: { Image(systemName: "plus") }.help("Add forwarding rule").disabled(profile.forwards.count >= 32)
                         Button { duplicate() } label: { Image(systemName: "doc.on.doc") }.help("Duplicate rule (disabled initially)").disabled(selectedRule == nil || profile.forwards.count >= 32)

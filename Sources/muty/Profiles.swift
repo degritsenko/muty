@@ -8,6 +8,10 @@ struct MutyError: LocalizedError {
 }
 
 struct SessionProfile: Codable, Identifiable, Equatable {
+    enum ValidationError: LocalizedError {
+        case missingUsername
+        var errorDescription: String? { "Enter an SSH username." }
+    }
     var id = UUID()
     var name = ""
     var description = ""
@@ -106,7 +110,8 @@ struct SessionProfile: Codable, Identifiable, Equatable {
               !p.host.contains("/"), p.host.rangeOfCharacter(from: forbidden) == nil else {
             throw MutyError("Enter a hostname or IP without spaces or user@.")
         }
-        guard !p.user.isEmpty, !p.user.hasPrefix("-"), !p.user.contains("@"),
+        guard !p.user.isEmpty else { throw ValidationError.missingUsername }
+        guard !p.user.hasPrefix("-"), !p.user.contains("@"),
               p.user.rangeOfCharacter(from: forbidden) == nil else { throw MutyError("Enter an SSH username without spaces.") }
         guard (1...65535).contains(p.port) else { throw MutyError("Port must be between 1 and 65535.") }
         if p.name.isEmpty { p.name = p.host }

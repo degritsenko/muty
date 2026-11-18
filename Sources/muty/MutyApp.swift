@@ -11,6 +11,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
+        DispatchQueue.main.async {
+            guard let menu = NSApp.mainMenu,
+                  let imports = menu.items.first(where: { $0.title == "Import & Backup" }),
+                  let windows = menu.items.first(where: { $0.submenu === NSApp.windowsMenu }),
+                  imports !== windows else { return }
+            menu.removeItem(imports)
+            menu.insertItem(imports, at: menu.index(of: windows) + 1)
+        }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

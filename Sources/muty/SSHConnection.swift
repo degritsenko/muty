@@ -214,7 +214,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         let server = AskpassBroker(credentials: credentials)
         let extra = try server.start(connectionID: jump ? UUID() : id, profileID: node.credentialID ?? node.id)
         server.useSavedPassword = node.authentication == .password && (node.savePassword || node.credentialID != nil) && !ignoreSavedPassword
-        server.interactivePrompt = { [weak self] prompt, isPassword, replacingSavedPassword in
+        server.interactivePrompt = { [weak self] prompt, isPassword, replacingSavedPassword, passwordRejected in
             guard let self else { return nil }
             // A new prompt means the preceding candidate was rejected.
             if jump { self.pendingJumpPassword = nil }
@@ -233,7 +233,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
             let replacing = self.ignoreSavedPassword || replacingSavedPassword
             return self.promptForSecret(prompt, allowSave: isPassword && node.authentication == .password,
                                         endpoint: node.endpoint, save: stage, canSave: jump || !self.temporary,
-                                        replaceSaved: replacing && node.savePassword)
+                                        replaceSaved: replacing && node.savePassword, passwordRejected: passwordRejected)
 
         }
         server.onError = { [weak self] message in
@@ -251,10 +251,12 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     }
 
     private func promptForSecret(_ prompt: String, allowSave: Bool, endpoint: String,
-                                 save saveAction: ((String) -> Void)?, canSave: Bool, replaceSaved: Bool) -> String? {
+                                 save saveAction: ((String) -> Void)?, canSave: Bool, replaceSaved: Bool,
+                                 passwordRejected: Bool) -> String? {
         let generation = authenticationGeneration
         let panel = NativeSSHPasswordPanel(endpoint: endpoint, prompt: allowSave ? "Password:" : prompt,
-                                           canSave: allowSave && canSave && saveAction != nil, replaceSaved: replaceSaved)
+                                           canSave: allowSave && canSave && saveAction != nil, replaceSaved: replaceSaved,
+                                           passwordRejected: passwordRejected)
         defer { panel.clearSecrets() }
         guard panel.run() == .OK, !stopping, generation == authenticationGeneration,
               let (secret, remember) = panel.result else { return nil }

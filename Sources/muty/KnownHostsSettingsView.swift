@@ -175,6 +175,8 @@ struct KnownHostsSettingsView: View {
                     }.tag(entry.id)
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
             HStack {
                 Text("\(store.entries.count) stored keys").font(.caption).foregroundStyle(.secondary)
                 Spacer()

@@ -37,45 +37,69 @@ struct ProfileEditor: View {
     }
 
     private var generalSettings: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Form {
-                Picker("Protocol", selection: $profile.connectionType) {
-                    ForEach(ConnectionType.allCases) { Text($0.title).tag($0) }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 12) {
+                    GridRow {
+                        Text("Protocol").foregroundStyle(.secondary)
+                        Picker("Protocol", selection: $profile.connectionType) {
+                            ForEach(ConnectionType.allCases) { Text($0.title).tag($0) }
+                        }.labelsHidden()
+                    }
+                    GridRow {
+                        Text("Name").foregroundStyle(.secondary);
+                        TextField("Name", text: $profile.name).accessibilityLabel("Name")
+                    }
+                    GridRow {
+                        Text(""); Toggle("Favorite", isOn: $profile.favorite)
+                    }
+                    GridRow {
+                        Text("Session Color").foregroundStyle(.secondary)
+                        Picker(
+                            "Session Color",
+                            selection: Binding(get: { profile.color ?? "" }, set: { profile.color = $0.isEmpty ? nil : $0 })
+                        ) {
+                            Text("Default").tag("")
+                            ForEach(["Red", "Orange", "Yellow", "Green", "Blue", "Purple"], id: \.self) { Text($0).tag($0) }
+                        }.labelsHidden()
+                    }
+                    GridRow {
+                        Text("Terminal Theme").foregroundStyle(.secondary)
+                        Picker(
+                            "Terminal Theme",
+                            selection: Binding(
+                                get: { profile.terminalTheme ?? "" }, set: { profile.terminalTheme = $0.isEmpty ? nil : $0 })
+                        ) {
+                            Text("Inherit from Settings").tag("")
+                            ForEach(TerminalColorScheme.allCases) { Text($0.name).tag($0.rawValue) }
+                        }.labelsHidden()
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                if profile.connectionType == .ssh && !profile.tunnelOnly {
+                    HStack(spacing: 20) {
+                        Text("Open:")
+                        Toggle("SSH", isOn: $profile.sshEnabled).disabled(profile.sshEnabled && !profile.sftpEnabled)
+                        Toggle("SFTP", isOn: $profile.sftpEnabled).disabled(profile.sftpEnabled && !profile.sshEnabled)
+                        Spacer()
+                    }.toggleStyle(.checkbox).controlSize(.regular)
                 }
-                TextField("Name", text: $profile.name)
-                Toggle("Favorite", isOn: $profile.favorite)
-                Picker("Session Color", selection: Binding(get: { profile.color ?? "" }, set: { profile.color = $0.isEmpty ? nil : $0 })) {
-                    Text("Default").tag("")
-                    ForEach(["Red", "Orange", "Yellow", "Green", "Blue", "Purple"], id: \.self) { Text($0).tag($0) }
+                if profile.connectionType == .localShell {
+                    Text("Starts your default login shell in your home directory.").font(.caption).foregroundStyle(.secondary)
                 }
-                Picker("Terminal Theme", selection: Binding(get: { profile.terminalTheme ?? "" }, set: { profile.terminalTheme = $0.isEmpty ? nil : $0 })) {
-                    Text("Inherit from Settings").tag("")
-                    ForEach(TerminalColorScheme.allCases) { Text($0.name).tag($0.rawValue) }
-                }
-            }.formStyle(.grouped).frame(height: 220)
-            if profile.connectionType == .ssh && !profile.tunnelOnly {
-                HStack(spacing: 20) {
-                    Text("Open:")
-                    Toggle("SSH", isOn: $profile.sshEnabled).disabled(profile.sshEnabled && !profile.sftpEnabled)
-                    Toggle("SFTP", isOn: $profile.sftpEnabled).disabled(profile.sftpEnabled && !profile.sshEnabled)
-                    Spacer()
-                }.toggleStyle(.checkbox).controlSize(.regular)
-            }
-            if profile.connectionType == .localShell {
-                Text("Starts your default login shell in your home directory.").font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Description").font(.caption).foregroundStyle(.secondary)
-                TextEditor(text: $profile.description)
-                    .font(.body)
-                    .scrollContentBackground(.hidden)
-                    .padding(4)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .overlay(Rectangle().stroke(Color(nsColor: .separatorColor), lineWidth: 0.5))
-                    .accessibilityLabel("Description")
-            }.frame(height: 70)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Description").font(.caption).foregroundStyle(.secondary)
+                    TextEditor(text: $profile.description)
+                        .font(.body)
+                        .scrollContentBackground(.hidden)
+                        .padding(4)
+                        .background(Color(nsColor: .textBackgroundColor))
+                        .overlay(Rectangle().stroke(Color(nsColor: .separatorColor), lineWidth: 0.5))
+                        .accessibilityLabel("Description")
+                }.frame(height: 70)
 
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.vertical, 4)
         }
     }
 
@@ -100,49 +124,102 @@ struct ProfileEditor: View {
                     if page == "General" || profile.connectionType == .localShell {
                         generalSettings
                     } else {
-                        Form {
-                            Section("Connection") {
-                                TextField("Host / IP", text: $profile.host)
-                                TextField("Port", text: $port)
-                                JumpHostPicker(profile: $profile, profiles: model.profiles)
-                            }
-                            Section("Authentication") {
-                                Picker("Method", selection: $profile.authentication) {
-                                    ForEach(AuthenticationMode.selectable) { Text($0.title).tag($0) }
-                                }
-                                if profile.authentication == .password {
-                                    CredentialSelectionView(vault: model.vault, credentialID: $profile.credentialID)
-                                    if profile.credentialID != nil {
-                                        LabeledContent("Username", value: model.vault.credentials.first(where: { $0.id == profile.credentialID })?.username ?? profile.user)
-                                        Text("Provided by selected credential")
-                                            .font(.caption).foregroundStyle(.secondary)
-                                    } else {
-                                        TextField("Username", text: $profile.user)
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Connection").font(.headline)
+                                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 12) {
+                                    GridRow {
+                                        Text("Host / IP").foregroundStyle(.secondary);
+                                        TextField("Host / IP", text: $profile.host).accessibilityLabel("Host / IP")
                                     }
-                                    if profile.credentialID != nil || profile.savePassword {
-                                        SavedPasswordView(vault: model.vault, passwordID: profile.credentialID ?? profile.id)
-                                            .id(profile.credentialID ?? profile.id)
+                                    GridRow {
+                                        Text("Port").foregroundStyle(.secondary);
+                                        TextField("Port", text: $port).accessibilityLabel("Port")
                                     }
-                                    if profile.credentialID == nil {
-                                        if let original = draft.original, profile.savePassword {
-                                            HStack {
-                                                Button("Forget Saved Password…") {
-                                                    if model.forgetSavedPassword(original) { profile.savePassword = false }
-                                                }.disabled(model.readOnly)
+                                    GridRow {
+                                        Text("Jump Host").foregroundStyle(.secondary);
+                                        JumpHostPicker(profile: $profile, profiles: model.profiles).labelsHidden()
+                                    }
+                                }.frame(maxWidth: .infinity, alignment: .leading)
+                                Divider().padding(.vertical, 4)
+                                Text("Authentication").font(.headline)
+                                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 12) {
+                                    GridRow {
+                                        Text("Method").foregroundStyle(.secondary)
+                                        Picker("Method", selection: $profile.authentication) {
+                                            ForEach(AuthenticationMode.selectable) { Text($0.title).tag($0) }
+                                        }.labelsHidden()
+                                    }
+                                    if profile.authentication == .password {
+                                        GridRow {
+                                            Text("Credentials").foregroundStyle(.secondary)
+                                            CredentialSelectionView(vault: model.vault, credentialID: $profile.credentialID)
+                                                .labelsHidden()
+                                        }
+                                        if profile.credentialID != nil {
+                                            GridRow {
+                                                Text("Username").foregroundStyle(.secondary)
+                                                VStack(alignment: .leading, spacing: 3) {
+                                                    Text(
+                                                        model.vault.credentials.first(where: { $0.id == profile.credentialID })?
+                                                            .username ?? profile.user)
+                                                    Text("Provided by selected credential")
+                                                        .font(.caption).foregroundStyle(.secondary)
+                                                }
                                             }
                                         } else {
-                                            LabeledContent("Password", value: "Ask when connecting")
+                                            GridRow {
+                                                Text("Username").foregroundStyle(.secondary);
+                                                TextField("Username", text: $profile.user).accessibilityLabel("Username")
+                                            }
+                                        }
+                                        if profile.credentialID != nil || profile.savePassword {
+                                            GridRow {
+                                                Text("Password").foregroundStyle(.secondary)
+                                                SavedPasswordView(
+                                                    vault: model.vault, passwordID: profile.credentialID ?? profile.id
+                                                )
+                                                .id(profile.credentialID ?? profile.id)
+                                                .labelsHidden()
+                                            }
+                                        }
+                                        if profile.credentialID == nil {
+                                            if let original = draft.original, profile.savePassword {
+                                                GridRow {
+                                                    Text("");
+                                                    HStack {
+                                                        Button("Forget Saved Password…") {
+                                                            if model.forgetSavedPassword(original) {
+                                                                profile.savePassword = false
+                                                            }
+                                                        }.disabled(model.readOnly)
+                                                    }
+                                                }
+                                            } else {
+                                                GridRow {
+                                                    Text("Password").foregroundStyle(.secondary); Text("Ask when connecting")
+                                                }
+                                            }
+                                        }
+                                    } else if profile.authentication == .identityFile {
+                                        GridRow {
+                                            Text("Username").foregroundStyle(.secondary);
+                                            TextField("Username", text: $profile.user).accessibilityLabel("Username")
+                                        }
+                                        GridRow {
+                                            Text("SSH Key").foregroundStyle(.secondary);
+                                            KeySelectionView(
+                                                library: model.keyLibrary, keyID: $profile.keyID,
+                                                legacyPath: $profile.identityFile
+                                            ).labelsHidden()
                                         }
                                     }
-                                } else if profile.authentication == .identityFile {
-                                    TextField("Username", text: $profile.user)
-                                    KeySelectionView(library: model.keyLibrary, keyID: $profile.keyID, legacyPath: $profile.identityFile)
-                                }
-                            }
-                        }.formStyle(.grouped)
+                                }.frame(maxWidth: .infinity, alignment: .leading)
+                            }.frame(maxWidth: .infinity, alignment: .topLeading).padding(.vertical, 4)
+                        }
                     }
                 }
-            }.frame(height: 430)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             if let error { Text(error).foregroundStyle(.red).font(.callout).textSelection(.enabled) }
             HStack {
                 Text(saveHint).font(.caption).foregroundStyle(.secondary)
@@ -170,7 +247,7 @@ struct ProfileEditor: View {
                     } catch { self.error = error.localizedDescription }
                 }.keyboardShortcut(.defaultAction)
             }
-        }.padding(22).frame(width: 820)
+        }.padding(22).frame(minWidth: 760, idealWidth: 820, minHeight: 440, idealHeight: 530)
         .onChange(of: profile.connectionType) { _, _ in page = "General"; error = nil; profile.savePassword = false }
         .onChange(of: profile.authentication) { _, _ in error = nil }
     }

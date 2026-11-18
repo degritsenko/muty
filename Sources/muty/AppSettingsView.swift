@@ -117,33 +117,47 @@ private struct GeneralSettingsView: View {
     @ViewState private var choosingStartup = false
     @ViewState private var startupQuery = ""
     var body: some View {
-        Form {
-            Section("On launch") {
-                Picker("Open", selection: Binding(
-                    get: { startupSessionID.isEmpty ? startupEmptyAction : "session" },
-                    set: { value in
-                        if value == "session" { startupQuery = ""; choosingStartup = true }
-                        else { startupSessionID = ""; startupEmptyAction = value }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("On launch").font(.headline)
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 12) {
+                    GridRow {
+                        Text("Open").foregroundStyle(.secondary)
+                        Picker(
+                            "Open",
+                            selection: Binding(
+                                get: { startupSessionID.isEmpty ? startupEmptyAction : "session" },
+                                set: { value in
+                                    if value == "session" {
+                                        startupQuery = ""; choosingStartup = true
+                                    } else {
+                                        startupSessionID = ""; startupEmptyAction = value
+                                    }
+                                }
+                            )
+                        ) {
+                            Text("Empty window").tag("empty")
+                            Text("Local Shell").tag("localShell")
+                            Text("Quick Connect").tag("quickConnect")
+                            Text("Saved session…").tag("session")
+                        }.labelsHidden()
                     }
-                )) {
-                    Text("Empty window").tag("empty")
-                    Text("Local Shell").tag("localShell")
-                    Text("Quick Connect").tag("quickConnect")
-                    Text("Saved session…").tag("session")
-                }
-                if !startupSessionID.isEmpty {
-                    LabeledContent("Saved session") {
-                        Button(model.profiles.first { $0.id.uuidString == startupSessionID }?.name ?? "Unavailable") {
-                            startupQuery = ""; choosingStartup = true
+                    if !startupSessionID.isEmpty {
+                        GridRow {
+                            Text("Saved session").foregroundStyle(.secondary)
+                            Button(model.profiles.first { $0.id.uuidString == startupSessionID }?.name ?? "Unavailable") {
+                                startupQuery = ""; choosingStartup = true
+                            }
                         }
                     }
-                }
-                Toggle("Restore previous tabs", isOn: $restoreTabs)
+                    GridRow {
+                        Text(""); Toggle("Restore previous tabs", isOn: $restoreTabs)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
                 Text("Restored SSH tabs wait for reconnect. The selected startup session connects automatically.")
                     .font(.caption).foregroundStyle(.secondary)
-            }
-
-        }.formStyle(.grouped).padding()
+            }.frame(maxWidth: .infinity, alignment: .topLeading).padding(16)
+        }
         .sheet(isPresented: $choosingStartup) {
             let query = startupQuery.trimmingCharacters(in: .whitespacesAndNewlines)
             let profiles = query.isEmpty ? model.profiles.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending } : SavedSessionSearch.matches(model.profiles, query: query)
@@ -177,32 +191,50 @@ private struct TerminalSettingsView: View {
     @AppStorage("optionAsMetaKey") private var meta = true
     @AppStorage("confirmMultilinePaste") private var confirmPaste = true
     var body: some View {
-        Form {
-            Picker("Font", selection: $font) {
-                Text("System Monospaced").tag(""); Text("Menlo").tag("Menlo")
-                Text("Monaco").tag("Monaco"); Text("SF Mono").tag("SFMono-Regular")
-            }
-            Slider(value: $size, in: 9...30, step: 1) { Text("Font size") }
-            Text("\(Int(size.isFinite ? max(9, min(30, size)) : 13)) pt")
-            Picker("Color scheme", selection: $theme) {
-                ForEach(TerminalColorScheme.allCases) { scheme in
-                    HStack(spacing: 8) {
-                        Text(scheme.name)
-                        HStack(spacing: 2) {
-                            ForEach(Array(scheme.previewColors.enumerated()), id: \.offset) { item in
-                                RoundedRectangle(cornerRadius: 2).fill(Color(nsColor: item.element)).frame(width: 9, height: 9)
-                            }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Terminal").font(.headline)
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 12) {
+                    GridRow {
+                        Text("Font").foregroundStyle(.secondary)
+                        Picker("Font", selection: $font) {
+                            Text("System Monospaced").tag(""); Text("Menlo").tag("Menlo")
+                            Text("Monaco").tag("Monaco"); Text("SF Mono").tag("SFMono-Regular")
+                        }.labelsHidden()
+                    }
+                    GridRow {
+                        Text("Font size").foregroundStyle(.secondary)
+                        HStack {
+                            Slider(value: $size, in: 9...30, step: 1) { Text("Font size") }
+                                .labelsHidden()
+                            Text("\(Int(size.isFinite ? max(9, min(30, size)) : 13)) pt").monospacedDigit().frame(
+                                width: 88, alignment: .trailing)
                         }
-                    }.tag(scheme.rawValue)
-                }
-            }
-            Slider(value: $scrollback, in: 1000...50000, step: 1000) { Text("Scrollback") }
-            Text("\(Int(scrollback.isFinite ? max(1000, min(50000, scrollback)) : 10000)) lines")
-            Toggle("Confirm multi-line paste", isOn: $confirmPaste)
-            Toggle("Option as Meta", isOn: $meta)
-            Text("Sends Alt/Meta shortcuts to the shell. Turn off to type macOS Option characters.")
-                .font(.caption).foregroundStyle(.secondary)
-        }.formStyle(.grouped).padding()
+                    }
+                    GridRow {
+                        Text("Color scheme").foregroundStyle(.secondary)
+                        Picker("Color scheme", selection: $theme) {
+                            ForEach(TerminalColorScheme.allCases) { scheme in
+                                Text(scheme.name).tag(scheme.rawValue)
+                            }
+                        }.labelsHidden()
+                    }
+                    GridRow {
+                        Text("Scrollback").foregroundStyle(.secondary)
+                        HStack {
+                            Slider(value: $scrollback, in: 1000...50000, step: 1000) { Text("Scrollback") }
+                                .labelsHidden()
+                            Text("\(Int(scrollback.isFinite ? max(1000, min(50000, scrollback)) : 10000)) lines")
+                                .monospacedDigit().frame(width: 88, alignment: .trailing)
+                        }
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                Toggle("Confirm multi-line paste", isOn: $confirmPaste)
+                Toggle("Option as Meta", isOn: $meta)
+                Text("Sends Alt/Meta shortcuts to the shell. Turn off to type macOS Option characters.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.frame(maxWidth: .infinity, alignment: .topLeading).padding(16)
+        }
             .onAppear {
                 let resolved = TerminalColorScheme.resolve(theme).rawValue
                 if resolved != theme { theme = resolved }
@@ -236,6 +268,8 @@ private struct KeyLibraryView: View {
                     }.tag(key.id)
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
             if let key = library.keys.first(where: { $0.id == selected }) {
                 HStack {
                     TextField("Key name", text: $name)

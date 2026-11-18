@@ -28,6 +28,7 @@ struct SFTPTransfer: Codable, Identifiable {
   var isDirectory: Bool { kind == .uploadDirectory || kind == .downloadDirectory }
   var canRetry: Bool { state == .failed || state == .cancelled || state == .interrupted }
   var isFinished: Bool { state != .waiting && state != .copying && state != .interrupted }
+  var needsRecovery: Bool { state == .waiting || state == .copying || canRetry }
 }
 
 enum SFTPTransferRequest {

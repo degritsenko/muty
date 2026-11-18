@@ -109,7 +109,8 @@ struct CredentialsSettingsView: View {
                                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                 }
                             }.padding(.vertical, 2).tag(item.id)
-                        }.listStyle(.inset)
+                        }.listStyle(.plain)
+                        .scrollContentBackground(.hidden)
                         .overlay {
                             if visibleEntries.isEmpty {
                                 Text(search.isEmpty ? "No saved credentials." : "No matches.")

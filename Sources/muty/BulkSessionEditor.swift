@@ -44,53 +44,62 @@ struct BulkSessionEditor: View {
             Text("Bulk Edit Sessions").font(.title2)
             Text("\(request.folder ?? "Sessions") · \(request.profiles.count) sessions, including subfolders")
                 .foregroundStyle(.secondary)
-            Form {
-                Toggle("Change Session Color", isOn: $changeColor)
-                if changeColor {
-                    Picker("Session Color", selection: $color) {
-                        Text("Default").tag("")
-                        ForEach(["Red", "Orange", "Yellow", "Green", "Blue", "Purple"], id: \.self) { Text($0).tag($0) }
-                    }
+            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 14) {
+                GridRow {
+                    Toggle("Session Color", isOn: $changeColor)
+                        Picker("Session Color", selection: $color) {
+                            Text("Default").tag("")
+                            ForEach(["Red", "Orange", "Yellow", "Green", "Blue", "Purple"], id: \.self) { Text($0).tag($0) }
+                        }.labelsHidden().disabled(!changeColor)
                 }
-                Toggle("Change Terminal Theme", isOn: $changeTheme)
-                if changeTheme {
-                    Picker("Terminal Theme", selection: $terminalTheme) {
-                        Text("Inherit from Settings").tag("")
-                        ForEach(TerminalColorScheme.allCases) { Text($0.name).tag($0.rawValue) }
-                    }
+                GridRow {
+                    Toggle("Terminal Theme", isOn: $changeTheme)
+                        Picker("Terminal Theme", selection: $terminalTheme) {
+                            Text("Inherit from Settings").tag("")
+                            ForEach(TerminalColorScheme.allCases) { Text($0.name).tag($0.rawValue) }
+                        }.labelsHidden().disabled(!changeTheme)
                 }
-                Group {
-                    Toggle("Change SSH / SFTP", isOn: $changeModes)
-                    if changeModes {
+                Divider().gridCellColumns(2)
+                GridRow {
+                    Toggle("SSH / SFTP", isOn: $changeModes).disabled(!hasSSH)
                         HStack(spacing: 20) {
                             Toggle("SSH", isOn: $sshEnabled).disabled(sshEnabled && !sftpEnabled)
                             Toggle("SFTP", isOn: $sftpEnabled).disabled(sftpEnabled && !sshEnabled)
-                        }.toggleStyle(.switch).controlSize(.small)
-                    }
-                    Toggle("Change username", isOn: $changeUser)
-                    if changeUser { TextField("Username", text: $user) }
-                    Toggle("Assign SSH key", isOn: $changeKey)
-                    if changeKey {
+                        }.disabled(!hasSSH || !changeModes)
+                }
+                GridRow {
+                    Toggle("Username", isOn: $changeUser).disabled(!hasSSH)
+                    TextField("Username", text: $user).textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Username").disabled(!hasSSH || !changeUser)
+                }
+                GridRow {
+                    Toggle("SSH Key", isOn: $changeKey).disabled(!hasSSH)
                         Picker("SSH key", selection: $key) {
                             Text("Select a key").tag("")
                             ForEach(model.keyLibrary.keys.filter { $0.pendingDeletion != true }) { item in
                                 Text(item.name).tag(item.id.uuidString)
                             }
-                        }
-                    }
-                    Toggle("Assign shared credential", isOn: $assignCredential)
-                    if assignCredential { CredentialSelectionView(vault: model.vault, credentialID: $credentialID) }
-                    Toggle("Change Jump Host", isOn: $changeJump)
-                    if changeJump {
+                        }.labelsHidden().disabled(!hasSSH || !changeKey)
+                }
+                GridRow {
+                    Toggle("Shared Credential", isOn: $assignCredential).disabled(!hasSSH)
+                        CredentialSelectionView(vault: model.vault, credentialID: $credentialID)
+                            .labelsHidden().disabled(!hasSSH || !assignCredential)
+                }
+                GridRow {
+                    Toggle("Jump Host", isOn: $changeJump).disabled(!hasSSH)
                         Picker("Jump Host", selection: $jump) {
                             Text("None (direct connection)").tag("")
                             ForEach(model.profiles.filter { item in
                                 item.connectionType == .ssh && item.jumpHostID == nil && !request.profiles.contains(where: { $0.id == item.id })
                             }) { item in Text(item.name).tag(item.id.uuidString) }
-                        }
-                    }
-                }.disabled(!hasSSH)
-            }.formStyle(.grouped)
+                        }.labelsHidden().disabled(!hasSSH || !changeJump)
+                }
+            }
+            .toggleStyle(.checkbox)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 8)
+            Divider()
             Text("Only checked fields change. Appearance applies to all selected sessions. Connection fields apply to SSH sessions only. Terminal themes apply immediately. Connection settings apply on reconnect.")
                 .font(.caption).foregroundStyle(.secondary)
             if let error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
@@ -101,7 +110,7 @@ struct BulkSessionEditor: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Apply…") { confirming = true }.disabled(!enabled).keyboardShortcut(.defaultAction)
             }
-        }.padding(20).frame(width: 510, height: 560)
+        }.padding(22).frame(width: 660)
         .confirmationDialog("Forget passwords for \(sshProfiles.count) SSH sessions?", isPresented: $confirmingForget, titleVisibility: .visible) {
             Button("Forget saved passwords", role: .destructive) {
                 do {

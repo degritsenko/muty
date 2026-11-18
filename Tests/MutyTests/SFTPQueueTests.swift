@@ -175,6 +175,19 @@ enum SFTPQueueTests {
       let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
       defer { try? FileManager.default.removeItem(at: directory) }
       let store = SFTPTransferQueueStore(directory: directory, scope: "test")
+      store.returnForRecovery([
+        .init(kind: .upload, source: "/source/done", destination: "/destination/done", state: .done),
+        .init(kind: .download, source: "/source/skipped", destination: "/destination/skipped", state: .skipped)
+      ])
+      assert(!store.hasRecoverableTransfers)
+      store.returnForRecovery([
+        .init(kind: .upload, source: "/source/waiting", destination: "/destination/waiting", state: .waiting),
+        .init(kind: .upload, source: "/source/interrupted", destination: "/destination/interrupted", state: .interrupted),
+        .init(kind: .upload, source: "/source/failed", destination: "/destination/failed", state: .failed),
+        .init(kind: .upload, source: "/source/cancelled", destination: "/destination/cancelled", state: .cancelled),
+        .init(kind: .upload, source: "/source/copying", destination: "/destination/copying", state: .copying)
+      ])
+      assert(store.hasRecoverableTransfers)
       let queue = store.makeQueue()
       let old = MemoryTransferExecutor()
       let owner = UUID()

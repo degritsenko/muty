@@ -84,7 +84,7 @@ private struct SFTPQueueRecoveryView: View {
     @ObservedObject var browser: SFTPBrowserModel
 
     var body: some View {
-        if !store.recovered.isEmpty && !browser.disconnected {
+        if store.hasRecoverableTransfers && !browser.disconnected {
             HStack {
                 Text("Saved SFTP queue available").font(.caption)
                 Spacer()

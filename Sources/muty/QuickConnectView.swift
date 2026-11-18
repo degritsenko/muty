@@ -15,6 +15,7 @@ struct QuickConnectView: View {
     @ViewState private var credentialID: UUID?
     @ViewState private var keyID: UUID?
     @ViewState private var identityFile: String?
+    @FocusState private var usernameFocused: Bool
 
     private var connectionHint: String {
         if connectionType == .ssh, authentication == .password, credentialID == nil {
@@ -26,53 +27,85 @@ struct QuickConnectView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Label("Quick Connect", systemImage: "bolt.horizontal").font(.title2.bold())
-            Form {
-                Picker("Protocol", selection: $connectionType) {
-                    ForEach(ConnectionType.allCases) { Text($0.title).tag($0) }
-                }
-                if connectionType == .ssh {
-                    HStack(spacing: 20) {
-                        Text("Open:")
-                        Toggle("SSH", isOn: $sshEnabled).disabled(sshEnabled && !sftpEnabled)
-                        Toggle("SFTP", isOn: $sftpEnabled).disabled(sftpEnabled && !sshEnabled)
-                        Spacer()
-                    }.toggleStyle(.checkbox).controlSize(.regular)
-                    TextField("Host", text: $host)
-                    TextField("Port", text: $port)
-                    if authentication == .password, let credentialID {
-                        LabeledContent("Username") {
-                            Text(model.vault.credentials.first(where: { $0.id == credentialID })?.username ?? "Unlock credentials to view")
+            ScrollView {
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 12) {
+                    GridRow {
+                        Text("Protocol").foregroundStyle(.secondary)
+                        Picker("Protocol", selection: $connectionType) {
+                            ForEach(ConnectionType.allCases) { Text($0.title).tag($0) }
+                        }.labelsHidden()
+                    }
+                    if connectionType == .ssh {
+                        GridRow {
+                            Text("Open").foregroundStyle(.secondary)
+                            HStack(spacing: 20) {
+                                Toggle("SSH", isOn: $sshEnabled).disabled(sshEnabled && !sftpEnabled)
+                                Toggle("SFTP", isOn: $sftpEnabled).disabled(sftpEnabled && !sshEnabled)
+                                Spacer()
+                            }.toggleStyle(.checkbox).controlSize(.regular)
                         }
-                    } else {
-                        TextField("Username", text: $user)
-                    }
-                    Picker("Authentication", selection: $authentication) {
-                        ForEach(AuthenticationMode.selectable) { Text($0.title).tag($0) }
-                    }
-                    if authentication == .password {
-                        CredentialSelectionView(vault: model.vault, credentialID: $credentialID,
-                                                sessionCredentialsTitle: "Enter password when prompted")
-                    } else if authentication == .identityFile {
-                        Picker("SSH Key", selection: $keyID) {
-                            Text(identityFile.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Select a key")
-                                .tag(nil as UUID?)
-                            ForEach(model.keyLibrary.keys) { key in
-                                Text(key.name).tag(Optional(key.id))
+                        GridRow {
+                            Text("Host").foregroundStyle(.secondary); TextField("Host", text: $host).accessibilityLabel("Host")
+                        }
+                        GridRow {
+                            Text("Port").foregroundStyle(.secondary); TextField("Port", text: $port).accessibilityLabel("Port")
+                        }
+                        GridRow {
+                            Text("Username").foregroundStyle(.secondary)
+                            if authentication == .password, let credentialID {
+                                Text(
+                                    model.vault.credentials.first(where: { $0.id == credentialID })?.username
+                                        ?? "Unlock credentials to view")
+                            } else {
+                                TextField("Username", text: $user)
+                                    .focused($usernameFocused)
+                                    .accessibilityLabel("Username")
                             }
                         }
-                        .pickerStyle(.menu)
-                        .onChange(of: keyID) { _, selectedKey in
-                            if selectedKey != nil { identityFile = nil }
-                            error = nil
+                        GridRow {
+                            Text("Authentication").foregroundStyle(.secondary)
+                            Picker("Authentication", selection: $authentication) {
+                                ForEach(AuthenticationMode.selectable) { Text($0.title).tag($0) }
+                            }.labelsHidden()
                         }
-                        LabeledContent("Key File") {
-                            Button("Choose File…") { chooseKeyFile() }
+                        if authentication == .password {
+                            GridRow {
+                                Text("Credentials").foregroundStyle(.secondary)
+                                CredentialSelectionView(
+                                    vault: model.vault, credentialID: $credentialID,
+                                    sessionCredentialsTitle: "Enter password when prompted"
+                                )
+                                .labelsHidden()
+                            }
+                        } else if authentication == .identityFile {
+                            GridRow {
+                                Text("SSH Key").foregroundStyle(.secondary)
+                                Picker("SSH Key", selection: $keyID) {
+                                    Text(identityFile.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Select a key")
+                                        .tag(nil as UUID?)
+                                    ForEach(model.keyLibrary.keys) { key in
+                                        Text(key.name).tag(Optional(key.id))
+                                    }
+                                }
+                                .pickerStyle(.menu).labelsHidden()
+                                .onChange(of: keyID) { _, selectedKey in
+                                    if selectedKey != nil { identityFile = nil }
+                                    error = nil
+                                }
+                            }
+                            GridRow {
+                                Text("Key File").foregroundStyle(.secondary)
+                                Button("Choose File…") { chooseKeyFile() }
+                            }
                         }
+                    } else {
+                        Text("Starts your default login shell in your home directory.")
+                            .gridCellColumns(2)
                     }
-                } else {
-                    Text("Starts your default login shell in your home directory.")
                 }
-            }.formStyle(.grouped).frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             Text(connectionHint)
                 .font(.caption).foregroundStyle(.secondary)
             if let error { Text(error).foregroundStyle(.red).font(.callout).textSelection(.enabled) }
@@ -105,10 +138,13 @@ struct QuickConnectView: View {
                         }
                         model.connect(try profile.validated(), temporary: true)
                         dismiss()
+                    } catch SessionProfile.ValidationError.missingUsername {
+                        self.error = SessionProfile.ValidationError.missingUsername.localizedDescription
+                        usernameFocused = true
                     } catch { self.error = error.localizedDescription }
                 }.keyboardShortcut(.defaultAction)
             }
-        }.padding(24).frame(minWidth: 480, minHeight: 420)
+        }.padding(20).frame(minWidth: 480, minHeight: 460)
     }
 
     private func chooseKeyFile() {

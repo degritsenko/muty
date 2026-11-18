@@ -307,6 +307,59 @@ final class RegressionTests {
         assert(!FileManager.default.fileExists(atPath: previous!))
     }
 
+    @MainActor func testPasswordRetryAndCancellation() throws {
+        let credentials = BulkForgetCredentials()
+        let broker = AskpassBroker(credentials: credentials)
+        let helper = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent("muty-askpass")
+        defer { broker.stop() }
+        func invoke(_ environment: [String: String], _ prompt: String) throws -> (Int32, String) {
+            let process = Process(), output = Pipe()
+            process.executableURL = helper
+            process.arguments = [prompt]
+            var env = ProcessInfo.processInfo.environment
+            env.merge(environment) { _, new in new }
+            env["SSH_ASKPASS_PROMPT"] = ""
+            process.environment = env
+            process.standardOutput = output
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            let deadline = Date().addingTimeInterval(5)
+            while process.isRunning && Date() < deadline {
+                _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+            }
+            guard !process.isRunning else {
+                process.terminate(); broker.stop(); process.waitUntilExit()
+                throw MutyError("Askpass helper timed out")
+            }
+            return (process.terminationStatus, String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+        }
+        let passwordPrompt = "tester@localhost's password: "
+        var retryFlags: [Bool] = []
+        broker.interactivePrompt = { _, _, _, retry in
+            retryFlags.append(retry)
+            return retryFlags.count == 1 ? "wrong-test-password" : "correct-test-password"
+        }
+        let firstEnvironment = try broker.start(connectionID: UUID(), profileID: UUID())
+        let first = try invoke(firstEnvironment, passwordPrompt)
+        let second = try invoke(firstEnvironment, passwordPrompt)
+        guard first.0 == 0, second.0 == 0, retryFlags == [false, true] else {
+            throw MutyError("Interactive password retry state was not preserved")
+        }
+        let passphrase = try invoke(firstEnvironment, "Enter passphrase for key '/tmp/key': ")
+        guard passphrase.0 == 0, retryFlags == [false, true, false] else {
+            throw MutyError("Password warning leaked to passphrase prompt")
+        }
+        var cancelledPrompts = 0
+        broker.interactivePrompt = { _, _, _, _ in cancelledPrompts += 1; return nil }
+        let secondEnvironment = try broker.start(connectionID: UUID(), profileID: UUID())
+        let cancelled = try invoke(secondEnvironment, passwordPrompt)
+        let repeated = try invoke(secondEnvironment, passwordPrompt)
+        guard cancelled.0 != 0, repeated.0 != 0, cancelled.1.isEmpty, repeated.1.isEmpty,
+              cancelledPrompts == 1 else {
+            throw MutyError("Cancelled authentication reopened a password prompt")
+        }
+    }
+
     func testRealVaultRoundTrip() throws {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("muty-vault-check-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -458,11 +511,14 @@ final class RegressionTests {
         guard pid > 0 else { throw MutyError("SSHConnection failed to launch") }
         if wrongPassword {
             let application = NSApplication.shared
-            var cancelledRetry = false
+            var prompts = 0
+            var sawWarning = false
             let cancelRetry = Timer(timeInterval: 0.02, repeats: true) { _ in
                 MainActor.assumeIsolated {
                     guard let panel = application.modalWindow as? NativeSSHPasswordPanel else { return }
-                    cancelledRetry = true
+                    prompts += 1
+                    sawWarning = panel.contentView?.subviews.compactMap { $0 as? NSTextField }
+                        .contains { $0.stringValue == "Authentication failed. Check your password and try again." } == true
                     panel.cancel(nil)
                 }
             }
@@ -472,8 +528,12 @@ final class RegressionTests {
             while connection.running && Date() < deadline {
                 _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
             }
-            guard cancelledRetry, !connection.running else {
-                throw MutyError("Wrong saved password did not prompt for a retry and exit after cancellation")
+            guard prompts == 1, !connection.running else {
+                throw MutyError("Expected one password prompt and one Cancel; saw \(prompts), running=\(connection.running)")
+            }
+            guard sawWarning else { throw MutyError("Missing warning after rejected saved password") }
+            guard try store.read(id: profile.id) == "deliberately-wrong-test-password" else {
+                throw MutyError("Cancelling retry changed saved password")
             }
             assert(kill(pid, 0) == -1 && errno == ESRCH)
             return
@@ -680,6 +740,16 @@ final class RegressionTests {
     }
 
     func testQuickAddressAndPasteSafety() throws {
+        do {
+            _ = try ConnectionAddress.parse("example.invalid", defaultUser: "", defaultPort: 22)
+            throw MutyError("Missing username accepted")
+        } catch {
+            assert(error.localizedDescription == "Enter an SSH username.")
+        }
+        let embedded = try ConnectionAddress.parse("ops@example.invalid", defaultUser: "", defaultPort: 22)
+        assert(embedded.user == "ops")
+        let selected = try ConnectionAddress.parse("example.invalid", defaultUser: "credential-user", defaultPort: 22)
+        assert(selected.user == "credential-user")
         let address = try ConnectionAddress.parse("ops@example.invalid:2222", defaultUser: "default", defaultPort: 22)
         assert(address.user == "ops" && address.host == "example.invalid" && address.port == 2222)
         let ipv6 = try ConnectionAddress.parse("ops@[::1]:2200", defaultUser: "default", defaultPort: 22)
@@ -1838,6 +1908,7 @@ final class RegressionTests {
             ("credentials.saveAsNeverOverwrites", tests.testRepeatedSaveAsNeverOverwritesProfile),
             ("ipc.realBrokerHelperSingleUseAndCleanup", tests.testRealBrokerAndHelper),
             ("ipc.restartRevokesSocketAndCapability", tests.testBrokerRestartRevokesSocket),
+            ("ipc.passwordRetryAndSingleCancel", tests.testPasswordRetryAndCancellation),
             ("keys.encryptedImportReferenceAndPermissions", tests.testManagedKeysPreserveEncryptionAndPermissions),
             ("terminal.outputHighlightRewriter", tests.testOutputHighlightRewriter),
             ("terminal.outputHighlightForegroundOnly", tests.testOutputHighlightForegroundOnly),

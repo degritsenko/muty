@@ -27,11 +27,13 @@ final class AskpassBroker {
     private var connection = ""
     private var profileID = UUID()
     private var passwordAttempts = 0
+    private var suppliedPassword = false
     private var suppliedSavedPassword = false
+    private var authenticationCancelled = false
     private var lastHostKeyQuestion: String?
     private var active = false
     var useSavedPassword = true
-    var interactivePrompt: ((String, Bool, Bool) -> String?)?
+    var interactivePrompt: ((String, Bool, Bool, Bool) -> String?)?
     var onError: ((String) -> Void)?
     private let credentials: any CredentialStore
 
@@ -65,7 +67,8 @@ final class AskpassBroker {
         token = UUID().uuidString + UUID().uuidString
         connection = connectionID.uuidString
         self.profileID = profileID
-        passwordAttempts = 0; suppliedSavedPassword = false
+        passwordAttempts = 0; suppliedPassword = false; suppliedSavedPassword = false
+        authenticationCancelled = false
         lastHostKeyQuestion = nil; active = true
         let reader = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
         reader.setEventHandler { [weak self] in self?.acceptClients(listener: fd) }
@@ -116,16 +119,20 @@ final class AskpassBroker {
         }
         guard request.kind.isEmpty else { return .init(accepted: false) }
         let passwordPrompt = request.prompt.range(of: #"^[^\r\n]+@[^\r\n]+'s password: ?$"#, options: .regularExpression) != nil
+        if passwordPrompt && authenticationCancelled { return .init(accepted: false) }
         if passwordPrompt && passwordAttempts >= 3 { return .init(accepted: false) }
         if passwordPrompt { passwordAttempts += 1 }
         do {
             if passwordPrompt && passwordAttempts == 1 && useSavedPassword, let secret = try credentials.read(id: profileID) {
-                suppliedSavedPassword = true
+                suppliedPassword = true; suppliedSavedPassword = true
                 return .init(accepted: true, value: secret)
             }
-            guard let secret = interactivePrompt?(request.prompt, passwordPrompt, suppliedSavedPassword), active else {
+            guard let secret = interactivePrompt?(request.prompt, passwordPrompt, suppliedSavedPassword,
+                                                  passwordPrompt && suppliedPassword), active else {
+                if passwordPrompt { authenticationCancelled = true }
                 return .init(accepted: false)
             }
+            if passwordPrompt { suppliedPassword = true }
             return .init(accepted: true, value: secret)
         } catch {
             onError?(error.localizedDescription)

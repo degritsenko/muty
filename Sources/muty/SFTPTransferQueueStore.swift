@@ -7,6 +7,7 @@ import SQLite3
 final class SFTPTransferQueueStore: ObservableObject {
     private var database: OpaquePointer?
     @Published private(set) var recovered: [SFTPTransfer] = []
+    var hasRecoverableTransfers: Bool { recovered.contains(where: \.needsRecovery) }
     private var loadError: Error?
     private let encoder = JSONEncoder()
 

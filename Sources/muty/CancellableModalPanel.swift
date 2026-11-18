@@ -15,8 +15,9 @@ import AppKit
     func finish(_ response: NSApplication.ModalResponse) {
         guard !finished else { return }
         finished = true
-        NSApp.stopModal(withCode: response)
         orderOut(nil)
+        close()
+        NSApp.stopModal(withCode: response)
         // Accessibility and asynchronous callbacks may run outside the modal event loop.
         if let event = NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: windowNumber, context: nil, subtype: 0, data1: 0, data2: 0) {
             NSApp.postEvent(event, atStart: true)
@@ -169,12 +170,17 @@ import AppKit
     private let remember: NSButton
     private let canSave: Bool
     private(set) var result: (String, Bool)?
-    init(endpoint: String, prompt: String, canSave: Bool, replaceSaved: Bool) {
+    init(endpoint: String, prompt: String, canSave: Bool, replaceSaved: Bool, passwordRejected: Bool = false) {
         self.canSave = canSave
         remember = NSButton(checkboxWithTitle: "Save password in muty", target: nil, action: nil)
-        super.init(title: "SSH Authentication", width: 380, height: 190)
-        let server = label(endpoint, y: 148, width: 340)
+        let offset: CGFloat = passwordRejected ? 30 : 0
+        super.init(title: "SSH Authentication", width: 380, height: 190 + offset)
+        let server = label(endpoint, y: 148 + offset, width: 340)
         server.font = .systemFont(ofSize: 13, weight: .semibold); server.lineBreakMode = .byTruncatingMiddle; server.toolTip = endpoint
+        if passwordRejected {
+            let warning = label("Authentication failed. Check your password and try again.", y: 148, width: 340, height: 28)
+            warning.font = .systemFont(ofSize: 12); warning.textColor = .systemOrange
+        }
         _ = label(prompt, y: 119, width: 340)
         password.frame = NSRect(x: 20, y: 86, width: 340, height: 26)
         contentView?.addSubview(password)

@@ -195,15 +195,19 @@ struct ContentView: View {
     private func openQuickConnectWindow() {
         guard model.quickConnect else { return }
         let parent = NSApp.keyWindow ?? NSApp.mainWindow
-        let window = ModalSettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 460),
+        let window = ModalSettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 480),
                                          styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.title = "Quick Connect"
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
-        window.contentMinSize = NSSize(width: 480, height: 420)
+        window.contentMinSize = NSSize(width: 480, height: 460)
         window.contentView = NSHostingView(rootView: QuickConnectView(dismiss: { [weak window] in window?.performClose(nil) }, model: model))
         window.setFrameAutosaveName("muty.quickConnect")
         _ = window.setFrameUsingName("muty.quickConnect")
+        // Keep old oversized saved frames from dominating this short form.
+        let contentSize = window.contentRect(forFrameRect: window.frame).size
+        window.setContentSize(NSSize(width: min(contentSize.width, 600),
+                                     height: min(contentSize.height, 500)))
         if let parent {
             let area = parent.screen.map { parent.frame.intersection($0.visibleFrame) } ?? parent.frame
             if !area.isEmpty {
