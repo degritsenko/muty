@@ -46,11 +46,13 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     @Published private(set) var isLogging = false
     @Published private(set) var logURL: URL?
     private var outputLog: SessionOutputLog?
+    private var finishingLog = false
     private let startTime = Date()
     let terminal = ReconnectTerminalView(frame: .zero)
     private var broker: AskpassBroker?
     private var started = false
     private var stopping = false
+    private var disconnectCleanupPending = false
     private var authenticationGeneration = UUID()
     private var childPID: pid_t = 0
     private var statusTimer: Timer?
@@ -77,6 +79,9 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
             catch { self.stopLogging(); self.error = "Logging stopped: " + error.localizedDescription }
         }
         terminal.onVisibleOutput = { [weak self] in self?.onTerminalOutput?() }
+        // Avoid SwiftTerm's implicit link regex on the main thread.
+        terminal.linkReporting = .explicit
+        terminal.linkHighlightMode = .alwaysWithModifier
         terminal.optionAsMetaKey = UserDefaults.standard.object(forKey: "optionAsMetaKey") as? Bool ?? true
         applyColorScheme(TerminalColorScheme.resolve(profile.terminalTheme ?? UserDefaults.standard.string(forKey: "terminalTheme") ?? TerminalColorScheme.mutyDark.rawValue))
         terminal.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -310,18 +315,39 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     }
 
     func disconnect() {
+        guard !disconnectCleanupPending else { return }
         stopping = true
         if running { error = nil }
-        fileBrowser?.disconnect()
         stopLogging()
         terminal.cancelPendingPaste()
-        discardPendingPasswords()
-        broker?.stop(); broker = nil; stopJumpResources()
-        releaseTransport()
-        guard running else { return }
-        stopChildProcess()
         statusTimer?.invalidate(); statusTimer = nil
-        running = false; status = profile.connectionType == .localShell ? "Shell Stopped" : "Disconnected"
+        canOpenSFTP = false
+        if let browser = fileBrowser {
+            // Retain the connection and its master until staged uploads are removed.
+            disconnectCleanupPending = true
+            browser.disconnect()
+            running = false
+            status = "Disconnecting"
+            Self.cleanup.enter()
+            Task { [self] in
+                await browser.finishForQuit()
+                disconnectCleanupPending = false
+                finishDisconnect()
+                Self.cleanup.leave()
+            }
+        } else {
+            finishDisconnect()
+        }
+    }
+
+    private func finishDisconnect() {
+        discardPendingPasswords()
+        broker?.stop(); broker = nil
+        releaseTransport()
+        stopJumpResources()
+        stopChildProcess()
+        running = false
+        status = profile.connectionType == .localShell ? "Shell Stopped" : "Disconnected"
         negotiatedCipher = nil
     }
 
@@ -359,13 +385,29 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     }
     func beginLogging(to url: URL) throws {
         guard running, !isLogging else { throw MutyError("Start a session before enabling logging.") }
-        outputLog = try SessionOutputLog(url: url)
+        guard !finishingLog else { throw MutyError("The previous session log is still being saved.") }
+        outputLog = try SessionOutputLog(url: url) { [weak self] error in
+            DispatchQueue.main.async {
+                guard let self, self.isLogging else { return }
+                self.stopLogging()
+                self.error = "Logging stopped: " + error.localizedDescription
+            }
+        }
         logURL = url; isLogging = true
     }
     func stopLogging() {
-        do { try outputLog?.finish() }
-        catch { self.error = "Cannot finish logging: " + error.localizedDescription }
-        outputLog = nil; isLogging = false
+        guard let log = outputLog else { return }
+        outputLog = nil
+        isLogging = false
+        finishingLog = true
+        Self.cleanup.enter()
+        log.finish { [weak self] error in
+            DispatchQueue.main.async {
+                self?.finishingLog = false
+                if let error { self?.error = "Cannot finish logging: " + error.localizedDescription }
+                Self.cleanup.leave()
+            }
+        }
     }
     func showLogFile() { if let logURL { NSWorkspace.shared.activateFileViewerSelecting([logURL]) } }
 
@@ -432,6 +474,10 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     }
 
     private func didTerminate(exitCode: Int32?) {
+        if disconnectCleanupPending {
+            childPID = 0
+            return
+        }
         if let transport = sharedTransport {
             let diagnostics = transport.diagnosticOutput
             if !diagnostics.isEmpty { terminal.feed(byteArray: Array(diagnostics.utf8)[...]) }
@@ -460,6 +506,37 @@ final class ReconnectTerminalView: LocalProcessTerminalView {
         onTerminalClick?()
         super.mouseDown(with: event)
     }
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let existingMenu = super.menu(for: event)
+        guard let url = selectedWebURL() else { return existingMenu }
+        let menu = existingMenu?.copy() as? NSMenu ?? NSMenu()
+        if menu.items.isEmpty {
+            let copy = NSMenuItem(title: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
+            copy.target = self
+            menu.addItem(copy)
+        }
+        let item = NSMenuItem(title: "Open Link in Browser", action: #selector(openSelectedWebURL(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = url
+        menu.insertItem(item, at: 0)
+        return menu
+    }
+
+    private func selectedWebURL() -> URL? {
+        guard let selection = getSelection(), selection.utf8.prefix(4097).count <= 4096 else { return nil }
+        let text = selection.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+              let url = URL(string: text),
+              let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              let host = url.host, !host.isEmpty else { return nil }
+        return url
+    }
+
+    @objc private func openSelectedWebURL(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     var onFindRequested: (() -> Void)?
     override func performFindPanelAction(_ sender: Any?) {
         if let item = sender as? NSMenuItem, item.tag == Int(NSFindPanelAction.showFindPanel.rawValue), let onFindRequested {

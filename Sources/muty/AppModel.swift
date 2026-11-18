@@ -22,7 +22,11 @@ struct ProfileDraft: Identifiable {
 final class AppModel: ObservableObject {
     @Published var profiles: [SessionProfile] = []
     private var transferQueues: [String: SFTPTransferQueue] = [:]
-    private var transferQueueStores: [String: SFTPTransferQueueStore] = [:]
+    private final class QueueStoreReference {
+        weak var value: SFTPTransferQueueStore?
+        init(_ value: SFTPTransferQueueStore) { self.value = value }
+    }
+    private var transferQueueStores: [String: QueueStoreReference] = [:]
     func transferQueue(for id: UUID, profileID: UUID?, endpoint: String, jump: SessionProfile?) -> SFTPTransferQueue {
         let route = jump.map { $0.id.uuidString + ":" + $0.endpoint } ?? ""
         let key = id.uuidString + ":" + endpoint + "\0" + route
@@ -32,14 +36,22 @@ final class AppModel: ObservableObject {
         if readOnly {
             persistence = nil
         } else {
-            let disk = transferQueueStores[scope] ?? SFTPTransferQueueStore(directory: store.directory, scope: scope)
-            transferQueueStores[scope] = disk
+            let disk = transferQueueStores[scope]?.value ?? SFTPTransferQueueStore(directory: store.directory, scope: scope)
+            transferQueueStores[scope] = QueueStoreReference(disk)
             persistence = disk
         }
         let queue = persistence?.makeQueue() ?? SFTPTransferQueue()
         transferQueues[key] = queue
         return queue
     }
+    private func releaseUnusedTransferQueues() {
+        let activeIDs = Set(tabs.map { $0.transferQueueID.uuidString })
+        transferQueues = transferQueues.filter { key, _ in
+            activeIDs.contains(String(key.prefix(36)))
+        }
+        transferQueueStores = transferQueueStores.filter { $0.value.value != nil }
+    }
+
     @Published var sessionClipboard: SessionClipboard?
     @Published var selectedProfile: UUID?
     @Published var selectedFolder: String? = nil
@@ -1170,6 +1182,7 @@ final class AppModel: ObservableObject {
         connection.disconnect()
         let index = tabs.firstIndex { $0.id == connection.id } ?? 0
         tabs.removeAll { $0.id == connection.id }
+        releaseUnusedTransferQueues()
         if let group = splitGroups.firstIndex(where: { $0.tabs.contains(connection.id) }) {
             splitGroups[group].remove(connection.id)
         }
@@ -1227,6 +1240,7 @@ final class AppModel: ObservableObject {
         }
         if editingTab == connection.id { editingTab = replacement.id }
         tabs[index] = replacement
+        releaseUnusedTransferQueues()
         selectTab(replacement.id)
     }
 

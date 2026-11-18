@@ -112,9 +112,10 @@ struct TerminalWorkspace<Pane: View>: View {
                         .accessibilityLabel("Resize columns")
                 }
                 if let y = layout.row {
-                    Rectangle().fill(Color.clear).frame(width: layout.rowWidth, height: 7)
-                        .overlay { Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1) }
-                        .contentShape(Rectangle()).offset(x: layout.rowStart, y: y - 3)
+                    Rectangle().fill(Color.black.opacity(0.001)).frame(width: layout.rowWidth, height: 16)
+                        .overlay { Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1).allowsHitTesting(false) }
+                        .contentShape(Rectangle()).offset(x: layout.rowStart, y: y - 8)
+                        .zIndex(1)
                         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("mutyWorkspace")).onChanged { event in
                             model.splitRowFraction = min(0.85, max(0.15, event.location.y / max(1, geometry.size.height)))
                         }.onEnded { _ in model.persistWorkspace() })

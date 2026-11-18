@@ -3,11 +3,19 @@ import Darwin
 import SwiftUI
 
 // Output-only streaming transcript. Input and askpass responses never reach this writer.
-final class SessionOutputLog {
+final class SessionOutputLog: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "muty.session-log", qos: .utility)
+    private let lock = NSLock()
+    private var pendingBytes = 0
+    private var accepting = true
+    private var failure: Error?
+    private let onError: @Sendable (Error) -> Void
+    private static let maxPendingBytes = 4 * 1024 * 1024
     let url: URL
     private var descriptor: Int32 = -1
-    init(url: URL) throws {
+    init(url: URL, onError: @escaping @Sendable (Error) -> Void) throws {
         self.url = url
+        self.onError = onError
         let fd = open(url.path, O_WRONLY | O_CREAT | O_NOFOLLOW | O_NONBLOCK, 0o600)
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         var info = stat()
@@ -20,7 +28,32 @@ final class SessionOutputLog {
         descriptor = fd
     }
     func write(_ data: Data) throws {
-        guard descriptor >= 0 else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        guard accepting else { return }
+        guard data.count <= Self.maxPendingBytes - pendingBytes else {
+            throw MutyError("Session log stopped because the disk cannot keep up with terminal output.")
+        }
+        pendingBytes += data.count
+        queue.async { [self] in
+            defer {
+                lock.lock()
+                pendingBytes -= data.count
+                lock.unlock()
+            }
+            guard failure == nil else { return }
+            do { try writeToFile(data) }
+            catch {
+                failure = error
+                lock.lock()
+                accepting = false
+                lock.unlock()
+                onError(error)
+            }
+        }
+    }
+
+    private func writeToFile(_ data: Data) throws {
         try data.withUnsafeBytes { buffer in
             var offset = 0
             while offset < buffer.count {
@@ -31,14 +64,24 @@ final class SessionOutputLog {
             }
         }
     }
-    func finish() throws {
-        guard descriptor >= 0 else { return }
-        let fd = descriptor; descriptor = -1
-        let synced = fsync(fd)
-        let syncError = errno
-        let closed = Darwin.close(fd)
-        if synced != 0 { throw POSIXError(POSIXErrorCode(rawValue: syncError) ?? .EIO) }
-        if closed != 0 { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+
+    func finish(completion: @escaping @Sendable (Error?) -> Void) {
+        lock.lock()
+        accepting = false
+        queue.async { [self] in
+            guard descriptor >= 0 else { completion(failure); return }
+            let fd = descriptor
+            descriptor = -1
+            let synced = fsync(fd)
+            let syncError = errno
+            let closed = Darwin.close(fd)
+            if failure == nil {
+                if synced != 0 { failure = POSIXError(POSIXErrorCode(rawValue: syncError) ?? .EIO) }
+                else if closed != 0 { failure = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            }
+            completion(failure)
+        }
+        lock.unlock()
     }
     deinit { if descriptor >= 0 { Darwin.close(descriptor) } }
 }
