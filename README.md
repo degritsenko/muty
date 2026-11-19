@@ -5,7 +5,7 @@ Native SSH and SFTP client for macOS. Built with SwiftUI and SwiftTerm, powered 
 - SSH and local shell tabs with split panes and independent tab groups.
 - Two-pane SFTP browser with transfer queue, bookmarks and remote text editor.
 - Saved sessions, folder colors, search, shared credentials and encrypted backups.
-- Terminal themes, keyword highlighting and configurable Button Bar.
+- Terminal themes, keyword highlighting and configurable Button Bar with folder inheritance and per-session assignments through Bulk Edit.
 - Jump hosts, port forwarding and tunnel-only sessions.
 - Import sessions from SecureCRT and MobaXterm.
 

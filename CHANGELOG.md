@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.8.4
+
+### Added
+
+- Assign a Button Bar set to sessions through Bulk Edit, with folder inheritance and an explicit Default option.
+- Open Bulk Edit from the Session Manager toolbar and show the number of affected sessions without duplicates.
+- Show a warning when SSH asks for a password again after rejecting the previous password.
+
+### Fixed
+
+- Cancel SSH password authentication with one press without reopening the password prompt.
+- Offer SFTP queue recovery only when transfers still need recovery, rather than for completed history alone.
+- Focus the Username field in Quick Connect when a required SSH username is missing.
+- Remove nested grouped forms and unstable scrolling from connection, session and settings editors; keep Bulk Edit compact without scrolling.
+
+### Changed
+
+- Align Quick Connect, session editors and Settings with labeled fields and more compact layouts.
+- Replace terminal font-size and scrollback sliders with numeric fields; add one-point font-size controls.
+- Simplify the terminal color-scheme picker and place Import & Backup before Window in the menu bar.
+
 ## 0.8.3
 
 ### Added
