@@ -273,6 +273,7 @@ final class AppModel: ObservableObject {
                         guard let profile = profiles.first(where: { $0.id == saved.profileID }) else { continue }
                         let tab = SSHConnection(profile: profile, manual: false, credentials: passwordStore, deferredStart: true)
                         tab.tabName = saved.name
+                        tab.buttonBarSelection = saved.buttonBarSelection
                         configurePasswordSaving(tab)
                         tabs.append(tab)
                         restoredTabs[index] = tab.id
@@ -463,7 +464,7 @@ final class AppModel: ObservableObject {
             groups: splitGroups.map { $0.tabs.compactMap { indices[$0] } }
         )
         let document = WorkspaceDocument(
-            tabs: valid.map { .init(profileID: $0.profile.id, name: $0.tabName) },
+            tabs: valid.map { .init(profileID: $0.profile.id, name: $0.tabName, buttonBarSelection: $0.buttonBarSelection) },
             selectedIndex: selectedTab.flatMap { indices[$0] }, split: split
         )
         do { try workspaceStore.save(document) }

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.5
+
+### Fixed
+
+- Preserve each tab's Button Bar selection when restoring the workspace, including an explicit Default selection and folder inheritance.
+
+### Changed
+
+- Keep the terminal scrollbar visible with a compact dark track and a light thumb, independently of macOS scrollbar preferences.
+
 ## 0.8.4
 
 ### Added

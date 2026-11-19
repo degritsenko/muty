@@ -227,7 +227,7 @@ struct ButtonBarDocument: Codable {
     }
 }
 
-enum ButtonBarSelection {
+enum ButtonBarSelection: Codable, Equatable {
     case defaultSet
     case named(UUID)
 }
@@ -266,6 +266,7 @@ struct SendStringButtonBar: View {
         nonmutating set {
             if let tabSelection {
                 tabSelection.wrappedValue = newValue.map(ButtonBarSelection.named) ?? .defaultSet
+                model.persistWorkspace()
             } else {
                 standaloneSelection = newValue
             }
@@ -359,6 +360,7 @@ struct SendStringButtonBar: View {
     private func followFolder() {
         tabSelection?.wrappedValue = nil
         standaloneSelection = nil
+        model.persistWorkspace()
     }
     private func perform(_ action: () throws -> Void) {
         do { try action() } catch { model.errorMessage = error.localizedDescription }

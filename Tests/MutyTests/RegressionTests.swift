@@ -1454,6 +1454,18 @@ final class RegressionTests {
         ], selectedIndex: 0))
         let model = AppModel(store: store, keychain: LockedCredentials())
         assert(model.splitMode == "none")
+        let buttonSetID = UUID()
+        model.tabs[0].buttonBarSelection = .named(buttonSetID)
+        model.tabs[1].buttonBarSelection = .defaultSet
+        model.persistWorkspace()
+        let restoredButtons = AppModel(store: store, keychain: LockedCredentials())
+        assert(restoredButtons.tabs[0].buttonBarSelection == .named(buttonSetID))
+        assert(restoredButtons.tabs[1].buttonBarSelection == .defaultSet)
+        restoredButtons.tabs[0].buttonBarSelection = nil
+        restoredButtons.persistWorkspace()
+        let inheritedButtons = AppModel(store: store, keychain: LockedCredentials())
+        assert(inheritedButtons.tabs[0].buttonBarSelection == nil)
+        assert(inheritedButtons.tabs[1].buttonBarSelection == .defaultSet)
         model.split("four", secondary: model.tabs[1].id)
         model.splitColumnFraction = 0.6
         model.splitRowFraction = 0.4

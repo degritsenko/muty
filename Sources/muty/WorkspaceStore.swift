@@ -4,6 +4,7 @@ struct WorkspaceDocument: Codable {
     struct Tab: Codable {
         var profileID: UUID
         var name: String?
+        var buttonBarSelection: ButtonBarSelection? = nil
     }
     struct Split: Codable {
         var mode: String

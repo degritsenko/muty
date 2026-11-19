@@ -72,6 +72,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         if deferredStart { status = "Restored" }
         super.init()
         terminal.processDelegate = self
+        terminal.configureScrollBar()
         terminal.onOutput = { [weak self] data in
             guard let self, !data.isEmpty else { return }
             guard let log = self.outputLog else { return }
@@ -500,6 +501,17 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
 }
 
 final class ReconnectTerminalView: LocalProcessTerminalView {
+    func configureScrollBar() {
+        scrollerStyle = .legacy
+        guard let scroller = subviews.compactMap({ $0 as? NSScroller }).first else { return }
+        scroller.appearance = NSAppearance(named: .darkAqua)
+        scroller.knobStyle = .light
+        scroller.controlSize = .small
+        if let width = scroller.constraints.first(where: { $0.firstAttribute == .width && $0.secondItem == nil }) {
+            width.constant = NSScroller.scrollerWidth(for: .small, scrollerStyle: .legacy)
+        }
+    }
+
     private var highlightTransformer = OutputHighlightTransformer()
     /// Overridable in tests; the app always uses the shared store.
     var highlightStore: OutputHighlightStore?
