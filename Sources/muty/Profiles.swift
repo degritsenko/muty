@@ -27,6 +27,7 @@ struct SessionProfile: Codable, Identifiable, Equatable {
     var credentialID: UUID?
     var keyID: UUID?
     var color: String?
+    var buttonBarSet: String?
     var terminalTheme: String?
     var connectionType: ConnectionType = .ssh
     var forwards: [PortForward] = []
@@ -38,7 +39,7 @@ struct SessionProfile: Codable, Identifiable, Equatable {
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case terminalTheme, id, credentialID, name, description, sshEnabled, sftpEnabled, host, port, user, savePassword, folder, favorite, identityFile, keyID, color, authentication, connectionType, forwards, tunnelOnly, jumpHostID
+        case buttonBarSet, terminalTheme, id, credentialID, name, description, sshEnabled, sftpEnabled, host, port, user, savePassword, folder, favorite, identityFile, keyID, color, authentication, connectionType, forwards, tunnelOnly, jumpHostID
     }
 
     init(from decoder: Decoder) throws {
@@ -58,6 +59,7 @@ struct SessionProfile: Codable, Identifiable, Equatable {
         credentialID = try c.decodeIfPresent(UUID.self, forKey: .credentialID)
         keyID = try c.decodeIfPresent(UUID.self, forKey: .keyID)
         color = try c.decodeIfPresent(String.self, forKey: .color)
+        buttonBarSet = try c.decodeIfPresent(String.self, forKey: .buttonBarSet)
         terminalTheme = try c.decodeIfPresent(String.self, forKey: .terminalTheme)
         forwards = try c.decodeIfPresent([PortForward].self, forKey: .forwards) ?? []
         tunnelOnly = try c.decodeIfPresent(Bool.self, forKey: .tunnelOnly) ?? false

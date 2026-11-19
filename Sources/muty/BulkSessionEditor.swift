@@ -4,16 +4,20 @@ struct BulkEditRequest: Identifiable {
     let id = UUID()
     let folder: String?
     let profiles: [SessionProfile]
+    var includesSubfolders = true
 }
 
 struct BulkSessionEditor: View {
     @ObservedObject var model: AppModel
+    @ObservedObject private var buttonStore = SendStringButtonStore.shared
     let request: BulkEditRequest
     @Environment(\.dismiss) private var dismiss
     @ViewState private var changeColor = false
     @ViewState private var color = ""
     @ViewState private var changeTheme = false
     @ViewState private var terminalTheme = ""
+    @ViewState private var changeButtonBar = false
+    @ViewState private var buttonBarSet = "mixed"
     @ViewState private var changeModes = false
     @ViewState private var sshEnabled = true
     @ViewState private var sftpEnabled = true
@@ -34,7 +38,8 @@ struct BulkSessionEditor: View {
     private var hasSSH: Bool { request.profiles.contains { $0.connectionType == .ssh } }
 
     private var enabled: Bool {
-        !request.profiles.isEmpty && ((hasSSH && (changeModes || changeUser || changeKey || changeJump || assignCredential)) || changeColor || changeTheme)
+        !request.profiles.isEmpty && ((hasSSH && (changeModes || changeUser || changeKey || changeJump || assignCredential)) || changeColor || changeTheme || changeButtonBar)
+        && (!changeButtonBar || buttonBarSet != "mixed")
         && (!hasSSH || !changeUser || !user.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         && (!hasSSH || !changeKey || UUID(uuidString: key) != nil)
         && (!hasSSH || !assignCredential || (credentialID != nil && !changeKey && !changeUser))
@@ -42,7 +47,7 @@ struct BulkSessionEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Bulk Edit Sessions").font(.title2)
-            Text("\(request.folder ?? "Sessions") · \(request.profiles.count) sessions, including subfolders")
+            Text("\(request.folder ?? "Sessions") · \(request.profiles.count) sessions\(request.includesSubfolders ? ", including subfolders" : "")")
                 .foregroundStyle(.secondary)
             Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 14) {
                 GridRow {
@@ -58,6 +63,17 @@ struct BulkSessionEditor: View {
                             Text("Inherit from Settings").tag("")
                             ForEach(TerminalColorScheme.allCases) { Text($0.name).tag($0.rawValue) }
                         }.labelsHidden().disabled(!changeTheme)
+                }
+                GridRow {
+                    Toggle("Button Bar", isOn: $changeButtonBar)
+                    Picker("Button Bar", selection: $buttonBarSet) {
+                        if buttonBarSet == "mixed" { Text("Multiple values").tag("mixed") }
+                        Text("Inherit from Folder").tag("inherit")
+                        Text("Default").tag("")
+                        ForEach(buttonStore.document.sets) { item in
+                            Text(item.name).tag(item.id.uuidString)
+                        }
+                    }.labelsHidden().disabled(!changeButtonBar)
                 }
                 Divider().gridCellColumns(2)
                 GridRow {
@@ -111,6 +127,10 @@ struct BulkSessionEditor: View {
                 Button("Apply…") { confirming = true }.disabled(!enabled).keyboardShortcut(.defaultAction)
             }
         }.padding(22).frame(width: 660)
+        .onAppear {
+            let values = Set(request.profiles.map { $0.buttonBarSet ?? "inherit" })
+            buttonBarSet = values.count == 1 ? values.first! : "mixed"
+        }
         .confirmationDialog("Forget passwords for \(sshProfiles.count) SSH sessions?", isPresented: $confirmingForget, titleVisibility: .visible) {
             Button("Forget saved passwords", role: .destructive) {
                 do {
@@ -129,7 +149,8 @@ struct BulkSessionEditor: View {
                         changeJump: hasSSH && changeJump, jumpID: UUID(uuidString: jump), credentialID: hasSSH && assignCredential ? credentialID : nil,
                         sshEnabled: hasSSH && changeModes ? sshEnabled : nil, sftpEnabled: hasSSH && changeModes ? sftpEnabled : nil,
                         changeColor: changeColor, color: color.isEmpty ? nil : color,
-                        changeTheme: changeTheme, terminalTheme: terminalTheme.isEmpty ? nil : terminalTheme)
+                        changeTheme: changeTheme, terminalTheme: terminalTheme.isEmpty ? nil : terminalTheme,
+                        changeButtonBar: changeButtonBar, buttonBarSet: buttonBarSet == "inherit" ? nil : buttonBarSet)
                     dismiss()
                 } catch { self.error = error.localizedDescription }
             }

@@ -343,16 +343,22 @@ final class AppModel: ObservableObject {
         } else { connect(profile) }
     }
 
-    func editSelectedSessions(_ rows: Set<SessionRowID>) {
+    func sessionsForBulkEdit(_ rows: Set<SessionRowID>) -> [SessionProfile] {
         let ids = Set(rows.compactMap(\.profileID))
         let folders = rows.filter { $0.location == .folder }
-        let affected = profiles.filter { profile in
+        return profiles.filter { profile in
             return ids.contains(profile.id) || folders.contains { row in
                 guard let folder = row.folderPath else { return true }
                 return profile.folder == folder || profile.folder?.hasPrefix(folder + "/") == true
             }
         }
-        bulkEditing = BulkEditRequest(folder: "Selected items", profiles: affected)
+    }
+
+    func editSelectedSessions(_ rows: Set<SessionRowID>) {
+        let affected = sessionsForBulkEdit(rows)
+        guard !readOnly, !affected.isEmpty else { return }
+        bulkEditing = BulkEditRequest(folder: "Selected items", profiles: affected,
+            includesSubfolders: rows.contains { $0.location == .folder })
     }
 
     func editFolderSessions(_ folder: String?) {
@@ -367,7 +373,8 @@ final class AppModel: ObservableObject {
                        changeJump: Bool, jumpID: UUID?, credentialID: UUID? = nil,
                        sshEnabled: Bool? = nil, sftpEnabled: Bool? = nil,
                        changeColor: Bool = false, color: String? = nil,
-                       changeTheme: Bool = false, terminalTheme: String? = nil) throws {
+                       changeTheme: Bool = false, terminalTheme: String? = nil,
+                       changeButtonBar: Bool = false, buttonBarSet: String? = nil) throws {
         guard !readOnly else { throw MutyError("Profiles are read-only.") }
         guard !request.profiles.isEmpty else { throw MutyError("No sessions in this folder.") }
         guard request.profiles.allSatisfy({ original in profiles.contains(original) }) else {
@@ -377,6 +384,12 @@ final class AppModel: ObservableObject {
         let shared: SavedCredential?
         if let credentialID { try vault.ensureAvailable(); shared = try vault.credential(credentialID) } else { shared = nil }
         if let keyID { _ = try keyLibrary.path(for: keyID) }
+        if changeButtonBar, let selection = buttonBarSet, !selection.isEmpty {
+            guard let id = UUID(uuidString: selection),
+                  SendStringButtonStore.shared.document.sets.contains(where: { $0.id == id }) else {
+                throw MutyError("Button Bar set is missing. Select another set.")
+            }
+        }
         let ids = Set(request.profiles.map(\.id))
         var updated = profiles
         var authenticationIDs = Set<UUID>()
@@ -411,6 +424,7 @@ final class AppModel: ObservableObject {
             }
             if changeColor { updated[index].color = color }
             if changeTheme { updated[index].terminalTheme = terminalTheme }
+            if changeButtonBar { updated[index].buttonBarSet = buttonBarSet }
             updated[index] = try updated[index].validated()
         }
         // Validate the final graph, including sessions outside the edited folder.

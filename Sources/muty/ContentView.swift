@@ -262,6 +262,7 @@ struct ContentView: View {
 
     private var managerToolbar: some View {
         let items = selectedRows.filter { $0.profileID != nil || $0.folderPath != nil }
+        let bulkCount = model.sessionsForBulkEdit(selectedRows).count
         return HStack(spacing: 8) {
             Button("New Session", systemImage: "plus") {
                 var profile = SessionProfile()
@@ -273,6 +274,11 @@ struct ContentView: View {
                 model.newFolderPrompt = true
             }.disabled(model.readOnly).help("New Folder")
             Divider().frame(height: 20)
+            Button("Bulk Edit Selected Sessions…", systemImage: "pencil") {
+                model.editSelectedSessions(selectedRows)
+            }
+            .disabled(bulkCount == 0 || model.readOnly)
+            .help("Bulk Edit \(bulkCount) Sessions")
             Button("Cut", systemImage: "scissors") { model.copySessionItems(items, cut: true) }
                 .disabled(items.isEmpty || model.readOnly).help("Cut")
             Button("Copy", systemImage: "doc.on.doc") { model.copySessionItems(items, cut: false) }
@@ -282,6 +288,11 @@ struct ContentView: View {
             Button("Delete Selected Items", systemImage: "trash") { deleteFromManager(items) }
                 .disabled(items.isEmpty || model.readOnly).help("Delete Selected Items")
             Spacer(minLength: 0)
+            if bulkCount > 0 {
+                Text("\(bulkCount) selected")
+                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    .help("Sessions affected by Bulk Edit; selected folders include subfolders.")
+            }
         }
         .labelStyle(.iconOnly).buttonStyle(.borderless)
         .font(.system(size: 16, weight: .semibold))
@@ -401,7 +412,8 @@ struct ContentView: View {
                                 }
                             }.disabled(model.readOnly)
                         }
-                        Button("Bulk Edit Selected Sessions…") { model.editSelectedSessions(ids) }.disabled(model.readOnly)
+                        Button("Bulk Edit Selected Sessions…") { model.editSelectedSessions(ids) }
+                            .disabled(model.readOnly || model.sessionsForBulkEdit(ids).isEmpty)
                     } else if let profile {
                         SessionActions(profile: profile, model: model) { connectFromManager([profile]) }
                     } else if let row = ids.first, row.location == .folder {

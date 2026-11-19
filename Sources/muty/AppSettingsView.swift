@@ -204,11 +204,15 @@ private struct TerminalSettingsView: View {
                     }
                     GridRow {
                         Text("Font size").foregroundStyle(.secondary)
-                        HStack {
-                            Slider(value: $size, in: 9...30, step: 1) { Text("Font size") }
+                        HStack(spacing: 8) {
+                            TextField("Font size", value: boundedInteger($size, range: 9...30, fallback: 13),
+                                      format: .number.grouping(.never))
                                 .labelsHidden()
-                            Text("\(Int(size.isFinite ? max(9, min(30, size)) : 13)) pt").monospacedDigit().frame(
-                                width: 88, alignment: .trailing)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 72)
+                            Stepper("Font size", value: boundedInteger($size, range: 9...30, fallback: 13), in: 9...30)
+                                .labelsHidden()
+                            Text("pt").foregroundStyle(.secondary)
                         }
                     }
                     GridRow {
@@ -221,11 +225,13 @@ private struct TerminalSettingsView: View {
                     }
                     GridRow {
                         Text("Scrollback").foregroundStyle(.secondary)
-                        HStack {
-                            Slider(value: $scrollback, in: 1000...50000, step: 1000) { Text("Scrollback") }
+                        HStack(spacing: 8) {
+                            TextField("Scrollback", value: boundedInteger($scrollback, range: 1000...50000, fallback: 10000),
+                                      format: .number.grouping(.never))
                                 .labelsHidden()
-                            Text("\(Int(scrollback.isFinite ? max(1000, min(50000, scrollback)) : 10000)) lines")
-                                .monospacedDigit().frame(width: 88, alignment: .trailing)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 100)
+                            Text("lines").foregroundStyle(.secondary)
                         }
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -240,6 +246,17 @@ private struct TerminalSettingsView: View {
                 if resolved != theme { theme = resolved }
             }
     }
+
+    private func boundedInteger(_ value: Binding<Double>, range: ClosedRange<Int>, fallback: Int) -> Binding<Int> {
+        Binding(
+            get: {
+                let current = value.wrappedValue
+                return current.isFinite ? Int(max(Double(range.lowerBound), min(Double(range.upperBound), current))) : fallback
+            },
+            set: { value.wrappedValue = Double(max(range.lowerBound, min(range.upperBound, $0))) }
+        )
+    }
+
 }
 
 private struct KeyLibraryView: View {

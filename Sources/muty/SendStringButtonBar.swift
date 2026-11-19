@@ -254,7 +254,13 @@ struct SendStringButtonBar: View {
             switch tabSelection.wrappedValue {
             case .some(.defaultSet): return nil
             case .some(.named(let id)) where store.document.sets.contains(where: { $0.id == id }): return id
-            default: return store.assignedSet(for: folder)
+            default:
+                if let connection = model.selectedConnection,
+                   let selection = (model.profiles.first(where: { $0.id == connection.profile.id }) ?? connection.profile).buttonBarSet {
+                    if selection.isEmpty { return nil }
+                    if let id = UUID(uuidString: selection), store.document.sets.contains(where: { $0.id == id }) { return id }
+                }
+                return store.assignedSet(for: folder)
             }
         }
         nonmutating set {
