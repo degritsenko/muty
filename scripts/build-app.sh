@@ -19,6 +19,7 @@ install -m 755 "$bin/muty-ssh-proxy" "$app/Contents/MacOS/muty-ssh-proxy"
 install -m 644 "$PWD/Sources/SecureCRTSupport/LICENSE" "$app/Contents/Resources/SecureCRTSupport-LICENSE"
 install -m 644 "$PWD/.build/checkouts/SwiftTerm/LICENSE" "$app/Contents/Resources/SwiftTerm-LICENSE"
 install -m 644 "$PWD/Assets/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
+install -m 644 "$PWD/Sources/muty/Kubernetes.png" "$app/Contents/Resources/Kubernetes.png"
 for bundle in "$bin"/*.bundle; do
     [[ -d "$bundle" ]] || continue
     ditto "$bundle" "$app/Contents/Resources/$(basename "$bundle")"

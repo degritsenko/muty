@@ -1393,8 +1393,9 @@ final class RegressionTests {
         let backup = ConfigurationBackup(sessions: [], folders: ["Prod"])
         var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(backup)) as! [String: Any]
         object.removeValue(forKey: "folderColors")
+        object.removeValue(forKey: "folderIcons")
         let decoded = try JSONDecoder().decode(ConfigurationBackup.self, from: JSONSerialization.data(withJSONObject: object))
-        assert(decoded.version == 1 && decoded.folderColors.isEmpty && decoded.folders == ["Prod"])
+        assert(decoded.version == 1 && decoded.folderColors.isEmpty && decoded.folderIcons.isEmpty && decoded.folders == ["Prod"])
     }
     @MainActor func testConfigurationRestorePreservesFolderColors() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1408,13 +1409,16 @@ final class RegressionTests {
 
         var incoming = SessionProfile()
         incoming.name = "Imported"; incoming.host = "imported.invalid"; incoming.user = "tester"
+        incoming.icon = SessionIcon.database.rawValue
         incoming.folder = "Imported/Only"
         let backup = ConfigurationBackup(
             sessions: [PortableSession(incoming, keyName: nil, keyFingerprint: nil)],
-            folders: [], folderColors: ["Imported": "Red", "Imported/Only": "Green"]
+            folders: [], folderColors: ["Imported": "Red", "Imported/Only": "Green"],
+            folderIcons: ["Imported/Only": FolderIcon.database.rawValue]
         )
         let stale = try model.prepareRestore(backup, selected: [incoming.id], keyBindings: [:])
         model.setFolderColor("Purple", for: "Local")
+        model.setFolderIcon("kubernetes", for: "Local")
         do {
             try model.applyRestore(stale)
             preconditionFailure("Stale restore plan was applied.")
@@ -1424,6 +1428,7 @@ final class RegressionTests {
         let persistedAfterRejection = try store.loadCatalog()
         assert(persistedAfterRejection.profiles.map(\.id) == [local.id])
         assert(persistedAfterRejection.folderColors["Local"] == "Purple")
+        assert(persistedAfterRejection.folderIcons["Local"] == "kubernetes")
         model.setFolderColor("Blue", for: "Local")
         let plan = try model.prepareRestore(backup, selected: [incoming.id], keyBindings: [:])
         try model.applyRestore(plan)
@@ -1431,8 +1436,13 @@ final class RegressionTests {
         assert(model.folderColor("Local") == "Blue")
         assert(model.folderColor("Imported") == "Red")
         assert(model.folderColor("Imported/Only") == "Green")
+        assert(model.folderIcon("Local") == "kubernetes")
+        assert(model.folderIcon("Imported/Only") == FolderIcon.database.rawValue)
+        assert(model.profiles.first(where: { $0.id == incoming.id })?.icon == SessionIcon.database.rawValue)
         let persisted = try store.loadFolderColors()
         assert(persisted["Local"] == "Blue" && persisted["Imported/Only"] == "Green")
+        let persistedCatalog = try store.loadCatalog()
+        assert(persistedCatalog.folderIcons["Imported/Only"] == FolderIcon.database.rawValue)
     }
     @MainActor func testWorkspaceSplitPersistence() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

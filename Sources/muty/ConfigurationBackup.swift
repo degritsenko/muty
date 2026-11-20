@@ -7,16 +7,19 @@ struct ConfigurationBackup: Codable, Identifiable {
     var sessions: [PortableSession]
     var folders: [String]
     var folderColors: [String: String] = [:]
+    var folderIcons: [String: String] = [:]
     var buttonBar: ButtonBarDocument? = nil
     // Transient credentials: never encoded by configuration-only export.
     var sourcePath: String? = nil
     var restoredPasswords: [UUID: String] = [:]
     var restoredCredentials: [SavedCredential] = []
-    private enum CodingKeys: String, CodingKey { case format, version, sessions, folders, folderColors, buttonBar }
-    init(sessions: [PortableSession], folders: [String], folderColors: [String: String] = [:], buttonBar: ButtonBarDocument? = nil) {
+    private enum CodingKeys: String, CodingKey { case format, version, sessions, folders, folderColors, folderIcons, buttonBar }
+    init(sessions: [PortableSession], folders: [String], folderColors: [String: String] = [:],
+         folderIcons: [String: String] = [:], buttonBar: ButtonBarDocument? = nil) {
         self.sessions = sessions
         self.folders = folders
         self.folderColors = folderColors
+        self.folderIcons = folderIcons
         self.buttonBar = buttonBar
     }
     init(from decoder: Decoder) throws {
@@ -26,6 +29,7 @@ struct ConfigurationBackup: Codable, Identifiable {
         sessions = try values.decode([PortableSession].self, forKey: .sessions)
         folders = try values.decode([String].self, forKey: .folders)
         folderColors = try values.decodeIfPresent([String: String].self, forKey: .folderColors) ?? [:]
+        folderIcons = try values.decodeIfPresent([String: String].self, forKey: .folderIcons) ?? [:]
         buttonBar = try values.decodeIfPresent(ButtonBarDocument.self, forKey: .buttonBar)
     }
     func validated() throws -> Self {
@@ -54,6 +58,7 @@ struct PortableSession: Codable, Identifiable {
     var folder: String?
     var favorite: Bool
     var color: String?
+    var icon: String?
     var terminalTheme: String?
     var connectionType: ConnectionType
     var authentication: AuthenticationMode
@@ -71,6 +76,7 @@ struct PortableSession: Codable, Identifiable {
         sshEnabled = p.sshEnabled; sftpEnabled = p.sftpEnabled
         id = p.id; name = p.name; host = p.host; port = p.port; user = p.user
         folder = p.folder; favorite = p.favorite; color = p.color; connectionType = p.connectionType
+        icon = p.icon
         authentication = p.authentication; forwards = p.forwards; tunnelOnly = p.tunnelOnly
         jumpHostID = p.jumpHostID; self.keyName = keyName; self.keyFingerprint = keyFingerprint
     }
@@ -85,6 +91,7 @@ struct PortableSession: Codable, Identifiable {
         p.sshEnabled = sshEnabled ?? true; p.sftpEnabled = sftpEnabled ?? true
         p.id = id; p.name = name; p.host = host; p.port = port; p.user = user
         p.folder = folder; p.favorite = favorite; p.color = color; p.connectionType = connectionType
+        p.icon = icon
         p.authentication = authentication; p.forwards = forwards; p.tunnelOnly = tunnelOnly
         p.credentialID = credentialID
         p.jumpHostID = jumpHostID; p.keyID = keyID; p.savePassword = false
