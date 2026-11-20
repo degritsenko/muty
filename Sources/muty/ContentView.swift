@@ -589,6 +589,7 @@ struct SessionTab: View {
     @ViewState private var tunnelsVisible = false
     @ViewState private var renaming = false
     @ViewState private var nameDraft = ""
+    @ViewState private var diagnosticsVisible = false
 
     @ViewBuilder private var connectionIndicator: some View {
         if !connection.running && connection.status != "Not Started" {
@@ -604,9 +605,23 @@ struct SessionTab: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            if connection.profile.connectionType == .ssh {
+                Button { diagnosticsVisible = true } label: {
+                    connectionIndicator.frame(width: 6, height: 6)
+                        .frame(width: 14, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(connection.diagnostics.currentStep)
+                .popover(isPresented: $diagnosticsVisible, arrowEdge: .bottom) {
+                    SSHConnectionDiagnosticsPopover(connection: connection)
+                }
+            }
             Button(action: select) {
                 HStack(spacing: 7) {
-                    connectionIndicator.frame(width: 6, height: 6)
+                    if connection.profile.connectionType == .localShell {
+                        connectionIndicator.frame(width: 6, height: 6)
+                    }
                     if let index = model.tabs.firstIndex(where: { $0.id == connection.id }), index < 9 {
                         Text("⌘\(index + 1)").font(.system(size: 9)).foregroundStyle(.secondary)
                     }

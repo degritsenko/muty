@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ConnectionStatusBar: View {
     @ObservedObject var connection: SSHConnection
+    @ViewState private var showingDiagnostics = false
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -14,11 +15,33 @@ struct ConnectionStatusBar: View {
         .font(.caption)
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(.bar)
+        .popover(isPresented: $showingDiagnostics, arrowEdge: .bottom) {
+            SSHConnectionDiagnosticsPopover(connection: connection)
+        }
     }
 
     private func row(detail: Int, compact: Bool) -> some View {
         HStack(spacing: 8) {
-            if let error = connection.error {
+            if connection.profile.connectionType == .ssh {
+                Button { showingDiagnostics = true } label: {
+                    HStack(spacing: 4) {
+                        if let issue = connection.diagnostics.issue {
+                            Label(issue.title, systemImage: "exclamationmark.triangle")
+                                .foregroundStyle(.orange)
+                        } else if let error = connection.error {
+                            Label(error, systemImage: "exclamationmark.triangle")
+                                .foregroundStyle(.orange)
+                        } else {
+                            Text(connection.running ? connection.diagnostics.currentStep : connection.status)
+                                .foregroundStyle(.secondary)
+                        }
+                        Image(systemName: "info.circle").foregroundStyle(.secondary)
+                    }
+                    .lineLimit(1).truncationMode(.tail)
+                }
+                .buttonStyle(.plain).layoutPriority(2)
+                .help("Show SSH connection diagnostics")
+            } else if let error = connection.error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange).lineLimit(1)
                     .truncationMode(.tail).layoutPriority(2)
