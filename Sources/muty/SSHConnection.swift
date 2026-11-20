@@ -24,6 +24,8 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     private(set) var ignoreSavedPassword: Bool
     private var targetReceipt: SSHAuthenticationReceipt?
     private var jumpReceipt: SSHAuthenticationReceipt?
+    private var jumpDiagnosticsURL: URL?
+    private var jumpStderrURL: URL?
     private var pendingTargetPassword: (() throws -> Void)?
     private var pendingJumpPassword: (() throws -> Void)?
     @Published var showingSFTP = false { didSet { if !showingSFTP { onTerminalShown?() } } }
@@ -37,6 +39,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
     private var sharedTransport: SSHSharedTransport?
     @Published private(set) var status = "Not Started"
     @Published private(set) var negotiatedCipher: String?
+    @Published private(set) var diagnostics: SSHConnectionDiagnostics
     @Published private(set) var running = false
     @Published private(set) var error: String?
     @Published private(set) var remoteTitle: String?
@@ -69,6 +72,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         self.profile = profile; self.manual = manual; self.temporary = temporary
         self.deferredStart = deferredStart
         self.ignoreSavedPassword = ignoreSavedPassword
+        diagnostics = .initial(target: Self.diagnosticEndpoint(profile), jump: nil)
         if deferredStart { status = "Restored" }
         super.init()
         terminal.processDelegate = self
@@ -95,9 +99,14 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         return hostname.isEmpty ? "Local Shell" : hostname
     }
 
+    private static func diagnosticEndpoint(_ profile: SessionProfile) -> String {
+        "\(PortForward.address(profile.host)):\(profile.port)"
+    }
+
     func start() {
         guard !started, !stopping, !deferredStart else { return }
         started = true
+        diagnostics = .initial(target: Self.diagnosticEndpoint(profile), jump: nil)
         do {
             var p = try profile.validated()
             if p.connectionType == .localShell {
@@ -129,19 +138,23 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
                     throw MutyError("Select one SSH jump host without another jump host.")
                 }
                 connectedJumpProfile = jump
+                let dir = FileManager.default.temporaryDirectory.appendingPathComponent("muty-proxy-" + id.uuidString)
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+                proxyDirectory = dir
+                let jumpLog = dir.appendingPathComponent("jump.log")
+                jumpDiagnosticsURL = jumpLog
+                let jumpStderr = dir.appendingPathComponent("jump.stderr")
+                jumpStderrURL = jumpStderr
                 if jump.authentication == .identityFile, let keyID = jump.keyID {
                     jump.identityFile = try SSHKeyLibrary().path(for: keyID)
                 }
                 let jumpAuth = try askpassEnvironment(for: jump, jump: true)
                 let destination = PortForward.address(p.host) + ":" + String(p.port)
-                var jumpArgs = try SSHNetworking.transportArguments(jump, knownHostsFile: knownHostsFile) + ["-W", destination, "--", jump.host]
+                var jumpArgs = try SSHNetworking.transportArguments(jump, knownHostsFile: knownHostsFile) + ["-v", "-E", jumpLog.path, "-W", destination, "--", jump.host]
                 if jump.authentication == .password {
                     jumpReceipt = try SSHAuthenticationReceipt()
                     jumpArgs = jumpReceipt!.arguments + jumpArgs
                 }
-                let dir = FileManager.default.temporaryDirectory.appendingPathComponent("muty-proxy-" + id.uuidString)
-                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-                proxyDirectory = dir
                 let script = dir.appendingPathComponent("jump.sh")
                 var contents = "#!/bin/sh\n"
                 for (key, value) in jumpAuth.sorted(by: { $0.key < $1.key }) {
@@ -150,7 +163,8 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
                 let proxyHelper = URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0])
                     .deletingLastPathComponent().appendingPathComponent("muty-ssh-proxy").path
                 guard FileManager.default.isExecutableFile(atPath: proxyHelper) else { throw MutyError("SSH proxy helper is missing. Rebuild muty.app.") }
-                contents += "exec " + SSHNetworking.quote(proxyHelper) + " " + jumpArgs.map(SSHNetworking.quote).joined(separator: " ") + "\n"
+                contents += "exec " + SSHNetworking.quote(proxyHelper) + " " + jumpArgs.map(SSHNetworking.quote).joined(separator: " ") +
+                    " 2>>" + SSHNetworking.quote(jumpStderr.path) + "\n"
                 try Data(contents.utf8).write(to: script, options: .atomic)
                 try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
                 // ProxyCommand contains only our generated path; user data stays in the quoted launcher.
@@ -162,6 +176,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
                 args = transport.masterArguments + args
             }
             args += ["--", p.host]
+            diagnostics = .initial(target: Self.diagnosticEndpoint(p), jump: connectedJumpProfile.map(Self.diagnosticEndpoint))
             status = "Connecting"; running = true
             statusTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                 Task { @MainActor in self?.refreshStatus() }
@@ -176,6 +191,16 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
             }
         } catch {
             discardPendingPasswords()
+            var result = SSHConnectionDiagnostics.parse(target: Self.diagnosticEndpoint(profile),
+                                                         jump: connectedJumpProfile.map(Self.diagnosticEndpoint),
+                                                         targetLog: (sharedTransport?.diagnosticLog ?? "") + "\n" + error.localizedDescription,
+                                                         jumpLog: jumpDiagnosticLog, transportReady: false, running: false)
+            if result.issue == nil {
+                result.issue = .init(kind: .unknown, title: "Could not start SSH connection",
+                                     explanation: "Muty could not prepare or launch the SSH process.",
+                                     nextStep: "Review the session settings and try again.")
+            }
+            diagnostics = result
             releaseTransport()
             self.error = error.localizedDescription; status = "Start Failed"; running = false
             statusTimer?.invalidate(); statusTimer = nil
@@ -249,6 +274,28 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         jumpBroker?.stop(); jumpBroker = nil
         if let directory = proxyDirectory { try? FileManager.default.removeItem(at: directory) }
         proxyDirectory = nil
+        jumpDiagnosticsURL = nil
+        jumpStderrURL = nil
+    }
+
+    private var jumpDiagnosticLog: String {
+        [readDiagnosticFile(jumpDiagnosticsURL), readDiagnosticFile(jumpStderrURL)]
+            .filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
+    private var jumpDiagnosticOutput: String {
+        readDiagnosticFile(jumpStderrURL)
+    }
+
+    private func readDiagnosticFile(_ url: URL?) -> String {
+        guard let url, let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return "" }
+        return String(decoding: data.prefix(131072), as: UTF8.self)
+    }
+
+    private func refreshDiagnostics(transportReady: Bool? = nil, running: Bool? = nil) {
+        diagnostics = .parse(target: Self.diagnosticEndpoint(profile), jump: connectedJumpProfile.map(Self.diagnosticEndpoint),
+                             targetLog: sharedTransport?.diagnosticLog ?? "", jumpLog: jumpDiagnosticLog,
+                             transportReady: transportReady ?? self.transportReady, running: running ?? self.running)
     }
 
     private func promptForSecret(_ prompt: String, allowSave: Bool, endpoint: String,
@@ -450,6 +497,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
 
     private func refreshStatus() {
         guard running else { return }
+        refreshDiagnostics()
         commitAuthenticatedPasswords()
         // A live child alone cannot prove SSH authentication. Do not infer success
         // by scanning shell prompts or remote-controlled terminal output.
@@ -484,6 +532,20 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         if let transport = sharedTransport {
             let diagnostics = transport.diagnosticOutput
             if !diagnostics.isEmpty { terminal.feed(byteArray: Array(diagnostics.utf8)[...]) }
+        }
+        let jumpOutput = jumpDiagnosticOutput
+        if !jumpOutput.isEmpty {
+            let output = "\r\nJump host diagnostic output:\r\n" + jumpOutput + "\r\n"
+            terminal.feed(byteArray: Array(output.utf8)[...])
+        }
+        let wasConnected = transportReady || diagnostics.phase == .connected
+        refreshDiagnostics(transportReady: false)
+        if diagnostics.issue == nil { diagnostics.phase = .disconnected }
+        if wasConnected, diagnostics.issue?.kind == .authentication { diagnostics.issue = nil }
+        if !stopping, exitCode != 0, diagnostics.issue == nil {
+            diagnostics.issue = .init(kind: .unknown, title: "SSH session ended unexpectedly",
+                                      explanation: "The SSH process exited before the session was closed normally.",
+                                      nextStep: "Reconnect and check the server's SSH logs if the problem continues.")
         }
         negotiatedCipher = nil
         fileBrowser?.disconnect()

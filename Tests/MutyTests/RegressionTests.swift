@@ -57,6 +57,57 @@ final class RegressionTests {
         assert(TerminalColorScheme.resolve("unknown") == .mutyDark)
     }
 
+    func testSSHConnectionDiagnostics() {
+        let authenticating = SSHConnectionDiagnostics.parse(
+            target: "db.example.test:22", jump: nil,
+            targetLog: "debug1: Connecting to db.example.test [192.0.2.10] port 22.\ndebug1: Remote protocol version 2.0\ndebug1: Authenticating to db.example.test:22 as 'private-user'\ndebug1: Authentications that can continue: publickey,password\nPermission denied (publickey,password).",
+            jumpLog: "", transportReady: false, running: true)
+        assert(authenticating.phase == .authenticating)
+        assert(authenticating.issue?.kind == .authentication)
+        assert(authenticating.host == .target)
+        assert(!authenticating.copyableReport.contains("private-user"))
+        assert(authenticating.copyableReport.contains("Destination: db.example.test:22"))
+        assert(SSHConnectionDiagnostics.parse(target: "db.example.test:22", jump: nil, targetLog: "", jumpLog: "",
+                                              transportReady: false, running: true).phase == .resolving)
+
+        let recoveredAuthLog = "Permission denied (publickey,password).\ndebug1: Authentication succeeded (password).\ndebug1: Entering interactive session."
+        assert(SSHDiagnosticIssue.detect(in: recoveredAuthLog, isJumpHost: false) == nil)
+
+        let jumpFailure = SSHConnectionDiagnostics.parse(
+            target: "db.example.test:22", jump: "bastion.example.test:22",
+            targetLog: "debug1: Executing proxy command: muty-ssh-proxy",
+            jumpLog: "debug1: Connecting to bastion.example.test [192.0.2.20] port 22.\nssh: connect to host bastion.example.test port 22: Connection timed out",
+            transportReady: false, running: true)
+        assert(jumpFailure.host == .jump)
+        assert(jumpFailure.phase == .connecting)
+        assert(jumpFailure.issue?.kind == .timeout)
+        assert(jumpFailure.issue?.title.contains("Jump host") == true)
+
+        let jumpProgress = SSHConnectionDiagnostics.parse(
+            target: "db.example.test:22", jump: "bastion.example.test:22",
+            targetLog: "debug1: Executing proxy command: muty-ssh-proxy",
+            jumpLog: "debug1: Connecting to bastion.example.test [192.0.2.20] port 22.",
+            transportReady: false, running: true)
+        assert(jumpProgress.host == .jump && jumpProgress.phase == .connecting)
+
+        let failures: [(String, SSHDiagnosticIssue.Kind)] = [
+            ("ssh: Could not resolve hostname bad.example: Name or service not known", .hostname),
+            ("ssh: connect to host db.example.test port 22: Connection refused", .refused),
+            ("Host key verification failed.", .hostKey),
+            ("No matching key exchange method found.", .algorithms),
+            ("Load key /Users/example/private-key: error in libcrypto", .keyFile)
+        ]
+        for (log, kind) in failures {
+            assert(SSHDiagnosticIssue.detect(in: log, isJumpHost: false)?.kind == kind)
+        }
+
+        let ready = SSHConnectionDiagnostics.parse(
+            target: "db.example.test:22", jump: nil,
+            targetLog: "debug1: Authenticating to db.example.test:22 as 'private-user'",
+            jumpLog: "", transportReady: true, running: true)
+        assert(ready.phase == .connected && ready.issue == nil)
+    }
+
     func testSavedSessionSearch() {
         var first = SessionProfile(); first.name = "ASA edge"; first.host = "10.0.0.1"; first.folder = "Cisco  West/KOR"
         var second = SessionProfile(); second.name = "Backup"; second.host = "asa-backup.invalid"
@@ -1899,6 +1950,7 @@ final class RegressionTests {
             ("sftp.queueOwnerReplacement", SFTPQueueTests.ownerReplacement),
             ("sftp.queueRecovery", SFTPQueueTests.recovery),
             ("terminal.colorSchemeCatalog", tests.testTerminalColorSchemeCatalog),
+            ("ssh.connectionDiagnostics", tests.testSSHConnectionDiagnostics),
             ("sessions.savedSessionSearch", tests.testSavedSessionSearch),
             ("ui.editorEscapeAndCompletedTransfers", tests.testEditorEscapeAndCompletedTransfers),
             ("hosts.independentStorageAndImport", tests.testIndependentKnownHosts),

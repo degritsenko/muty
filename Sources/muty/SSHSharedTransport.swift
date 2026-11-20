@@ -16,6 +16,11 @@ final class SSHSharedTransport {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     }
     var isReady: Bool { !closed && FileManager.default.fileExists(atPath: socketPath) }
+    var diagnosticLog: String {
+        let url = directory.appendingPathComponent("transport.log")
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return "" }
+        return String(decoding: data.prefix(131072), as: UTF8.self)
+    }
     var masterArguments: [String] {
         ["-M", "-S", socketPath, "-v", "-E", directory.appendingPathComponent("transport.log").path,
          "-o", profile.sshEnabled && !profile.tunnelOnly ? "ControlPersist=60" : "ControlPersist=no"]
