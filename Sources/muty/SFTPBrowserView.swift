@@ -4,7 +4,8 @@ import UniformTypeIdentifiers
 struct SFTPBrowserView: View {
     @ObservedObject var browser: SFTPBrowserModel
     let endpoint: String
-    @ViewState private var operationStatusVisible = false
+    @ViewState private var visibleOperationID: UUID?
+    @ViewState private var statusShownAt: ContinuousClock.Instant?
     @ObservedObject private var bookmarks = SFTPBookmarks.shared
 
     private var destinationBookmarks: [SFTPBookmark] {
@@ -40,7 +41,7 @@ struct SFTPBrowserView: View {
                 SFTPFilePane(browser: browser, remote: true, title: "Remote · " + endpoint)
             }
             SFTPTransfersView(queue: browser.transferQueue, browser: browser)
-            if browser.disconnected || (operationStatusVisible && (browser.busy || browser.removing)) {
+            if browser.disconnected || (visibleOperationID == browser.operationID && browser.silentOperationID != browser.operationID) {
             Divider()
             HStack(spacing: 10) {
                 if browser.disconnected { Text("SSH connection ended").foregroundStyle(.secondary) }
@@ -71,13 +72,26 @@ struct SFTPBrowserView: View {
                 }.padding(8).background(Color.orange.opacity(0.1))
             }
         }.onAppear { browser.start() }
-        .task(id: browser.busy || browser.removing) {
-            operationStatusVisible = false
-            guard browser.busy || browser.removing else { return }
-            do { try await Task.sleep(for: .milliseconds(400)) }
-            catch { return }
-            guard !Task.isCancelled else { return }
-            operationStatusVisible = true
+        .task(id: browser.busy || browser.removing ? browser.operationID : nil) {
+            let operationID = browser.operationID
+            if browser.busy || browser.removing {
+                visibleOperationID = nil
+                statusShownAt = nil
+                guard browser.silentOperationID != operationID else { return }
+                do { try await Task.sleep(for: .milliseconds(400)) }
+                catch { return }
+                guard !Task.isCancelled, browser.operationID == operationID, browser.busy || browser.removing else { return }
+                statusShownAt = ContinuousClock.now
+                visibleOperationID = operationID
+            } else {
+                if visibleOperationID == operationID, let shownAt = statusShownAt {
+                    do { try await ContinuousClock().sleep(until: shownAt.advanced(by: .milliseconds(600))) }
+                    catch { return }
+                }
+                guard !Task.isCancelled else { return }
+                visibleOperationID = nil
+                statusShownAt = nil
+            }
         }
     }
     static func bytes(_ value: UInt64) -> String {
@@ -232,21 +246,22 @@ private struct SFTPFilePane: View {
                     HStack(spacing: 5) {
                         Image(systemName: file.isSymlink ? "link" : file.isDirectory ? "folder.fill" : "doc")
                             .foregroundStyle(file.isDirectory ? Color.accentColor : Color.secondary)
-                        Text(file.name).lineLimit(1).help(file.name)
+                        TruncatedFileName(name: file.name)
                     }
                 }.width(min: 110, ideal: 220)
                 TableColumn("Size", value: \.sortSize) { file in
                     Text(file.isDirectory ? "—" : file.size.map(SFTPBrowserView.bytes) ?? "—")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
-                }.width(min: 55, ideal: 70, max: 95)
+                }.width(min: 55, ideal: 70)
                 TableColumn("Modified", value: \.sortModified) { file in
                     Text(file.modified?.formatted(date: .numeric, time: .shortened) ?? "—")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
-                }.width(min: 95, ideal: 120, max: 160)
+                }.width(min: 95, ideal: 120)
             } rows: {
                 ForEach(rows) { file in TableRow(file).itemProvider { file.name == ".." ? nil : drag(file) } }
                     .onInsert(of: remote ? [.fileURL] : [UTType(exportedAs: Self.dragType, conformingTo: .data)]) { _, providers in _ = drop(providers) }
             }
+            .background(SFTPTableConfiguration(remote: remote))
             .background(SessionManagerCommands(active: !unavailable, scopedToSuperview: true,
                 copy: { browser.copyFiles(selectedFiles, remote: remote, cut: false) },
                 cut: { browser.copyFiles(selectedFiles, remote: remote, cut: true) },
@@ -372,4 +387,202 @@ private final class SFTPDropBatch: @unchecked Sendable {
         if let url, url.isFileURL { urls.append(url) } else { failed = true }
     }
     func result() -> (urls: [URL], failed: Bool) { lock.lock(); defer { lock.unlock() }; return (urls, failed) }
+}
+
+// Configure the AppKit table backing SwiftUI's Table without replacing its selection or drag handling.
+private struct SFTPTableConfiguration: NSViewRepresentable {
+    let remote: Bool
+
+    func makeNSView(context: Context) -> ConfigurationView {
+        let view = ConfigurationView()
+        view.autosaveKey = remote ? "muty-sftp-remote-columns" : "muty-sftp-local-columns"
+        return view
+    }
+
+    func updateNSView(_ view: ConfigurationView, context: Context) { view.configure() }
+
+    final class ConfigurationView: NSView {
+        var autosaveKey = ""
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            configure()
+        }
+
+        func configure() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.window != nil else { return }
+                var ancestor = self.superview
+                while let current = ancestor {
+                    if let table = self.findTable(in: current) {
+                        guard table.autosaveName != self.autosaveKey else { return }
+                        table.tableColumns.forEach { $0.resizingMask.insert(.userResizingMask) }
+                        table.autosaveName = NSTableView.AutosaveName(self.autosaveKey)
+                        table.autosaveTableColumns = true
+                        if let header = table.headerView {
+                            let handles = SFTPColumnResizeHandles(frame: header.bounds)
+                            handles.autoresizingMask = [.width, .height]
+                            handles.table = table
+                            handles.widthsKey = self.autosaveKey + "-widths"
+                            if let widths = UserDefaults.standard.array(forKey: handles.widthsKey) as? [Double], widths.count == table.tableColumns.count {
+                                for (column, width) in zip(table.tableColumns, widths) {
+                                    column.width = min(column.maxWidth, max(column.minWidth, CGFloat(width)))
+                                }
+                            }
+                            header.addSubview(handles)
+                        }
+                        return
+                    }
+                    ancestor = current.superview
+                }
+            }
+        }
+
+        private func findTable(in view: NSView) -> NSTableView? {
+            if let table = view as? NSTableView { return table }
+            for child in view.subviews {
+                if let table = findTable(in: child) { return table }
+            }
+            return nil
+        }
+    }
+}
+
+// Leave header clicks to AppKit while making each column boundary easier to grab.
+private final class SFTPColumnResizeHandles: NSView {
+    weak var table: NSTableView?
+    var widthsKey = ""
+    private let reach: CGFloat = 7
+    private var eventMonitor: Any?
+    private var dragIndex: Int?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let eventMonitor { NSEvent.removeMonitor(eventMonitor); self.eventMonitor = nil }
+        guard window != nil else { return }
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+            guard let self, event.window === self.window else { return event }
+            if event.type == .leftMouseDown {
+                let point = self.convert(event.locationInWindow, from: nil)
+                guard self.bounds.contains(point), self.boundary(at: point) != nil else { return event }
+                self.mouseDown(with: event)
+                return self.dragIndex == nil ? event : nil
+            }
+            guard self.dragIndex != nil else { return event }
+            if event.type == .leftMouseDragged { self.mouseDragged(with: event) }
+            else { self.mouseUp(with: event) }
+            return nil
+        }
+    }
+
+    deinit { if let eventMonitor { NSEvent.removeMonitor(eventMonitor) } }
+
+    private var dragStartX: CGFloat = 0
+    private var dragWidths: (CGFloat, CGFloat) = (0, 0)
+    private var resizeTrackingAreas: [NSTrackingArea] = []
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        resizeTrackingAreas.forEach { removeTrackingArea($0) }
+        resizeTrackingAreas.removeAll()
+        guard let table, let header = table.headerView else { return }
+        for index in table.tableColumns.indices.dropLast() {
+            let x = header.headerRect(ofColumn: index).maxX
+            let rect = NSRect(x: x - reach, y: 0, width: reach * 2, height: bounds.height).intersection(bounds)
+            guard !rect.isEmpty else { continue }
+            let area = NSTrackingArea(rect: rect, options: [.mouseEnteredAndExited, .cursorUpdate, .activeInKeyWindow], owner: self)
+            addTrackingArea(area)
+            resizeTrackingAreas.append(area)
+        }
+    }
+
+    override func mouseEntered(with event: NSEvent) { NSCursor.resizeLeftRight.set() }
+    override func cursorUpdate(with event: NSEvent) { NSCursor.resizeLeftRight.set() }
+    override func mouseExited(with event: NSEvent) { NSCursor.arrow.set() }
+
+    private func boundary(at point: NSPoint) -> CGFloat? {
+        guard let table, let header = table.headerView else { return nil }
+        return table.tableColumns.indices.dropLast().map { header.headerRect(ofColumn: $0).maxX }
+            .filter { abs($0 - point.x) <= reach }.min { abs($0 - point.x) < abs($1 - point.x) }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard bounds.contains(convert(point, from: superview)),
+              boundary(at: convert(point, from: superview)) != nil else { return nil }
+        return self
+    }
+
+    override func resetCursorRects() {
+        guard let table, let header = table.headerView else { return }
+        for index in table.tableColumns.indices.dropLast() {
+            let x = header.headerRect(ofColumn: index).maxX
+            addCursorRect(NSRect(x: x - reach, y: 0, width: reach * 2, height: bounds.height), cursor: .resizeLeftRight)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let table, let header = table.headerView else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard let x = boundary(at: point),
+              let index = table.tableColumns.indices.dropLast().first(where: { header.headerRect(ofColumn: $0).maxX == x }) else { return }
+        dragIndex = index
+        dragStartX = event.locationInWindow.x
+        dragWidths = (table.tableColumns[index].width, table.tableColumns[index + 1].width)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let table, let index = dragIndex else { return }
+        let left = table.tableColumns[index], right = table.tableColumns[index + 1]
+        let requested = event.locationInWindow.x - dragStartX
+        let lower = max(left.minWidth - dragWidths.0, dragWidths.1 - right.maxWidth)
+        let upper = min(left.maxWidth - dragWidths.0, dragWidths.1 - right.minWidth)
+        let delta = min(upper, max(lower, requested))
+        left.width = dragWidths.0 + delta
+        right.width = dragWidths.1 - delta
+        updateTrackingAreas()
+        window?.invalidateCursorRects(for: self)
+        NSCursor.resizeLeftRight.set()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard let table, dragIndex != nil else { return }
+        dragIndex = nil
+        UserDefaults.standard.set(table.tableColumns.map { Double($0.width) }, forKey: widthsKey)
+        updateTrackingAreas()
+        window?.invalidateCursorRects(for: self)
+    }
+
+}
+
+private struct TruncatedFileName: NSViewRepresentable {
+    let name: String
+
+    func makeNSView(context: Context) -> FileNameField {
+        let field = FileNameField(labelWithString: name)
+        field.font = .systemFont(ofSize: NSFont.systemFontSize)
+        field.lineBreakMode = .byTruncatingTail
+        field.cell?.usesSingleLineMode = true
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return field
+    }
+
+    func updateNSView(_ field: FileNameField, context: Context) {
+        field.stringValue = name
+        field.updateToolTip()
+    }
+
+    final class FileNameField: NSTextField {
+        override var intrinsicContentSize: NSSize {
+            NSSize(width: NSView.noIntrinsicMetric, height: super.intrinsicContentSize.height)
+        }
+
+        override func layout() {
+            super.layout()
+            updateToolTip()
+        }
+
+        func updateToolTip() {
+            let naturalWidth = (stringValue as NSString).size(withAttributes: [.font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)]).width
+            toolTip = naturalWidth > max(0, bounds.width - 4) ? stringValue : nil
+        }
+    }
 }

@@ -40,7 +40,9 @@ struct SFTPBookmark: Codable, Identifiable {
     @Published var localSelection = Set<String>()
     @Published var remoteSelection = Set<String>()
     @Published var showHidden = true { didSet { localSelection = []; remoteSelection = [] } }
-    @Published private(set) var busy = false
+    @Published private(set) var operationID = UUID()
+    @Published private(set) var silentOperationID: UUID?
+    @Published private(set) var busy = false { didSet { if busy && !oldValue { operationID = UUID() } } }
     @Published private(set) var disconnected = false
     @Published private(set) var progress: SFTPProgress?
     @Published private(set) var status = ""
@@ -59,7 +61,7 @@ struct SFTPBookmark: Codable, Identifiable {
     private var removalClient: SFTPClient?
     private var removalNeedsRefresh = false
     private var removalError: String?
-    @Published private(set) var removing = false
+    @Published private(set) var removing = false { didSet { if removing && !oldValue { operationID = UUID() } } }
     @Published private(set) var removalPath = ""
     private struct EditorKey: Hashable {
         let path: String
@@ -105,7 +107,7 @@ struct SFTPBookmark: Codable, Identifiable {
             }
         }) : normalClient.independentChannel()
         switchingClient = candidate
-        busy = true; error = nil; status = enabling ? "Starting SFTP as root…" : "Starting regular SFTP…"
+        busy = true; silentOperationID = operationID; error = nil; status = enabling ? "Starting SFTP as root…" : "Starting regular SFTP…"
         let directory = remotePath
         job = Task { [weak self] in
             guard let self else { candidate.shutdown(); return }

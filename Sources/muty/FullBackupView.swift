@@ -40,10 +40,18 @@ struct FullBackupExportView: View {
                 .font(.callout).foregroundStyle(.secondary)
             Text("Button commands are included. Use encryption if commands contain sensitive values.")
                 .font(.caption).foregroundStyle(.secondary)
-            Toggle("Encrypt with a master password", isOn: $encrypted)
+            Toggle("Encrypt backup", isOn: $encrypted)
             if encrypted {
-                SecureField("Master password", text: $password)
-                SecureField("Confirm master password", text: $confirmation)
+                Text("Choose a password for this backup. It can differ from your app master password.")
+                    .font(.callout).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Backup password").font(.callout)
+                    SecureField("Backup password", text: $password).labelsHidden()
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Confirm backup password").font(.callout)
+                    SecureField("Confirm backup password", text: $confirmation).labelsHidden()
+                }
                 Text("Keep this password separately. Without it, the backup cannot be restored.")
                     .font(.caption).foregroundStyle(.secondary)
             } else if includePasswords {
@@ -106,7 +114,7 @@ struct BackupUnlockView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Unlock Backup").font(.title2)
-            SecureField("Master password", text: $password)
+            SecureField("Backup password", text: $password)
             if busy { ProgressView("Decrypting…") }
             if let error { Text(error).font(.caption).foregroundStyle(.red) }
             HStack {

@@ -64,7 +64,7 @@ struct BulkSessionEditor: View {
                     Toggle("Change Icon", isOn: $changeIcon)
                     Picker("Session Icon", selection: $sessionIcon) {
                         Label("Default", systemImage: "desktopcomputer").tag("")
-                        if sessionIcon == "mixed" { Text("Multiple values").tag("mixed") }
+                        if sessionIcon == "mixed" { Label("Multiple values", systemImage: "square.stack.3d.up").tag("mixed") }
                         ForEach(SessionIcon.allCases) { icon in
                             Label { Text(icon.title) } icon: {
                                 CatalogIconView.image(icon.rawValue, fallback: "desktopcomputer")
