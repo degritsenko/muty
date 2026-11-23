@@ -64,6 +64,18 @@ struct ProfileEditor: View {
                         }.labelsHidden()
                     }
                     GridRow {
+                        Text("Session Icon").foregroundStyle(.secondary)
+                        Picker("Session Icon", selection: Binding(
+                            get: { profile.icon ?? "" },
+                            set: { profile.icon = $0.isEmpty ? nil : $0 }
+                        )) {
+                            Label("Default", systemImage: "desktopcomputer").tag("")
+                            ForEach(SessionIcon.allCases) { icon in
+                                Label { Text(icon.title) } icon: { CatalogIconView.image(icon.rawValue, fallback: "desktopcomputer") }.tag(icon.rawValue)
+                            }
+                        }.labelsHidden()
+                    }
+                    GridRow {
                         Text("Terminal Theme").foregroundStyle(.secondary)
                         Picker(
                             "Terminal Theme",

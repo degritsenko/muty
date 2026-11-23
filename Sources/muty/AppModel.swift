@@ -57,6 +57,7 @@ final class AppModel: ObservableObject {
     @Published var selectedFolder: String? = nil
     @Published private var emptyFolders: [String] = []
     @Published private var folderColors: [String: String] = [:]
+    @Published private var folderIcons: [String: String] = [:]
     @Published var tabs: [SSHConnection] = []
     @Published var selectedTab: UUID?
     let keyLibrary = SSHKeyLibrary()
@@ -230,6 +231,21 @@ final class AppModel: ObservableObject {
             folderColors = updated
         } catch { errorMessage = error.localizedDescription }
     }
+
+    func folderIcon(_ path: String?) -> String? {
+        guard let path else { return nil }
+        return folderIcons[path]
+    }
+
+    func setFolderIcon(_ icon: String?, for path: String) {
+        guard !readOnly, folders.contains(path) else { return }
+        var updated = folderIcons
+        if let icon { updated[path] = icon } else { updated.removeValue(forKey: path) }
+        do {
+            try saveCatalog(profiles, folders: folders, folderIcons: updated)
+            folderIcons = updated
+        } catch { errorMessage = error.localizedDescription }
+    }
     var selectedConnection: SSHConnection? { tabs.first { $0.id == selectedTab } }
     func currentFolder(for connection: SSHConnection) -> String? {
         if !connection.temporary, let profile = profiles.first(where: { $0.id == connection.profile.id }) {
@@ -260,6 +276,7 @@ final class AppModel: ObservableObject {
             profiles = catalog.profiles
             emptyFolders = catalog.folders
             folderColors = catalog.folderColors
+            folderIcons = catalog.folderIcons
         }
         catch { readOnly = true; errorMessage = error.localizedDescription }
         if vault.needsSetup && passwordStore is VaultStore {
@@ -316,8 +333,11 @@ final class AppModel: ObservableObject {
         workspaceReady = true
     }
 
-    private func saveCatalog(_ profiles: [SessionProfile], folders: [String], folderColors: [String: String]? = nil) throws {
-        try store.save(ProfileCatalog(profiles: profiles, folders: folders, folderColors: folderColors ?? self.folderColors))
+    private func saveCatalog(_ profiles: [SessionProfile], folders: [String], folderColors: [String: String]? = nil,
+                             folderIcons: [String: String]? = nil) throws {
+        try store.save(ProfileCatalog(profiles: profiles, folders: folders,
+                                      folderColors: folderColors ?? self.folderColors,
+                                      folderIcons: folderIcons ?? self.folderIcons))
     }
 
     func openStartupSession() {
@@ -375,13 +395,15 @@ final class AppModel: ObservableObject {
                        sshEnabled: Bool? = nil, sftpEnabled: Bool? = nil,
                        changeColor: Bool = false, color: String? = nil,
                        changeTheme: Bool = false, terminalTheme: String? = nil,
-                       changeButtonBar: Bool = false, buttonBarSet: String? = nil) throws {
+                       changeButtonBar: Bool = false, buttonBarSet: String? = nil,
+                       changeIcon: Bool = false, icon: String? = nil) throws {
         guard !readOnly else { throw MutyError("Profiles are read-only.") }
         guard !request.profiles.isEmpty else { throw MutyError("No sessions in this folder.") }
         guard request.profiles.allSatisfy({ original in profiles.contains(original) }) else {
             throw MutyError("Sessions changed. Close and reopen Bulk Edit.")
         }
         guard credentialID == nil || (user == nil && keyID == nil) else { throw MutyError("Assign a shared credential separately from username or SSH key changes.") }
+        if changeIcon, let icon, SessionIcon(rawValue: icon) == nil { throw MutyError("Invalid session icon.") }
         let shared: SavedCredential?
         if let credentialID { try vault.ensureAvailable(); shared = try vault.credential(credentialID) } else { shared = nil }
         if let keyID { _ = try keyLibrary.path(for: keyID) }
@@ -423,6 +445,7 @@ final class AppModel: ObservableObject {
                     authenticationIDs.insert(original.id)
                 }
             }
+            if changeIcon { updated[index].icon = icon }
             if changeColor { updated[index].color = color }
             if changeTheme { updated[index].terminalTheme = terminalTheme }
             if changeButtonBar { updated[index].buttonBarSet = buttonBarSet }
@@ -482,7 +505,8 @@ final class AppModel: ObservableObject {
             let configuration = ConfigurationBackup(sessions: profiles.map { profile in
                 let key = keyLibrary.keys.first { $0.id == profile.keyID }
                 return PortableSession(profile, keyName: key?.name, keyFingerprint: key?.fingerprint)
-            }, folders: configurationFolders, folderColors: folderColors, buttonBar: try SendStringButtonStore.shared.snapshot())
+            }, folders: configurationFolders, folderColors: folderColors, folderIcons: folderIcons,
+                buttonBar: try SendStringButtonStore.shared.snapshot())
             for profile in profiles { progress?("Exporting session: " + profile.name) }
             progress?("Exporting \(configuration.folders.count) folders and Button Bar.")
             return FullBackup(configuration: configuration, passwords: [])
@@ -494,7 +518,8 @@ final class AppModel: ObservableObject {
             let profile = try effectiveProfile(profile)
             let key = keyLibrary.keys.first { $0.id == profile.keyID }
             return PortableSession(profile, keyName: key?.name, keyFingerprint: key?.fingerprint, includeCredentialLink: true)
-        }, folders: configurationFolders, folderColors: folderColors, buttonBar: try SendStringButtonStore.shared.snapshot())
+        }, folders: configurationFolders, folderColors: folderColors, folderIcons: folderIcons,
+            buttonBar: try SendStringButtonStore.shared.snapshot())
         for profile in snapshot { progress?("Exporting session: " + profile.name) }
         progress?("Exporting \(configuration.folders.count) folders and Button Bar.")
         await Task.yield()
@@ -537,7 +562,7 @@ final class AppModel: ObservableObject {
     }
 
     private var restoreCatalog: ProfileCatalog {
-        ProfileCatalog(profiles: profiles, folders: emptyFolders, folderColors: folderColors)
+        ProfileCatalog(profiles: profiles, folders: emptyFolders, folderColors: folderColors, folderIcons: folderIcons)
     }
 
     private var restoreKeyIDs: Set<UUID> {
@@ -644,6 +669,10 @@ final class AppModel: ObservableObject {
         for (path, color) in backup.folderColors where knownFolders.contains(path) && validFolderColors.contains(color) {
             restoredFolderColors[path] = color
         }
+        var restoredFolderIcons = folderIcons
+        for (path, icon) in backup.folderIcons where knownFolders.contains(path) && FolderIcon(rawValue: icon) != nil {
+            restoredFolderIcons[path] = icon
+        }
         let addedFolderCount = Set(folders).subtracting(Set(configurationFolders)).count
         let incomingButtonBar = restoreButtonBar ? backup.buttonBar : nil
         var summaryLines = [
@@ -672,7 +701,8 @@ final class AppModel: ObservableObject {
         }
         return ConfigurationRestorePlan(
             summary: summaryLines.joined(separator: "\n\n"), source: restoreCatalog,
-            catalog: ProfileCatalog(profiles: updated, folders: folders, folderColors: restoredFolderColors),
+            catalog: ProfileCatalog(profiles: updated, folders: folders, folderColors: restoredFolderColors,
+                                    folderIcons: restoredFolderIcons),
             keys: keys, vaultChange: vaultChange, buttonBarChange: buttonBarChange, messages: messages,
             result: "Import complete: \(plan.profiles.count) sessions added, \(restored) session passwords and \(processedShared) shared credentials processed.",
             passwordSummary: passwordSummary
@@ -709,6 +739,7 @@ final class AppModel: ObservableObject {
         profiles = plan.catalog.profiles
         emptyFolders = plan.catalog.folders
         folderColors = plan.catalog.folderColors
+        folderIcons = plan.catalog.folderIcons
         if let progress {
             plan.messages.forEach(progress)
             progress(plan.result)
@@ -833,7 +864,8 @@ final class AppModel: ObservableObject {
         }
         guard !selected.isEmpty || !rootFolders.isEmpty else { return }
         sessionClipboard = SessionClipboard(profiles: selected, roots: rootFolders,
-            folders: folders.filter { path in rootFolders.contains { path == $0 || path.hasPrefix($0 + "/") } }, cut: cut)
+            folders: folders.filter { path in rootFolders.contains { path == $0 || path.hasPrefix($0 + "/") } }, cut: cut,
+            folderIcons: folderIcons.filter { path, _ in rootFolders.contains { path == $0 || path.hasPrefix($0 + "/") } })
     }
     func pasteSessionItems(into destination: String?) {
         guard !readOnly, let clipboard = sessionClipboard else { return }
@@ -849,7 +881,9 @@ final class AppModel: ObservableObject {
                     try passwordStore.write(id: pair.copy.id, password: secret, name: pair.copy.name, endpoint: pair.copy.endpoint)
                     written.append(pair.copy.id)
                 }
-                try saveFolderChanges(plan.profiles, folders: plan.folders, mapping: plan.movedFolders)
+                try saveFolderChanges(plan.profiles, folders: plan.folders, mapping: plan.movedFolders, copiedIcons: Dictionary(uniqueKeysWithValues: clipboard.folderIcons.compactMap { path, icon in
+                    FolderPaths.moved(path, using: plan.copiedFolders).map { ($0, icon) }
+                }))
             } catch {
                 var rollbackFailed = false
                 for id in written { do { try passwordStore.delete(id: id) } catch { rollbackFailed = true } }
@@ -876,20 +910,23 @@ final class AppModel: ObservableObject {
         } catch { errorMessage = error.localizedDescription }
     }
 
-    private func saveFolderChanges(_ profiles: [SessionProfile], folders: [String], mapping: [String: String]) throws {
+    private func saveFolderChanges(_ profiles: [SessionProfile], folders: [String], mapping: [String: String], copiedIcons: [String: String] = [:]) throws {
         let updatedColors = FolderPaths.moveAssignments(folderColors, using: mapping)
+        let updatedIcons = FolderPaths.moveAssignments(folderIcons, using: mapping).merging(copiedIcons) { _, copied in copied }
         guard !mapping.isEmpty else {
-            try saveCatalog(profiles, folders: folders, folderColors: updatedColors)
+            try saveCatalog(profiles, folders: folders, folderColors: updatedColors, folderIcons: updatedIcons)
             folderColors = updatedColors
+            folderIcons = updatedIcons
             return
         }
         let buttons = SendStringButtonStore.shared
         let updated = try buttons.movingFolders(mapping)
         let checkpoint = buttons.checkpoint()
         try buttons.replace(updated)
-        do { try saveCatalog(profiles, folders: folders, folderColors: updatedColors) }
+        do { try saveCatalog(profiles, folders: folders, folderColors: updatedColors, folderIcons: updatedIcons) }
         catch { buttons.rollback(checkpoint); throw error }
         folderColors = updatedColors
+        folderIcons = updatedIcons
     }
 
     func renameFolder(_ folder: String, to name: String) {
@@ -924,8 +961,10 @@ final class AppModel: ObservableObject {
         do {
             let names = folders.filter { $0 != folder && !$0.hasPrefix(folder + "/") }
             let colors = folderColors.filter { $0.key != folder && !$0.key.hasPrefix(folder + "/") }
-            try saveCatalog(updated, folders: names, folderColors: colors)
+            let icons = folderIcons.filter { $0.key != folder && !$0.key.hasPrefix(folder + "/") }
+            try saveCatalog(updated, folders: names, folderColors: colors, folderIcons: icons)
             folderColors = colors
+            folderIcons = icons
             profiles = updated; emptyFolders = names; selectedFolder = nil
         } catch { errorMessage = error.localizedDescription }
     }
@@ -1380,6 +1419,7 @@ final class AppModel: ObservableObject {
                 + "\n\nActive connections stay open. This cannot be undone.", action: "Delete") else { return }
         let keptFolders = folders.filter { !inSelectedFolder($0) }
         let keptColors = folderColors.filter { !inSelectedFolder($0.key) }
+        let keptIcons = folderIcons.filter { !inSelectedFolder($0.key) }
         let updated = profiles.filter { !ids.contains($0.id) }
         var originals: [(SessionProfile, String?)] = []
         var changed: [(SessionProfile, String?)] = []
@@ -1394,7 +1434,7 @@ final class AppModel: ObservableObject {
                     changed.append(original)
                     try passwordStore.delete(id: original.0.id)
                 }
-                try saveCatalog(updated, folders: keptFolders, folderColors: keptColors)
+                try saveCatalog(updated, folders: keptFolders, folderColors: keptColors, folderIcons: keptIcons)
             } catch {
                 let failure = error
                 var failed: [String] = []
@@ -1412,6 +1452,7 @@ final class AppModel: ObservableObject {
             revokeAuthentication(for: ids)
             profiles = updated; emptyFolders = keptFolders
             folderColors = keptColors
+            folderIcons = keptIcons
             if selectedProfile.map(ids.contains) == true { selectedProfile = nil }
             if inSelectedFolder(selectedFolder) { selectedFolder = nil }
             persistWorkspace()

@@ -1222,14 +1222,20 @@ final class RegressionTests {
         model.editFolderSessions("Group")
         assert(model.bulkEditing!.profiles.count == 2)
         try model.applyBulkEdit(model.bulkEditing!, user: nil, keyID: nil, changeJump: false, jumpID: nil,
-                                changeColor: true, color: "Blue", changeTheme: true, terminalTheme: "nord")
+                                changeColor: true, color: "Blue", changeTheme: true, terminalTheme: "nord",
+                                changeIcon: true, icon: SessionIcon.kubernetes.rawValue)
         assert(connection.status == "Restored")
         assert(model.profiles[0].user == ssh.user && model.profiles[1].user == local.user)
         assert(model.profiles[0].color == "Blue" && model.profiles[1].terminalTheme == "nord")
+        assert(model.profiles.prefix(2).allSatisfy { $0.icon == SessionIcon.kubernetes.rawValue })
         assert(model.profiles[2] == other)
         let saved = try store.load()
         assert(Set(saved.map(\.id)) == Set(model.profiles.map(\.id)))
         for item in saved { assert(model.profiles.first { $0.id == item.id } == item) }
+        model.editFolderSessions("Group")
+        try model.applyBulkEdit(model.bulkEditing!, user: nil, keyID: nil, changeJump: false, jumpID: nil,
+                                changeIcon: true, icon: nil)
+        assert(model.profiles.prefix(2).allSatisfy { $0.icon == nil && $0.color == "Blue" && $0.terminalTheme == "nord" })
         model.editFolderSessions("Group")
         try model.applyBulkEdit(model.bulkEditing!, user: "changed", keyID: nil, changeJump: false, jumpID: nil,
                                 sshEnabled: false, sftpEnabled: true, changeColor: true, changeTheme: true)
@@ -1238,6 +1244,31 @@ final class RegressionTests {
         assert(model.profiles.prefix(2).allSatisfy { $0.color == nil && $0.terminalTheme == nil })
         assert(connection.status == "Settings Changed")
         assert(credentials.accesses == 0)
+    }
+
+    @MainActor func testFolderIconCopy() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProfileStore(directory: directory)
+        var profile = SessionProfile()
+        profile.host = "icons.invalid"; profile.user = "tester"; profile.folder = "Group/Sub"
+        profile.icon = SessionIcon.router.rawValue
+        try store.save([profile])
+        let model = AppModel(store: store, keychain: LockedCredentials())
+        model.setFolderIcon(SessionIcon.kubernetes.rawValue, for: "Group")
+        model.setFolderIcon(SessionIcon.database.rawValue, for: "Group/Sub")
+        model.copySessionItems([.folder("Group")], cut: false)
+        model.pasteSessionItems(into: nil)
+        assert(model.errorMessage == nil)
+        assert(model.folderIcon("Group") == SessionIcon.kubernetes.rawValue)
+        assert(model.folderIcon("Group Copy") == SessionIcon.kubernetes.rawValue)
+        assert(model.folderIcon("Group Copy/Sub") == SessionIcon.database.rawValue)
+        assert(model.profiles.first { $0.folder == "Group Copy/Sub" }?.icon == SessionIcon.router.rawValue)
+        let reloaded = AppModel(store: store, keychain: LockedCredentials())
+        assert(reloaded.folderIcon("Group Copy/Sub") == SessionIcon.database.rawValue)
+        reloaded.setFolderColor("Red", for: "Group Copy")
+        reloaded.setFolderIcon(nil, for: "Group Copy")
+        assert(reloaded.folderIcon("Group Copy") == nil && reloaded.folderColor("Group Copy") == "Red")
     }
 
     @MainActor func testTemporaryTabSettings() throws {
@@ -1393,8 +1424,9 @@ final class RegressionTests {
         let backup = ConfigurationBackup(sessions: [], folders: ["Prod"])
         var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(backup)) as! [String: Any]
         object.removeValue(forKey: "folderColors")
+        object.removeValue(forKey: "folderIcons")
         let decoded = try JSONDecoder().decode(ConfigurationBackup.self, from: JSONSerialization.data(withJSONObject: object))
-        assert(decoded.version == 1 && decoded.folderColors.isEmpty && decoded.folders == ["Prod"])
+        assert(decoded.version == 1 && decoded.folderColors.isEmpty && decoded.folderIcons.isEmpty && decoded.folders == ["Prod"])
     }
     @MainActor func testConfigurationRestorePreservesFolderColors() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1408,13 +1440,16 @@ final class RegressionTests {
 
         var incoming = SessionProfile()
         incoming.name = "Imported"; incoming.host = "imported.invalid"; incoming.user = "tester"
+        incoming.icon = SessionIcon.database.rawValue
         incoming.folder = "Imported/Only"
         let backup = ConfigurationBackup(
             sessions: [PortableSession(incoming, keyName: nil, keyFingerprint: nil)],
-            folders: [], folderColors: ["Imported": "Red", "Imported/Only": "Green"]
+            folders: [], folderColors: ["Imported": "Red", "Imported/Only": "Green"],
+            folderIcons: ["Imported/Only": FolderIcon.database.rawValue]
         )
         let stale = try model.prepareRestore(backup, selected: [incoming.id], keyBindings: [:])
         model.setFolderColor("Purple", for: "Local")
+        model.setFolderIcon("kubernetes", for: "Local")
         do {
             try model.applyRestore(stale)
             preconditionFailure("Stale restore plan was applied.")
@@ -1424,6 +1459,7 @@ final class RegressionTests {
         let persistedAfterRejection = try store.loadCatalog()
         assert(persistedAfterRejection.profiles.map(\.id) == [local.id])
         assert(persistedAfterRejection.folderColors["Local"] == "Purple")
+        assert(persistedAfterRejection.folderIcons["Local"] == "kubernetes")
         model.setFolderColor("Blue", for: "Local")
         let plan = try model.prepareRestore(backup, selected: [incoming.id], keyBindings: [:])
         try model.applyRestore(plan)
@@ -1431,8 +1467,13 @@ final class RegressionTests {
         assert(model.folderColor("Local") == "Blue")
         assert(model.folderColor("Imported") == "Red")
         assert(model.folderColor("Imported/Only") == "Green")
+        assert(model.folderIcon("Local") == "kubernetes")
+        assert(model.folderIcon("Imported/Only") == FolderIcon.database.rawValue)
+        assert(model.profiles.first(where: { $0.id == incoming.id })?.icon == SessionIcon.database.rawValue)
         let persisted = try store.loadFolderColors()
         assert(persisted["Local"] == "Blue" && persisted["Imported/Only"] == "Green")
+        let persistedCatalog = try store.loadCatalog()
+        assert(persistedCatalog.folderIcons["Imported/Only"] == FolderIcon.database.rawValue)
     }
     @MainActor func testWorkspaceSplitPersistence() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1891,6 +1932,7 @@ final class RegressionTests {
             ("sftp.cutConflicts", tests.testSFTPCutConflicts),
             ("terminal.unreadOutput", tests.testUnreadTerminalOutput),
             ("profiles.sessionAppearancePersistence", tests.testSessionAppearancePersistence),
+            ("profiles.folderIconCopy", tests.testFolderIconCopy),
             ("sessions.bulkAppearance", tests.testBulkSessionAppearance),
             ("sessions.temporaryTabSettings", tests.testTemporaryTabSettings),
             ("sessions.localShellTabHostName", tests.testLocalShellTabHostName),

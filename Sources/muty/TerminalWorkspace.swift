@@ -176,7 +176,7 @@ struct TerminalWorkspace<Pane: View>: View {
                     .foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    PaneSessionBranch(parent: nil, profiles: profiles, searching: !query.isEmpty) { profile in
+                    PaneSessionBranch(parent: nil, profiles: profiles, searching: !query.isEmpty, model: model) { profile in
                         guard let index = sessionPickerIndex, model.splitGroups.indices.contains(index) else { return }
                         model.focusGroup(index)
                         sessionPickerIndex = nil
@@ -253,6 +253,7 @@ struct PaneSessionBranch: View {
     let parent: String?
     let profiles: [SessionProfile]
     let searching: Bool
+    @ObservedObject var model: AppModel
     let select: (SessionProfile) -> Void
 
     private var children: [String] {
@@ -266,13 +267,16 @@ struct PaneSessionBranch: View {
 
     var body: some View {
         ForEach(children, id: \.self) { folder in
-            PaneSessionFolder(folder: folder, profiles: profiles, select: select, searching: searching)
+            PaneSessionFolder(folder: folder, profiles: profiles, model: model, select: select, searching: searching)
         }
         ForEach(profiles.filter { $0.folder == parent }) { profile in
             Button { select(profile) } label: {
-                VStack(alignment: .leading) {
-                    Text(profile.name)
-                    Text(profile.endpoint).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    SessionProfileIcon(profile: profile)
+                    VStack(alignment: .leading) {
+                        Text(profile.name)
+                        Text(profile.endpoint).font(.caption).foregroundStyle(.secondary)
+                    }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.buttonStyle(.plain)
         }
@@ -280,13 +284,15 @@ struct PaneSessionBranch: View {
 }
 
 private struct PaneSessionFolder: View {
+    @ObservedObject var model: AppModel
     let folder: String
     let profiles: [SessionProfile]
     let select: (SessionProfile) -> Void
     let searching: Bool
     @ViewState private var expanded: Bool
 
-    init(folder: String, profiles: [SessionProfile], select: @escaping (SessionProfile) -> Void, searching: Bool) {
+    init(folder: String, profiles: [SessionProfile], model: AppModel, select: @escaping (SessionProfile) -> Void, searching: Bool) {
+        self.model = model
         self.folder = folder
         self.profiles = profiles
         self.select = select
@@ -296,9 +302,11 @@ private struct PaneSessionFolder: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
-            AnyView(PaneSessionBranch(parent: folder, profiles: profiles, searching: searching, select: select))
+            AnyView(PaneSessionBranch(parent: folder, profiles: profiles, searching: searching, model: model, select: select))
         } label: {
-            Label(String(folder.split(separator: "/").last ?? ""), systemImage: "folder.fill")
+            Label { Text(String(folder.split(separator: "/").last ?? "")) } icon: {
+                FolderIconView(icon: model.folderIcon(folder), color: model.folderColor(folder).map(sessionColor) ?? .blue)
+            }
         }
         .onChange(of: searching) { _, searching in expanded = searching }
         .onChange(of: profiles.map(\.id)) { _, _ in

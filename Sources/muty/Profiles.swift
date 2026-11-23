@@ -27,6 +27,7 @@ struct SessionProfile: Codable, Identifiable, Equatable {
     var credentialID: UUID?
     var keyID: UUID?
     var color: String?
+    var icon: String?
     var buttonBarSet: String?
     var terminalTheme: String?
     var connectionType: ConnectionType = .ssh
@@ -35,11 +36,15 @@ struct SessionProfile: Codable, Identifiable, Equatable {
     var jumpHostID: UUID?
     var authentication: AuthenticationMode = .password
     var endpoint: String { connectionType == .localShell ? "Local Shell" : "\(user)@\(host):\(port)" }
+    var iconSymbol: String {
+        if let icon, SessionIcon(rawValue: icon) != nil { return icon }
+        return connectionType.icon
+    }
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case buttonBarSet, terminalTheme, id, credentialID, name, description, sshEnabled, sftpEnabled, host, port, user, savePassword, folder, favorite, identityFile, keyID, color, authentication, connectionType, forwards, tunnelOnly, jumpHostID
+        case buttonBarSet, terminalTheme, id, credentialID, name, description, sshEnabled, sftpEnabled, host, port, user, savePassword, folder, favorite, identityFile, keyID, color, icon, authentication, connectionType, forwards, tunnelOnly, jumpHostID
     }
 
     init(from decoder: Decoder) throws {
@@ -59,6 +64,7 @@ struct SessionProfile: Codable, Identifiable, Equatable {
         credentialID = try c.decodeIfPresent(UUID.self, forKey: .credentialID)
         keyID = try c.decodeIfPresent(UUID.self, forKey: .keyID)
         color = try c.decodeIfPresent(String.self, forKey: .color)
+        icon = try c.decodeIfPresent(String.self, forKey: .icon)
         buttonBarSet = try c.decodeIfPresent(String.self, forKey: .buttonBarSet)
         terminalTheme = try c.decodeIfPresent(String.self, forKey: .terminalTheme)
         forwards = try c.decodeIfPresent([PortForward].self, forKey: .forwards) ?? []
@@ -139,6 +145,27 @@ enum ConnectionType: String, Codable, CaseIterable, Identifiable {
     var icon: String { self == .ssh ? "desktopcomputer" : "terminal" }
 }
 
+enum SessionIcon: String, CaseIterable, Identifiable {
+    case router = "wifi.router.fill"
+    case server = "muty.penguin"
+    case database = "cylinder.split.1x2.fill"
+    case network = "muty.switch"
+    case kubernetes = "point.3.connected.trianglepath.dotted"
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .router: return "Router"
+        case .server: return "Server"
+        case .database: return "Database"
+        case .network: return "Network"
+        case .kubernetes: return "Kubernetes"
+        }
+    }
+}
+
+typealias FolderIcon = SessionIcon
+
 enum AuthenticationMode: String, Codable, CaseIterable, Identifiable {
     case automatic
     case password
@@ -160,6 +187,7 @@ struct ProfileCatalog: Equatable {
     var profiles: [SessionProfile]
     var folders: [String]
     var folderColors: [String: String]
+    var folderIcons: [String: String] = [:]
 }
 
 struct ProfileStore {
@@ -168,6 +196,7 @@ struct ProfileStore {
         var profiles: [SessionProfile]
         var folders: [String]?
         var folderColors: [String: String]?
+        var folderIcons: [String: String]?
     }
     let directory: URL
     var file: URL { directory.appendingPathComponent("profiles.json") }
@@ -179,7 +208,7 @@ struct ProfileStore {
 
     func loadCatalog() throws -> ProfileCatalog {
         guard FileManager.default.fileExists(atPath: file.path) else {
-            return ProfileCatalog(profiles: [], folders: [], folderColors: [:])
+            return ProfileCatalog(profiles: [], folders: [], folderColors: [:], folderIcons: [:])
         }
         do {
             let doc = try JSONDecoder().decode(Document.self, from: Data(contentsOf: file))
@@ -190,7 +219,8 @@ struct ProfileStore {
             return ProfileCatalog(
                 profiles: try doc.profiles.map { try $0.validated() },
                 folders: doc.folders ?? [],
-                folderColors: doc.folderColors ?? [:]
+                folderColors: doc.folderColors ?? [:],
+                folderIcons: doc.folderIcons ?? [:]
             )
         } catch {
             throw MutyError("Could not read \(file.path). The file was not changed. \(error.localizedDescription)")
@@ -222,8 +252,10 @@ struct ProfileStore {
     }
 
     func save(_ profiles: [SessionProfile], folders: [String] = [], folderColors: [String: String]? = nil) throws {
-        let colors = folderColors ?? (try? loadCatalog().folderColors) ?? [:]
-        try save(ProfileCatalog(profiles: profiles, folders: folders, folderColors: colors))
+        let existingCatalog = try? loadCatalog()
+        let colors = folderColors ?? existingCatalog?.folderColors ?? [:]
+        let icons = existingCatalog?.folderIcons ?? [:]
+        try save(ProfileCatalog(profiles: profiles, folders: folders, folderColors: colors, folderIcons: icons))
     }
 
     func save(_ catalog: ProfileCatalog) throws {
@@ -231,7 +263,7 @@ struct ProfileStore {
         try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(Document(version: 1, profiles: catalog.profiles, folders: catalog.folders, folderColors: catalog.folderColors))
+        let data = try encoder.encode(Document(version: 1, profiles: catalog.profiles, folders: catalog.folders, folderColors: catalog.folderColors, folderIcons: catalog.folderIcons))
         var template = Array(directory.appendingPathComponent(".profiles-XXXXXX").path.utf8CString)
         let descriptor = mkstemp(&template)
         guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }

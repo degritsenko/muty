@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct ContentView: View {
     @ObservedObject var model: AppModel
@@ -802,8 +803,7 @@ private struct SessionRow: View {
     let textFont: Font
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: profile.connectionType.icon)
-                .foregroundStyle(profile.color == nil && profile.connectionType == .ssh ? Color.cyan : sessionColor(profile.color))
+            SessionProfileIcon(profile: profile)
             Text(profile.name).font(textFont).lineLimit(1)
             Spacer(minLength: 4)
             Button { model.toggleFavorite(profile) } label: {
@@ -816,7 +816,7 @@ private struct SessionRow: View {
             .contentShape(Rectangle()).tag(SessionRowID(profileID: profile.id, location: location))
             .help(profile.endpoint)
             .draggable("muty-session:" + profile.id.uuidString) {
-                Label(profile.name, systemImage: "desktopcomputer")
+                Label { Text(profile.name) } icon: { SessionProfileIcon(profile: profile) }
                     .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
             }
     }
@@ -862,7 +862,7 @@ private struct SessionSearchFolder: View {
             Label {
                 Text(String(folder.split(separator: "/").last ?? "")).foregroundStyle(.primary)
             } icon: {
-                Image(systemName: "folder.fill").foregroundStyle(.blue)
+                FolderIconView(icon: model.folderIcon(folder), color: model.folderColor(folder).map(sessionColor) ?? .blue)
             }.font(textFont)
         }
         .listRowInsets(EdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6))
@@ -892,7 +892,7 @@ private struct FolderBranch: View {
                 AnyView(FolderBranch(parent: path, model: model, textFont: textFont, expandedFolders: $expandedFolders))
             } label: {
                 Label { Text(String(path.split(separator: "/").last ?? "")).font(textFont).lineLimit(1) } icon: {
-                    Image(systemName: "folder.fill").foregroundStyle(model.folderColor(path).map(sessionColor) ?? .blue)
+                    FolderIconView(icon: model.folderIcon(path), color: model.folderColor(path).map(sessionColor) ?? .blue)
                 }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 2)
@@ -916,7 +916,7 @@ private struct FolderBranch: View {
     }
 }
 
-private func sessionColor(_ name: String?) -> Color {
+func sessionColor(_ name: String?) -> Color {
     switch name {
     case "Red": return .red
     case "Orange": return .orange
