@@ -14,6 +14,8 @@ struct BulkSessionEditor: View {
     @Environment(\.dismiss) private var dismiss
     @ViewState private var changeColor = false
     @ViewState private var color = ""
+    @ViewState private var changeIcon = false
+    @ViewState private var sessionIcon = "mixed"
     @ViewState private var changeTheme = false
     @ViewState private var terminalTheme = ""
     @ViewState private var changeButtonBar = false
@@ -38,7 +40,8 @@ struct BulkSessionEditor: View {
     private var hasSSH: Bool { request.profiles.contains { $0.connectionType == .ssh } }
 
     private var enabled: Bool {
-        !request.profiles.isEmpty && ((hasSSH && (changeModes || changeUser || changeKey || changeJump || assignCredential)) || changeColor || changeTheme || changeButtonBar)
+        !request.profiles.isEmpty && ((hasSSH && (changeModes || changeUser || changeKey || changeJump || assignCredential)) || changeColor || changeTheme || changeButtonBar || changeIcon)
+        && (!changeIcon || sessionIcon != "mixed")
         && (!changeButtonBar || buttonBarSet != "mixed")
         && (!hasSSH || !changeUser || !user.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         && (!hasSSH || !changeKey || UUID(uuidString: key) != nil)
@@ -56,6 +59,18 @@ struct BulkSessionEditor: View {
                             Text("Default").tag("")
                             ForEach(["Red", "Orange", "Yellow", "Green", "Blue", "Purple"], id: \.self) { Text($0).tag($0) }
                         }.labelsHidden().disabled(!changeColor)
+                }
+                GridRow {
+                    Toggle("Change Icon", isOn: $changeIcon)
+                    Picker("Session Icon", selection: $sessionIcon) {
+                        Label("Default", systemImage: "desktopcomputer").tag("")
+                        if sessionIcon == "mixed" { Text("Multiple values").tag("mixed") }
+                        ForEach(SessionIcon.allCases) { icon in
+                            Label { Text(icon.title) } icon: {
+                                CatalogIconView.image(icon.rawValue, fallback: "desktopcomputer")
+                            }.tag(icon.rawValue)
+                        }
+                    }.labelsHidden().disabled(!changeIcon)
                 }
                 GridRow {
                     Toggle("Terminal Theme", isOn: $changeTheme)
@@ -128,6 +143,8 @@ struct BulkSessionEditor: View {
             }
         }.padding(22).frame(width: 660)
         .onAppear {
+            let icons = Set(request.profiles.map { $0.icon ?? "" })
+            sessionIcon = icons.count == 1 ? icons.first! : "mixed"
             let values = Set(request.profiles.map { $0.buttonBarSet ?? "inherit" })
             buttonBarSet = values.count == 1 ? values.first! : "mixed"
         }
@@ -150,7 +167,8 @@ struct BulkSessionEditor: View {
                         sshEnabled: hasSSH && changeModes ? sshEnabled : nil, sftpEnabled: hasSSH && changeModes ? sftpEnabled : nil,
                         changeColor: changeColor, color: color.isEmpty ? nil : color,
                         changeTheme: changeTheme, terminalTheme: terminalTheme.isEmpty ? nil : terminalTheme,
-                        changeButtonBar: changeButtonBar, buttonBarSet: buttonBarSet == "inherit" ? nil : buttonBarSet)
+                        changeButtonBar: changeButtonBar, buttonBarSet: buttonBarSet == "inherit" ? nil : buttonBarSet,
+                        changeIcon: changeIcon, icon: sessionIcon.isEmpty ? nil : sessionIcon)
                     dismiss()
                 } catch { self.error = error.localizedDescription }
             }

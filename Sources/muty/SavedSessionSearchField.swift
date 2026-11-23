@@ -163,12 +163,15 @@ struct SavedSessionSearchField: NSViewRepresentable {
                     VStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(results.enumerated()), id: \.element.id) { index, profile in
                                 Button { [weak self] in self?.connect(profile) } label: {
-                                    VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 8) {
+                                        SessionProfileIcon(profile: profile)
+                                        VStack(alignment: .leading, spacing: 2) {
                                         Text(profile.folder.map { $0 + "/" + profile.name } ?? profile.name)
                                             .lineLimit(1)
                                         Text(profile.connectionType == .localShell ? "Local shell" : profile.endpoint)
                                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                     }
+                                        }
                                     .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
                                     .padding(.horizontal, 10).padding(.vertical, 4)
                                     .background(index == selected ? Color.accentColor.opacity(0.2) : .clear)

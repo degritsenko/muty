@@ -29,11 +29,13 @@ struct SessionClipboard {
     let roots: [String]
     let folders: [String]
     let cut: Bool
+    var folderIcons: [String: String] = [:]
     struct Plan {
         var profiles: [SessionProfile]
         var folders: [String]
         var added: [(source: UUID, copy: SessionProfile)]
         var movedFolders: [String: String]
+        var copiedFolders: [String: String] = [:]
     }
     func plan(profiles current: [SessionProfile], folders currentFolders: [String], destination: String?) throws -> Plan {
         if let destination, roots.contains(where: { destination == $0 || destination.hasPrefix($0 + "/") }) {
@@ -76,7 +78,7 @@ struct SessionClipboard {
             result.append(copy)
             if !cut { added.append((source.id, copy)) }
         }
-        return Plan(profiles: result, folders: names.sorted(), added: added, movedFolders: cut ? mappedRoots : [:])
+        return Plan(profiles: result, folders: names.sorted(), added: added, movedFolders: cut ? mappedRoots : [:], copiedFolders: cut ? [:] : mappedRoots)
     }
     private func contained(_ path: String?) -> Bool {
         guard let path else { return false }

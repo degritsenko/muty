@@ -146,52 +146,25 @@ enum ConnectionType: String, Codable, CaseIterable, Identifiable {
 }
 
 enum SessionIcon: String, CaseIterable, Identifiable {
-    case computer = "desktopcomputer"
     case router = "wifi.router.fill"
-    case server = "server.rack"
+    case server = "muty.penguin"
     case database = "cylinder.split.1x2.fill"
-    case terminal = "terminal.fill"
-    case network = "network"
-    case cloud = "cloud.fill"
-    case storage = "externaldrive.fill"
+    case network = "muty.switch"
+    case kubernetes = "point.3.connected.trianglepath.dotted"
 
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .computer: return "Computer"
         case .router: return "Router"
         case .server: return "Server"
         case .database: return "Database"
-        case .terminal: return "Terminal"
         case .network: return "Network"
-        case .cloud: return "Cloud"
-        case .storage: return "Storage"
-        }
-    }
-}
-
-enum FolderIcon: String, CaseIterable, Identifiable {
-    case kubernetes
-    case server = "server.rack"
-    case database = "cylinder.split.1x2.fill"
-    case network = "network"
-    case cloud = "cloud.fill"
-    case keys = "key.fill"
-    case archive = "archivebox.fill"
-
-    var id: String { rawValue }
-    var title: String {
-        switch self {
         case .kubernetes: return "Kubernetes"
-        case .server: return "Server"
-        case .database: return "Database"
-        case .network: return "Network"
-        case .cloud: return "Cloud"
-        case .keys: return "Keys"
-        case .archive: return "Archive"
         }
     }
 }
+
+typealias FolderIcon = SessionIcon
 
 enum AuthenticationMode: String, Codable, CaseIterable, Identifiable {
     case automatic

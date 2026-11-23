@@ -69,9 +69,9 @@ struct ProfileEditor: View {
                             get: { profile.icon ?? "" },
                             set: { profile.icon = $0.isEmpty ? nil : $0 }
                         )) {
-                            Text("Default").tag("")
+                            Label("Default", systemImage: "desktopcomputer").tag("")
                             ForEach(SessionIcon.allCases) { icon in
-                                Label(icon.title, systemImage: icon.rawValue).tag(icon.rawValue)
+                                Label { Text(icon.title) } icon: { CatalogIconView.image(icon.rawValue, fallback: "desktopcomputer") }.tag(icon.rawValue)
                             }
                         }.labelsHidden()
                     }

@@ -426,27 +426,6 @@ struct ContentView: View {
                             model.selectedFolder = row.folderPath; model.newFolderPrompt = true
                         }.disabled(model.readOnly)
                         if let path = row.folderPath {
-                            Menu("Folder Icon") {
-                                Button {
-                                    model.setFolderIcon(nil, for: path)
-                                } label: {
-                                    HStack {
-                                        Text("Default")
-                                        if model.folderIcon(path) == nil { Image(systemName: "checkmark") }
-                                    }
-                                }
-                                ForEach(FolderIcon.allCases) { icon in
-                                    Button {
-                                        model.setFolderIcon(icon.rawValue, for: path)
-                                    } label: {
-                                        HStack {
-                                            FolderIconView(icon: icon.rawValue, color: model.folderColor(path).map(sessionColor) ?? .blue)
-                                            Text(icon.title)
-                                            if model.folderIcon(path) == icon.rawValue { Image(systemName: "checkmark") }
-                                        }
-                                    }
-                                }
-                            }
                             Menu("Folder Color") {
                                 Button("Default") { model.setFolderColor(nil, for: path) }
                                 Divider()
@@ -824,8 +803,7 @@ private struct SessionRow: View {
     let textFont: Font
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: profile.iconSymbol)
-                .foregroundStyle(profile.color == nil && profile.connectionType == .ssh ? Color.cyan : sessionColor(profile.color))
+            SessionProfileIcon(profile: profile)
             Text(profile.name).font(textFont).lineLimit(1)
             Spacer(minLength: 4)
             Button { model.toggleFavorite(profile) } label: {
@@ -838,7 +816,7 @@ private struct SessionRow: View {
             .contentShape(Rectangle()).tag(SessionRowID(profileID: profile.id, location: location))
             .help(profile.endpoint)
             .draggable("muty-session:" + profile.id.uuidString) {
-                Label(profile.name, systemImage: profile.iconSymbol)
+                Label { Text(profile.name) } icon: { SessionProfileIcon(profile: profile) }
                     .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
             }
     }
@@ -938,29 +916,7 @@ private struct FolderBranch: View {
     }
 }
 
-private struct FolderIconView: View {
-    let icon: String?
-    let color: Color
-
-    var body: some View {
-        if let icon, let selection = FolderIcon(rawValue: icon) {
-            if selection == .kubernetes,
-               let url = Bundle.main.url(forResource: "Kubernetes", withExtension: "png"),
-               let image = NSImage(contentsOf: url) {
-                Image(nsImage: image).resizable().scaledToFit().frame(width: 16, height: 16)
-                    .scaleEffect(1.18).frame(width: 16, height: 16).clipped()
-            } else if selection != .kubernetes {
-                Image(systemName: selection.rawValue).foregroundStyle(color).frame(width: 16, height: 16)
-            } else {
-                Image(systemName: "folder.fill").foregroundStyle(color).frame(width: 16, height: 16)
-            }
-        } else {
-            Image(systemName: "folder.fill").foregroundStyle(color).frame(width: 16, height: 16)
-        }
-    }
-}
-
-private func sessionColor(_ name: String?) -> Color {
+func sessionColor(_ name: String?) -> Color {
     switch name {
     case "Red": return .red
     case "Orange": return .orange

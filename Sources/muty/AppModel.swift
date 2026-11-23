@@ -395,13 +395,15 @@ final class AppModel: ObservableObject {
                        sshEnabled: Bool? = nil, sftpEnabled: Bool? = nil,
                        changeColor: Bool = false, color: String? = nil,
                        changeTheme: Bool = false, terminalTheme: String? = nil,
-                       changeButtonBar: Bool = false, buttonBarSet: String? = nil) throws {
+                       changeButtonBar: Bool = false, buttonBarSet: String? = nil,
+                       changeIcon: Bool = false, icon: String? = nil) throws {
         guard !readOnly else { throw MutyError("Profiles are read-only.") }
         guard !request.profiles.isEmpty else { throw MutyError("No sessions in this folder.") }
         guard request.profiles.allSatisfy({ original in profiles.contains(original) }) else {
             throw MutyError("Sessions changed. Close and reopen Bulk Edit.")
         }
         guard credentialID == nil || (user == nil && keyID == nil) else { throw MutyError("Assign a shared credential separately from username or SSH key changes.") }
+        if changeIcon, let icon, SessionIcon(rawValue: icon) == nil { throw MutyError("Invalid session icon.") }
         let shared: SavedCredential?
         if let credentialID { try vault.ensureAvailable(); shared = try vault.credential(credentialID) } else { shared = nil }
         if let keyID { _ = try keyLibrary.path(for: keyID) }
@@ -443,6 +445,7 @@ final class AppModel: ObservableObject {
                     authenticationIDs.insert(original.id)
                 }
             }
+            if changeIcon { updated[index].icon = icon }
             if changeColor { updated[index].color = color }
             if changeTheme { updated[index].terminalTheme = terminalTheme }
             if changeButtonBar { updated[index].buttonBarSet = buttonBarSet }
@@ -861,7 +864,8 @@ final class AppModel: ObservableObject {
         }
         guard !selected.isEmpty || !rootFolders.isEmpty else { return }
         sessionClipboard = SessionClipboard(profiles: selected, roots: rootFolders,
-            folders: folders.filter { path in rootFolders.contains { path == $0 || path.hasPrefix($0 + "/") } }, cut: cut)
+            folders: folders.filter { path in rootFolders.contains { path == $0 || path.hasPrefix($0 + "/") } }, cut: cut,
+            folderIcons: folderIcons.filter { path, _ in rootFolders.contains { path == $0 || path.hasPrefix($0 + "/") } })
     }
     func pasteSessionItems(into destination: String?) {
         guard !readOnly, let clipboard = sessionClipboard else { return }
@@ -877,7 +881,9 @@ final class AppModel: ObservableObject {
                     try passwordStore.write(id: pair.copy.id, password: secret, name: pair.copy.name, endpoint: pair.copy.endpoint)
                     written.append(pair.copy.id)
                 }
-                try saveFolderChanges(plan.profiles, folders: plan.folders, mapping: plan.movedFolders)
+                try saveFolderChanges(plan.profiles, folders: plan.folders, mapping: plan.movedFolders, copiedIcons: Dictionary(uniqueKeysWithValues: clipboard.folderIcons.compactMap { path, icon in
+                    FolderPaths.moved(path, using: plan.copiedFolders).map { ($0, icon) }
+                }))
             } catch {
                 var rollbackFailed = false
                 for id in written { do { try passwordStore.delete(id: id) } catch { rollbackFailed = true } }
@@ -904,9 +910,9 @@ final class AppModel: ObservableObject {
         } catch { errorMessage = error.localizedDescription }
     }
 
-    private func saveFolderChanges(_ profiles: [SessionProfile], folders: [String], mapping: [String: String]) throws {
+    private func saveFolderChanges(_ profiles: [SessionProfile], folders: [String], mapping: [String: String], copiedIcons: [String: String] = [:]) throws {
         let updatedColors = FolderPaths.moveAssignments(folderColors, using: mapping)
-        let updatedIcons = FolderPaths.moveAssignments(folderIcons, using: mapping)
+        let updatedIcons = FolderPaths.moveAssignments(folderIcons, using: mapping).merging(copiedIcons) { _, copied in copied }
         guard !mapping.isEmpty else {
             try saveCatalog(profiles, folders: folders, folderColors: updatedColors, folderIcons: updatedIcons)
             folderColors = updatedColors

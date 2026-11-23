@@ -1222,14 +1222,20 @@ final class RegressionTests {
         model.editFolderSessions("Group")
         assert(model.bulkEditing!.profiles.count == 2)
         try model.applyBulkEdit(model.bulkEditing!, user: nil, keyID: nil, changeJump: false, jumpID: nil,
-                                changeColor: true, color: "Blue", changeTheme: true, terminalTheme: "nord")
+                                changeColor: true, color: "Blue", changeTheme: true, terminalTheme: "nord",
+                                changeIcon: true, icon: SessionIcon.kubernetes.rawValue)
         assert(connection.status == "Restored")
         assert(model.profiles[0].user == ssh.user && model.profiles[1].user == local.user)
         assert(model.profiles[0].color == "Blue" && model.profiles[1].terminalTheme == "nord")
+        assert(model.profiles.prefix(2).allSatisfy { $0.icon == SessionIcon.kubernetes.rawValue })
         assert(model.profiles[2] == other)
         let saved = try store.load()
         assert(Set(saved.map(\.id)) == Set(model.profiles.map(\.id)))
         for item in saved { assert(model.profiles.first { $0.id == item.id } == item) }
+        model.editFolderSessions("Group")
+        try model.applyBulkEdit(model.bulkEditing!, user: nil, keyID: nil, changeJump: false, jumpID: nil,
+                                changeIcon: true, icon: nil)
+        assert(model.profiles.prefix(2).allSatisfy { $0.icon == nil && $0.color == "Blue" && $0.terminalTheme == "nord" })
         model.editFolderSessions("Group")
         try model.applyBulkEdit(model.bulkEditing!, user: "changed", keyID: nil, changeJump: false, jumpID: nil,
                                 sshEnabled: false, sftpEnabled: true, changeColor: true, changeTheme: true)
@@ -1238,6 +1244,31 @@ final class RegressionTests {
         assert(model.profiles.prefix(2).allSatisfy { $0.color == nil && $0.terminalTheme == nil })
         assert(connection.status == "Settings Changed")
         assert(credentials.accesses == 0)
+    }
+
+    @MainActor func testFolderIconCopy() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProfileStore(directory: directory)
+        var profile = SessionProfile()
+        profile.host = "icons.invalid"; profile.user = "tester"; profile.folder = "Group/Sub"
+        profile.icon = SessionIcon.router.rawValue
+        try store.save([profile])
+        let model = AppModel(store: store, keychain: LockedCredentials())
+        model.setFolderIcon(SessionIcon.kubernetes.rawValue, for: "Group")
+        model.setFolderIcon(SessionIcon.database.rawValue, for: "Group/Sub")
+        model.copySessionItems([.folder("Group")], cut: false)
+        model.pasteSessionItems(into: nil)
+        assert(model.errorMessage == nil)
+        assert(model.folderIcon("Group") == SessionIcon.kubernetes.rawValue)
+        assert(model.folderIcon("Group Copy") == SessionIcon.kubernetes.rawValue)
+        assert(model.folderIcon("Group Copy/Sub") == SessionIcon.database.rawValue)
+        assert(model.profiles.first { $0.folder == "Group Copy/Sub" }?.icon == SessionIcon.router.rawValue)
+        let reloaded = AppModel(store: store, keychain: LockedCredentials())
+        assert(reloaded.folderIcon("Group Copy/Sub") == SessionIcon.database.rawValue)
+        reloaded.setFolderColor("Red", for: "Group Copy")
+        reloaded.setFolderIcon(nil, for: "Group Copy")
+        assert(reloaded.folderIcon("Group Copy") == nil && reloaded.folderColor("Group Copy") == "Red")
     }
 
     @MainActor func testTemporaryTabSettings() throws {
@@ -1901,6 +1932,7 @@ final class RegressionTests {
             ("sftp.cutConflicts", tests.testSFTPCutConflicts),
             ("terminal.unreadOutput", tests.testUnreadTerminalOutput),
             ("profiles.sessionAppearancePersistence", tests.testSessionAppearancePersistence),
+            ("profiles.folderIconCopy", tests.testFolderIconCopy),
             ("sessions.bulkAppearance", tests.testBulkSessionAppearance),
             ("sessions.temporaryTabSettings", tests.testTemporaryTabSettings),
             ("sessions.localShellTabHostName", tests.testLocalShellTabHostName),
