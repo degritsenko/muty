@@ -193,7 +193,9 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         if fileBrowser == nil {
             let args = transport.clientArguments() + ["-T", "-p", String(profile.port), "-l", profile.user, "-s", "--", profile.host, "sftp"]
             let queue = app.transferQueue(for: transferQueueID, profileID: temporary ? nil : profile.id, endpoint: profile.endpoint, jump: connectedJumpProfile)
-            fileBrowser = SFTPBrowserModel(client: SFTPClient(arguments: args), app: app, sessionID: profile.id, transferQueue: queue, endpoint: profile.endpoint, jumpEndpoint: connectedJumpProfile?.endpoint, temporary: temporary)
+            let sudoScript = "for p in /usr/lib/openssh/sftp-server /usr/libexec/openssh/sftp-server /usr/lib/ssh/sftp-server /usr/lib/sftp-server; do if test -x \"$p\"; then exec sudo -S -p 'MUTY_SUDO_PASSWORD:' -- sh -c 'printf R; exec \"$1\"' muty-sftp \"$p\"; fi; done; printf 'External sftp-server not found' >&2; exit 1"
+            let sudoArgs = transport.clientArguments() + ["-T", "-p", String(profile.port), "-l", profile.user, "--", profile.host, sudoScript]
+            fileBrowser = SFTPBrowserModel(sudoArguments: sudoArgs, client: SFTPClient(arguments: args), app: app, sessionID: profile.id, transferQueue: queue, endpoint: profile.endpoint, jumpEndpoint: connectedJumpProfile?.endpoint, temporary: temporary)
         }
         showingSFTP = true
         terminal.cancelPendingPaste()
@@ -328,7 +330,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         if let browser = fileBrowser {
             // Retain the connection and its master until staged uploads are removed.
             disconnectCleanupPending = true
-            browser.disconnect()
+            browser.disconnect(preserveCleanupPassword: true)
             running = false
             status = "Disconnecting"
             Self.cleanup.enter()

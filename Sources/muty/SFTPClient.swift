@@ -87,6 +87,7 @@ final class SFTPClient: @unchecked Sendable {
     private let lock = NSCondition()
     private let executable: URL
     private let arguments: [String]
+    private let sudoPassword: ((Bool) -> String?)?
     private var process: Process?
     private var input: FileHandle?
     private var output: FileHandle?
@@ -100,11 +101,12 @@ final class SFTPClient: @unchecked Sendable {
     private var posixRename = false
     private var copyData = false
     private var pendingCleanup: [(String, Bool)] = []
-    init(executable: URL = URL(fileURLWithPath: "/usr/bin/ssh"), arguments: [String]) {
+    init(executable: URL = URL(fileURLWithPath: "/usr/bin/ssh"), arguments: [String], sudoPassword: ((Bool) -> String?)? = nil) {
+        self.sudoPassword = sudoPassword
         self.executable = executable; self.arguments = arguments
     }
     func independentChannel() -> SFTPClient {
-        SFTPClient(executable: executable, arguments: arguments)
+        SFTPClient(executable: executable, arguments: arguments, sudoPassword: sudoPassword)
     }
 
     func perform<T>(_ action: @escaping (SFTPClient) throws -> T) async throws -> T {
@@ -142,7 +144,7 @@ final class SFTPClient: @unchecked Sendable {
         if let pid, pid > 0 { _ = kill(pid, SIGTERM) }
         queue.async { [self] in disconnectProcess() }
     }
-    func finishForQuit() async {
+    func finishForQuit(cleanupPassword: String? = nil) async {
         shutdown()
         let paths = await withCheckedContinuation { continuation in
             queue.async { [self] in continuation.resume(returning: pendingCleanup) }
@@ -151,7 +153,11 @@ final class SFTPClient: @unchecked Sendable {
 
         // The upload channel may have outstanding replies from cancellation.
         // Keep the SSH master alive and use a separate SFTP channel for cleanup.
-        let cleaner = independentChannel()
+        let cleaner: SFTPClient
+        if sudoPassword != nil {
+            let password = cleanupPassword
+            cleaner = SFTPClient(executable: executable, arguments: arguments, sudoPassword: { rejected in rejected ? nil : password })
+        } else { cleaner = independentChannel() }
         let timeout = DispatchWorkItem { cleaner.shutdown() }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3, execute: timeout)
         defer { timeout.cancel(); cleaner.shutdown() }
@@ -186,9 +192,9 @@ final class SFTPClient: @unchecked Sendable {
     private func connect() throws {
         if initiated { return }
         try checkCancellation()
-        let process = Process(), incoming = Pipe(), outgoing = Pipe()
+        let process = Process(), incoming = Pipe(), outgoing = Pipe(), diagnostics = Pipe()
         process.executableURL = executable; process.arguments = arguments
-        process.standardInput = incoming; process.standardOutput = outgoing; process.standardError = FileHandle.nullDevice
+        process.standardInput = incoming; process.standardOutput = outgoing; process.standardError = sudoPassword == nil ? FileHandle.nullDevice : diagnostics.fileHandleForWriting
         process.terminationHandler = { _ in }
         var environment = ProcessInfo.processInfo.environment
         for key in Array(environment.keys) where key.hasPrefix("MUTY_") || key.hasPrefix("SSH_ASKPASS") { environment.removeValue(forKey: key) }
@@ -198,6 +204,7 @@ final class SFTPClient: @unchecked Sendable {
         do { try process.run(); self.process = process; lock.unlock() }
         catch { lock.unlock(); throw error }
         input = incoming.fileHandleForWriting; output = outgoing.fileHandleForReading
+        if let sudoPassword { try authorizeSudo(diagnostics: diagnostics.fileHandleForReading, password: sudoPassword) }
         var packet = SFTPPacket(); packet.byte(1); packet.u32(3); try send(packet)
         var response = try receive()
         guard try response.byte() == 2, try response.u32() == 3 else { throw MutyError("This server does not support SFTP v3.") }
@@ -207,6 +214,46 @@ final class SFTPClient: @unchecked Sendable {
             if name == "copy-data" && version == Data("1".utf8) { copyData = true }
         }
         initiated = true
+    }
+    // A privileged wrapper emits one ready byte before execing the binary server.
+    // Do not send SFTP packets until sudo has finished reading its password.
+    private func authorizeSudo(diagnostics: FileHandle, password: (Bool) -> String?) throws {
+        guard let output, let input else { throw MutyError("SFTP channel is closed.") }
+        var text = ""
+        var attempts = 0
+        var deadline = ProcessInfo.processInfo.systemUptime + 30
+        while true {
+            try checkCancellation()
+            guard ProcessInfo.processInfo.systemUptime < deadline else { throw MutyError("Timed out starting SFTP through sudo.") }
+            var descriptors = [pollfd(fd: output.fileDescriptor, events: Int16(POLLIN), revents: 0),
+                               pollfd(fd: diagnostics.fileDescriptor, events: Int16(POLLIN), revents: 0)]
+            let ready = poll(&descriptors, 2, 250)
+            if ready < 0 { if errno == EINTR { continue }; throw MutyError("Could not read sudo response.") }
+            if descriptors[1].revents != 0 {
+                var bytes = [UInt8](repeating: 0, count: 4096)
+                let count = Darwin.read(diagnostics.fileDescriptor, &bytes, bytes.count)
+                if count < 0 { if errno == EINTR { continue }; throw MutyError("Could not read sudo diagnostics.") }
+                let data = Data(bytes.prefix(max(0, count)))
+                text += String(decoding: data, as: UTF8.self)
+                if text.contains("MUTY_SUDO_PASSWORD:") {
+                    attempts += 1
+                    guard attempts <= 3 else { throw MutyError("sudo authentication failed.") }
+                    guard let secret = password(attempts > 1) else { throw CancellationError() }
+                    try checkCancellation()
+                    guard !secret.contains("\n"), !secret.contains("\r") else { throw MutyError("The sudo password cannot contain a newline.") }
+                    try input.write(contentsOf: Data((secret + "\n").utf8))
+                    text = ""
+                    deadline = ProcessInfo.processInfo.systemUptime + 30
+                }
+                if text.utf8.count > 8192 { throw MutyError("Unexpected response while starting sudo.") }
+            }
+            if descriptors[0].revents != 0 {
+                guard let data = try output.read(upToCount: 1), data == Data([82]) else {
+                    throw MutyError("Could not start SFTP as root. Check sudo permissions, the external sftp-server, and whether sudo requires a terminal. " + String(text.suffix(1000)))
+                }
+                return
+            }
+        }
     }
     private func disconnectProcess() {
         lock.lock(); let process = self.process; self.process = nil; lock.unlock()

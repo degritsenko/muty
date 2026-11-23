@@ -45,7 +45,15 @@ struct SFTPBookmark: Codable, Identifiable {
     @Published private(set) var progress: SFTPProgress?
     @Published private(set) var status = ""
     @Published var error: String?
-    private let client: SFTPClient
+    private var client: SFTPClient
+    private var sudoPasswordInMemory: String?
+    private var cleanupPassword: String?
+    private var sudoPrompt: NSAlert?
+    private var switchingClient: SFTPClient?
+    private let normalClient: SFTPClient
+    private let sudoArguments: [String]?
+    @Published private(set) var sudoEnabled = false
+    var canSwitchSudo: Bool { sudoArguments != nil && !busy && !disconnected && !removing && !transferQueue.running && !transferQueue.hasPending && editors.isEmpty && pendingMoveCleanup == nil }
     private var job: Task<Void, Never>?
     private var removalJob: Task<Void, Never>?
     private var removalClient: SFTPClient?
@@ -61,16 +69,68 @@ struct SFTPBookmark: Codable, Identifiable {
     private weak var app: AppModel?
     var visibleLocal: [BrowserFile] { localFiles.filter { showHidden || !$0.name.hasPrefix(".") } }
     var visibleRemote: [BrowserFile] { remoteFiles.filter { showHidden || !$0.name.hasPrefix(".") } }
-    init(client: SFTPClient, app: AppModel, sessionID: UUID, transferQueue: SFTPTransferQueue, endpoint: String? = nil, jumpEndpoint: String? = nil, temporary: Bool = false) {
+    init(sudoArguments: [String]? = nil, client: SFTPClient, app: AppModel, sessionID: UUID, transferQueue: SFTPTransferQueue, endpoint: String? = nil, jumpEndpoint: String? = nil, temporary: Bool = false) {
         self.endpoint = endpoint
         let bookmarkScope = temporary ? "quick-connect" : sessionID.uuidString
         bookmarkDestination = endpoint.map { bookmarkScope + "|" + String($0.count) + ":" + $0 + (jumpEndpoint ?? "") }
+        self.normalClient = client; self.sudoArguments = sudoArguments
         self.client = client; self.app = app; self.sessionID = sessionID
         self.transferQueue = transferQueue
         transferQueue.attach(owner: id, executor: SFTPTransferAdapter(client: client))
         let saved = UserDefaults.standard.string(forKey: "sftp-local-" + sessionID.uuidString)
         navigateLocal(transferQueue.localPath ?? saved ?? localPath)
     }
+    func toggleSudo() {
+        guard canSwitchSudo, let sudoArguments else { return }
+        let enabling = !sudoEnabled
+        let candidate = enabling ? SFTPClient(arguments: sudoArguments, sudoPassword: { [weak self] rejected in
+            DispatchQueue.main.sync {
+                guard let self, !self.disconnected else { return nil }
+                if rejected { self.sudoPasswordInMemory = nil }
+                if let password = self.sudoPasswordInMemory { return password }
+                let alert = NSAlert()
+                alert.messageText = "SFTP sudo authentication"
+                alert.informativeText = "Enter your remote user's sudo password. If prompted again, the previous password was not accepted."
+                alert.addButton(withTitle: "Continue")
+                alert.addButton(withTitle: "Cancel")
+                self.sudoPrompt = alert
+                defer { self.sudoPrompt = nil }
+                let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+                field.placeholderString = "Sudo password"
+                alert.accessoryView = field
+                alert.window.initialFirstResponder = field
+                guard alert.runModal() == .alertFirstButtonReturn, !self.disconnected else { return nil }
+                self.sudoPasswordInMemory = field.stringValue
+                return self.sudoPasswordInMemory
+            }
+        }) : normalClient.independentChannel()
+        switchingClient = candidate
+        busy = true; error = nil; status = enabling ? "Starting SFTP as root…" : "Starting regular SFTP…"
+        let directory = remotePath
+        job = Task { [weak self] in
+            guard let self else { candidate.shutdown(); return }
+            do {
+                let result = try await candidate.perform { channel in
+                    let path: String
+                    do { path = try channel.canonical(directory.isEmpty ? "." : directory); return (path, try channel.list(path)) }
+                    catch { let home = try channel.canonical("."); return (home, try channel.list(home)) }
+                }
+                try Task.checkCancellation()
+                guard !disconnected else { throw CancellationError() }
+                transferQueue.attach(owner: id, executor: SFTPTransferAdapter(client: candidate))
+                client.shutdown()
+                client = candidate
+                sudoEnabled = enabling
+                if !enabling { sudoPasswordInMemory = nil }
+                applyRemoteDirectory(result)
+                status = enabling ? "SFTP · root" : "SFTP connected"
+            } catch is CancellationError { candidate.shutdown(); sudoPasswordInMemory = nil; status = "Cancelled" }
+            catch { candidate.shutdown(); sudoPasswordInMemory = nil; self.error = error.localizedDescription; status = "Failed" }
+            switchingClient = nil
+            busy = false; job = nil
+        }
+    }
+
     func promptForBookmark() {
         let alert = NSAlert()
         alert.messageText = "Add SFTP Bookmark"
@@ -128,8 +188,12 @@ struct SFTPBookmark: Codable, Identifiable {
             navigateRemote(transferQueue.remotePath ?? saved ?? ".", restoring: true)
         }
     }
-    func disconnect() {
+    func disconnect(preserveCleanupPassword: Bool = false) {
+        if preserveCleanupPassword { cleanupPassword = sudoPasswordInMemory }
         disconnected = true
+        sudoPasswordInMemory = nil
+        if let sudoPrompt { NSApp.stopModal(withCode: .abort); sudoPrompt.window.orderOut(nil) }
+        switchingClient?.shutdown()
         transferQueue.detach(owner: id)
         job?.cancel()
         removalJob?.cancel()
@@ -138,14 +202,20 @@ struct SFTPBookmark: Codable, Identifiable {
         editors.values.forEach { $0.connectionEnded() }
     }
     func finishForQuit() async {
+        let password = cleanupPassword ?? sudoPasswordInMemory
+        cleanupPassword = nil
         disconnected = true
+        sudoPasswordInMemory = nil
+        if let sudoPrompt { NSApp.stopModal(withCode: .abort); sudoPrompt.window.orderOut(nil) }
+        switchingClient?.shutdown()
         transferQueue.detach(owner: id)
         job?.cancel()
         removalJob?.cancel()
         removalClient?.shutdown()
-        await client.finishForQuit()
+        await client.finishForQuit(cleanupPassword: password)
     }
     func cancel() {
+        switchingClient?.cancel()
         transferQueue.cancel(owner: id)
         job?.cancel(); client.cancel()
         removalJob?.cancel(); removalClient?.cancel()

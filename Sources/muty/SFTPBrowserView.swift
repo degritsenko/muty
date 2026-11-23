@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 struct SFTPBrowserView: View {
     @ObservedObject var browser: SFTPBrowserModel
     let endpoint: String
+    @ViewState private var operationStatusVisible = false
     @ObservedObject private var bookmarks = SFTPBookmarks.shared
 
     private var destinationBookmarks: [SFTPBookmark] {
@@ -39,7 +40,7 @@ struct SFTPBrowserView: View {
                 SFTPFilePane(browser: browser, remote: true, title: "Remote · " + endpoint)
             }
             SFTPTransfersView(queue: browser.transferQueue, browser: browser)
-            if browser.busy || browser.removing || browser.disconnected {
+            if browser.disconnected || (operationStatusVisible && (browser.busy || browser.removing)) {
             Divider()
             HStack(spacing: 10) {
                 if browser.disconnected { Text("SSH connection ended").foregroundStyle(.secondary) }
@@ -70,6 +71,14 @@ struct SFTPBrowserView: View {
                 }.padding(8).background(Color.orange.opacity(0.1))
             }
         }.onAppear { browser.start() }
+        .task(id: browser.busy || browser.removing) {
+            operationStatusVisible = false
+            guard browser.busy || browser.removing else { return }
+            do { try await Task.sleep(for: .milliseconds(400)) }
+            catch { return }
+            guard !Task.isCancelled else { return }
+            operationStatusVisible = true
+        }
     }
     static func bytes(_ value: UInt64) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(min(value, UInt64(Int64.max))), countStyle: .file)
@@ -205,6 +214,11 @@ private struct SFTPFilePane: View {
                 }.disabled(browser.busy || browser.disconnected || browser.remotePath.isEmpty || selectedFiles.isEmpty)
             }
             HStack(spacing: 6) {
+                if remote {
+                    Button(browser.sudoEnabled ? "SFTP · root" : "Sudo", systemImage: browser.sudoEnabled ? "lock.open.fill" : "lock.shield") { browser.toggleSudo() }
+                        .disabled(!browser.canSwitchSudo)
+                        .help("Switch SFTP privileges. Close remote editors and finish transfers first.")
+                }
                 Button { home() } label: { Image(systemName: "house") }.help("Home directory")
                 TextField(remote ? "Remote path" : "Local path", text: $path)
                     .textFieldStyle(.roundedBorder).onSubmit { navigate(path) }
