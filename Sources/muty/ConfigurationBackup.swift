@@ -84,7 +84,7 @@ struct PortableSession: Codable, Identifiable {
     }
     func profile(keyID: UUID?) throws -> SessionProfile {
         guard AuthenticationMode.selectable.contains(authentication) else { throw MutyError("Unsupported authentication method.") }
-        if connectionType == .ssh && authentication == .identityFile && keyID == nil {
+        if connectionType == .ssh && authentication.supportsKey && keyID == nil {
             throw MutyError("Select an SSH key or exclude this session.")
         }
         var p = SessionProfile()

@@ -152,8 +152,13 @@ struct ContentView: View {
         .sheet(item: $model.configurationImport) { ConfigurationImportView(model: model, backup: $0) }
         .sheet(item: $model.importPreview) { SessionImportView(model: model, preview: $0) }
         .sheet(item: $model.mobaXtermImport) { MobaXtermImportView(model: model, preview: $0) }
-        .onChange(of: model.quickConnect) { _, show in
-            if show { DispatchQueue.main.async { openQuickConnectWindow() } }
+        .sheet(isPresented: $model.quickConnect) {
+            QuickConnectView(
+                dismiss: { model.quickConnect = false },
+                model: model,
+                presentingWindow: { NSApp.keyWindow }
+            )
+            .frame(minWidth: 520, idealWidth: 600, minHeight: 460, idealHeight: 500)
         }
         .sheet(item: $model.bulkEditing) { BulkSessionEditor(model: model, request: $0) }
         .sheet(item: $model.editing) { ProfileEditor(model: model, draft: $0) }
@@ -193,35 +198,6 @@ struct ContentView: View {
         } message: { Text(model.errorMessage ?? "") }
         .onAppear { fontSize = min(30, max(9, fontSize.isFinite ? fontSize : 13)) }
     }
-    private func openQuickConnectWindow() {
-        guard model.quickConnect else { return }
-        let parent = NSApp.keyWindow ?? NSApp.mainWindow
-        let window = ModalSettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 480),
-                                         styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        window.title = "Quick Connect"
-        window.isReleasedWhenClosed = false
-        window.tabbingMode = .disallowed
-        window.contentMinSize = NSSize(width: 480, height: 460)
-        window.contentView = NSHostingView(rootView: QuickConnectView(dismiss: { [weak window] in window?.performClose(nil) }, model: model))
-        window.setFrameAutosaveName("muty.quickConnect")
-        _ = window.setFrameUsingName("muty.quickConnect")
-        // Keep old oversized saved frames from dominating this short form.
-        let contentSize = window.contentRect(forFrameRect: window.frame).size
-        window.setContentSize(NSSize(width: min(contentSize.width, 600),
-                                     height: min(contentSize.height, 500)))
-        if let parent {
-            let area = parent.screen.map { parent.frame.intersection($0.visibleFrame) } ?? parent.frame
-            if !area.isEmpty {
-                window.setFrameOrigin(NSPoint(x: area.midX - window.frame.width / 2, y: area.midY - window.frame.height / 2))
-            } else { window.center() }
-        } else { window.center() }
-        window.makeKeyAndOrderFront(nil)
-        NSApp.runModal(for: window)
-        window.orderOut(nil)
-        model.quickConnect = false
-        parent?.makeKeyAndOrderFront(nil)
-    }
-
     private func deleteFromManager(_ rows: Set<SessionRowID>) {
         model.deleteSelectedItems(rows)
         sessionManagerVisible = true
@@ -627,7 +603,7 @@ struct SessionTab: View {
         .contextMenu {
             Button(connection.profile.connectionType == .localShell ? "Restart Shell" : "Reconnect") { model.reconnect(connection) }
             Button(connection.profile.connectionType == .localShell ? "Stop Shell" : "Disconnect") { connection.disconnect() }.disabled(!connection.running)
-            if !connection.running && connection.profile.connectionType == .ssh && connection.profile.authentication == .password {
+            if !connection.running && connection.profile.connectionType == .ssh && connection.profile.authentication.supportsPassword {
                 Button("Enter Password Again…") { model.reconnect(connection, promptForPassword: true) }
             }
             Divider()
@@ -787,7 +763,7 @@ private struct SessionPasswordAction: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        if profile.connectionType == .ssh && profile.authentication == .password
+        if profile.connectionType == .ssh && profile.authentication.supportsPassword
             && (profile.savePassword || profile.credentialID != nil) {
             Button(profile.credentialID == nil ? "Forget Saved Password…" : "Unlink Shared Credential…") {
                 model.forgetSavedPassword(profile)

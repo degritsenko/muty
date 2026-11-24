@@ -770,6 +770,14 @@ final class RegressionTests {
         let profile = try JSONDecoder().decode(SessionProfile.self, from: Data(json.utf8))
         assert(profile.authentication == .password)
         assert(!profile.favorite)
+        var legacyCombined = profile
+        legacyCombined.authentication = .agentAndPassword
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("muty-legacy-combined-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProfileStore(directory: directory)
+        try store.save([legacyCombined])
+        let loaded = try store.load()
+        assert(loaded.count == 1 && loaded[0].authentication == .agentAndPassword && loaded[0].keyID == nil)
         assert(!profile.x11Forwarding)
         var enabled = profile
         enabled.x11Forwarding = true

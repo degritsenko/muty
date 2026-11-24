@@ -4,6 +4,7 @@ import AppKit
 struct QuickConnectView: View {
     let dismiss: () -> Void
     @ObservedObject var model: AppModel
+    let presentingWindow: () -> NSWindow?
     @ViewState private var connectionType = ConnectionType.ssh
     @ViewState private var sshEnabled = true
     @ViewState private var sftpEnabled = false
@@ -18,7 +19,10 @@ struct QuickConnectView: View {
     @FocusState private var usernameFocused: Bool
 
     private var connectionHint: String {
-        if connectionType == .ssh, authentication == .password, credentialID == nil {
+        if connectionType == .ssh, authentication.supportsPassword, credentialID == nil, !model.vault.isLocked {
+            return "Select a saved credential to connect without entering a password, or leave it empty to enter one when prompted."
+        }
+        if connectionType == .ssh, authentication.supportsPassword, credentialID == nil {
             return "Click Connect to enter the password when prompted. No profile or password is saved."
         }
         return "No profile is saved."
@@ -52,7 +56,7 @@ struct QuickConnectView: View {
                         }
                         GridRow {
                             Text("Username").foregroundStyle(.secondary)
-                            if authentication == .password, let credentialID {
+                            if authentication.supportsPassword, let credentialID {
                                 Text(
                                     model.vault.credentials.first(where: { $0.id == credentialID })?.username
                                         ?? "Unlock credentials to view")
@@ -68,34 +72,24 @@ struct QuickConnectView: View {
                                 ForEach(AuthenticationMode.selectable) { Text($0.title).tag($0) }
                             }.labelsHidden()
                         }
-                        if authentication == .password {
+                        if authentication.supportsKey {
+                            GridRow {
+                                Text("SSH Key").foregroundStyle(.secondary)
+                                KeySelectionView(
+                                    library: model.keyLibrary, keyID: $keyID, legacyPath: $identityFile,
+                                    presentingWindow: presentingWindow
+                                )
+                            }
+                        }
+                        if authentication.supportsPassword {
                             GridRow {
                                 Text("Credentials").foregroundStyle(.secondary)
                                 CredentialSelectionView(
                                     vault: model.vault, credentialID: $credentialID,
-                                    sessionCredentialsTitle: "Enter password when prompted"
+                                    sessionCredentialsTitle: "Select a saved credential",
+                                    autoSelectOnlyCredential: true
                                 )
                                 .labelsHidden()
-                            }
-                        } else if authentication == .identityFile {
-                            GridRow {
-                                Text("SSH Key").foregroundStyle(.secondary)
-                                Picker("SSH Key", selection: $keyID) {
-                                    Text(identityFile.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Select a key")
-                                        .tag(nil as UUID?)
-                                    ForEach(model.keyLibrary.keys) { key in
-                                        Text(key.name).tag(Optional(key.id))
-                                    }
-                                }
-                                .pickerStyle(.menu).labelsHidden()
-                                .onChange(of: keyID) { _, selectedKey in
-                                    if selectedKey != nil { identityFile = nil }
-                                    error = nil
-                                }
-                            }
-                            GridRow {
-                                Text("Key File").foregroundStyle(.secondary)
-                                Button("Choose File…") { chooseKeyFile() }
                             }
                         }
                     } else {
@@ -120,19 +114,19 @@ struct QuickConnectView: View {
                         if connectionType == .ssh {
                             guard let number = Int(port) else { throw MutyError("Enter a valid port.") }
                             let selectedUser: String
-                            if authentication == .password, let credentialID {
+                            if authentication.supportsPassword, let credentialID {
                                 try model.vault.ensureAvailable()
                                 selectedUser = try model.vault.credential(credentialID).username
                             } else { selectedUser = user }
                             let address = try ConnectionAddress.parse(host, defaultUser: selectedUser, defaultPort: number)
-                            if authentication == .password, credentialID != nil, address.user != selectedUser {
+                            if authentication.supportsPassword, credentialID != nil, address.user != selectedUser {
                                 throw MutyError("The username in Host does not match the selected credential (\(selectedUser)).")
                             }
                             profile.host = address.host; profile.port = address.port; profile.user = address.user
                             profile.authentication = authentication
-                            profile.credentialID = authentication == .password ? credentialID : nil
+                            profile.credentialID = authentication.supportsPassword ? credentialID : nil
                             profile.keyID = keyID; profile.identityFile = identityFile
-                            if authentication == .identityFile, keyID == nil, let identityFile {
+                            if authentication.supportsKey, keyID == nil, let identityFile {
                                 try SSHKeyLibrary.validateConnectionKey(URL(fileURLWithPath: identityFile))
                             }
                         }
@@ -145,24 +139,15 @@ struct QuickConnectView: View {
                 }.keyboardShortcut(.defaultAction)
             }
         }.padding(20).frame(minWidth: 480, minHeight: 460)
+        .onAppear { selectDefaultKey() }
+        .onChange(of: authentication) { _, _ in selectDefaultKey() }
     }
 
-    private func chooseKeyFile() {
-        guard let window = NSApp.modalWindow else { return }
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.showsHiddenFiles = true
-        panel.message = "Choose a private SSH key for this connection. It will not be added to the key library."
-        panel.beginSheetModal(for: window) { response in
-            guard response == .OK, let file = panel.url else { return }
-            do {
-                try SSHKeyLibrary.validateConnectionKey(file)
-                identityFile = file.path
-                keyID = nil
-                error = nil
-            } catch { self.error = error.localizedDescription }
+    private func selectDefaultKey() {
+        if authentication.supportsKey && keyID == nil && identityFile == nil {
+            keyID = model.keyLibrary.keys.first(where: { $0.pendingDeletion != true })?.id
         }
     }
+
 
 }

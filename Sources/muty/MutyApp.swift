@@ -28,6 +28,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Finish our nested modal loop before confirmation or asynchronous shutdown.
+        if let window = sender.modalWindow as? ModalSettingsWindow {
+            window.close()
+            RunLoop.main.perform(inModes: [.default]) { sender.terminate(nil) }
+            return .terminateCancel
+        }
         guard RemoteTextEditor.allowTermination() else { return .terminateCancel }
         if let model, model.tabs.contains(where: \.running) {
             guard model.confirm("Quit muty?", text: "All active sessions will be closed.", action: "Quit") else { return .terminateCancel }
@@ -59,7 +65,7 @@ struct MutyApp: App {
             CommandGroup(replacing: .appSettings) {}
             CommandGroup(replacing: .systemServices) {}
             CommandGroup(replacing: .newItem) {
-                Button("Quick Connect…") { model.quickConnect = true }
+                Button("Quick Connect…") { model.requestQuickConnect() }
                     .keyboardShortcut("k")
                 Button("New Session") { model.editing = ProfileDraft() }
                     .keyboardShortcut("n").disabled(model.readOnly)

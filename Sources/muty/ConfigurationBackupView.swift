@@ -89,7 +89,7 @@ struct ConfigurationImportView: View {
                 }
                 Button("Apply") {
                     guard let bulkKey else { return }
-                    for entry in backup.sessions where selected.contains(entry.id) && entry.authentication == .identityFile && bindings[entry.id] == nil { bindings[entry.id] = bulkKey }
+                    for entry in backup.sessions where selected.contains(entry.id) && entry.authentication.supportsKey && bindings[entry.id] == nil { bindings[entry.id] = bulkKey }
                 }.disabled(bulkKey == nil)
             }
             List(backup.sessions) { entry in
@@ -98,7 +98,7 @@ struct ConfigurationImportView: View {
                         Text([entry.folder, entry.name].compactMap { $0 }.joined(separator: "/"))
                     }
                     if selected.contains(entry.id) {
-                        if entry.authentication == .identityFile && !plan.existingIDs.contains(entry.id) {
+                        if entry.authentication.supportsKey && !plan.existingIDs.contains(entry.id) {
                             Picker(entry.keyName ?? "SSH Key", selection: Binding<UUID?>(get: { bindings[entry.id] }, set: { bindings[entry.id] = $0 })) {
                                 Text("Select a registered key").tag(nil as UUID?)
                                 ForEach(keys) { Text($0.name).tag(Optional($0.id)) }

@@ -108,8 +108,8 @@ struct SessionProfile: Codable, Identifiable, Equatable {
                 throw MutyError("Duplicate listening address/port in forwarding rules.")
             }
         }
-        if p.authentication != .password { p.credentialID = nil }
-        if p.authentication == .identityFile && p.keyID == nil {
+        if !p.authentication.supportsPassword { p.credentialID = nil }
+        if p.keyID == nil && (p.authentication == .identityFile || (p.authentication == .agentAndPassword && p.identityFile != nil)) {
             guard let path = p.identityFile, !path.isEmpty, !path.contains("\0") else {
                 throw MutyError("Choose an SSH identity file.")
             }
@@ -171,14 +171,18 @@ typealias FolderIcon = SessionIcon
 enum AuthenticationMode: String, Codable, CaseIterable, Identifiable {
     case automatic
     case password
+    case agentAndPassword
     case agent
     case identityFile
-    static var selectable: [AuthenticationMode] { [.password, .identityFile] }
+    static var selectable: [AuthenticationMode] { [.password, .identityFile, .agentAndPassword] }
+    var supportsPassword: Bool { self == .password || self == .agentAndPassword }
+    var supportsKey: Bool { self == .identityFile || self == .agentAndPassword }
     var id: String { rawValue }
     var title: String {
         switch self {
         case .automatic: return "Automatic"
         case .password: return "Password"
+        case .agentAndPassword: return "SSH Key + Password"
         case .agent: return "SSH agent"
         case .identityFile: return "SSH Key"
         }

@@ -5,20 +5,97 @@ struct KeySelectionView: View {
     @ObservedObject var library: SSHKeyLibrary
     @Binding var keyID: UUID?
     @Binding var legacyPath: String?
+    @ViewState private var error: String?
+    var presentingWindow: (() -> NSWindow?)? = nil
+    private var title: String {
+        if let keyID { return library.keys.first(where: { $0.id == keyID })?.name ?? "Missing key" }
+        return legacyPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Select a key"
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Picker("SSH Key", selection: $keyID) {
-                Text(legacyPath == nil ? "Select a key" : "Existing file: \(URL(fileURLWithPath: legacyPath!).lastPathComponent)").tag(nil as UUID?)
-                ForEach(library.keys) { key in Text(key.name).tag(Optional(key.id)) }
-                if let keyID, !library.keys.contains(where: { $0.id == keyID }) {
-                    Text("Missing key").tag(Optional(keyID))
-                }
+            KeySelectionPopup(
+                keys: library.keys.filter { $0.pendingDeletion != true },
+                selectedKey: keyID, title: title,
+                select: { keyID = $0; legacyPath = nil; error = nil },
+                chooseFile: { chooseFile(from: $0) }
+            )
+            if let message = error ?? library.loadError {
+                Text(message).foregroundStyle(.red).font(.caption)
             }
-            if let loadError = library.loadError {
-                Text(loadError).foregroundStyle(.red).font(.caption)
-            } else if library.keys.isEmpty {
-                Text("Add keys in Settings → SSH Keys (⌘,).")
-                    .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+    private func chooseFile(from window: NSWindow?) {
+        guard let ownerWindow = presentingWindow?() ?? window else { error = "Could not find the key selection window."; return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false; panel.allowsMultipleSelection = false; panel.showsHiddenFiles = true
+        panel.message = "Choose a private SSH key. It will not be added to the key library."
+        panel.beginSheetModal(for: ownerWindow) { response in
+            guard response == .OK, let file = panel.url else { return }
+            do {
+                try SSHKeyLibrary.validateConnectionKey(file)
+                legacyPath = file.path; keyID = nil; error = nil
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+}
+
+private struct KeySelectionPopup: NSViewRepresentable {
+    let keys: [SSHKeyRecord]
+    let selectedKey: UUID?
+    let title: String
+    let select: (UUID) -> Void
+    let chooseFile: (NSWindow?) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSPopUpButton {
+        let button = NSPopUpButton(frame: .zero, pullsDown: false)
+        button.setAccessibilityLabel("SSH Key")
+        button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.selectionChanged(_:))
+        return button
+    }
+
+    func updateNSView(_ button: NSPopUpButton, context: Context) {
+        context.coordinator.popup = self
+        button.removeAllItems()
+        let menu = button.menu
+        menu?.autoenablesItems = false
+        if !keys.contains(where: { $0.id == selectedKey }) {
+            let current = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            current.isEnabled = false
+            menu?.addItem(current)
+        }
+        for key in keys {
+            let item = NSMenuItem(title: key.name, action: nil, keyEquivalent: "")
+            item.representedObject = key.id
+            menu?.addItem(item)
+        }
+        menu?.addItem(.separator())
+        menu?.addItem(NSMenuItem(title: "Choose File…", action: nil, keyEquivalent: ""))
+        context.coordinator.restoreSelection(in: button)
+    }
+
+    @MainActor final class Coordinator: NSObject {
+        var popup: KeySelectionPopup
+        init(_ popup: KeySelectionPopup) { self.popup = popup }
+
+        func restoreSelection(in button: NSPopUpButton) {
+            button.select(button.itemArray.first { ($0.representedObject as? UUID) == popup.selectedKey && $0.representedObject != nil }
+                          ?? button.itemArray.first)
+        }
+
+        @objc func selectionChanged(_ button: NSPopUpButton) {
+            if let id = button.selectedItem?.representedObject as? UUID {
+                popup.select(id)
+            } else if let item = button.selectedItem, item === button.itemArray.last {
+                restoreSelection(in: button)
+                let chooseFile = popup.chooseFile
+                DispatchQueue.main.async { [weak button] in
+                    guard let window = button?.window else { return }
+                    chooseFile(window)
+                }
             }
         }
     }
@@ -314,12 +391,22 @@ private struct KeyLibraryView: View {
         }
     }
     private func remove(_ key: SSHKeyRecord) {
-        let dependent = model.profiles.filter { $0.authentication == .identityFile && $0.keyID == key.id }
+        let dependent = model.profiles.filter { $0.authentication.supportsKey && $0.keyID == key.id }
         guard dependent.isEmpty else {
             error = "This key is used by: " + dependent.map(\.name).joined(separator: ", ") + ". Select another key in these sessions first."
             return
         }
         guard model.confirm("Remove Key?", text: key.imported ? "The private copy stored in muty will be deleted. The original file will not be changed." : "Only the reference will be removed. The source file will not be changed.") else { return }
         perform { try library.remove(key) }
+    }
+}
+
+private struct KeyPickerWindowAnchor: NSViewRepresentable {
+    let update: (NSWindow?) -> Void
+    func makeNSView(context: Context) -> Anchor { let view = Anchor(); view.update = update; return view }
+    func updateNSView(_ view: Anchor, context: Context) { view.update = update }
+    final class Anchor: NSView {
+        var update: ((NSWindow?) -> Void)?
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); update?(window) }
     }
 }

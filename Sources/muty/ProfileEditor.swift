@@ -3,6 +3,7 @@ import SwiftUI
 struct ProfileEditor: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var model: AppModel
+    @ObservedObject private var buttonStore = SendStringButtonStore.shared
     let draft: ProfileDraft
     var onSave: ((SessionProfile) throws -> Void)? = nil
     @ViewState private var profile: SessionProfile
@@ -20,6 +21,12 @@ struct ProfileEditor: View {
         if draft.original == nil && initial.folder == nil { initial.folder = model.selectedFolder }
         _profile = State(initialValue: initial)
         _port = State(initialValue: String(initial.port))
+    }
+
+    private func selectDefaultKey() {
+        if profile.authentication.supportsKey && profile.keyID == nil && profile.identityFile == nil {
+            profile.keyID = model.keyLibrary.keys.first(where: { $0.pendingDeletion != true })?.id
+        }
     }
 
     private var title: String {
@@ -73,6 +80,21 @@ struct ProfileEditor: View {
                             ForEach(SessionIcon.allCases) { icon in
                                 Label { Text(icon.title) } icon: { CatalogIconView.image(icon.rawValue, fallback: "desktopcomputer") }.tag(icon.rawValue)
                             }
+                        }.labelsHidden()
+                    }
+                    GridRow {
+                        Text("Button Bar").foregroundStyle(.secondary)
+                        Picker("Button Bar", selection: Binding(
+                            get: { profile.buttonBarSet ?? "inherit" },
+                            set: { profile.buttonBarSet = $0 == "inherit" ? nil : $0 }
+                        )) {
+                            Text("Inherit from Folder").tag("inherit")
+                            Text("Default").tag("")
+                            if let value = profile.buttonBarSet, !value.isEmpty,
+                               !buttonStore.document.sets.contains(where: { $0.id.uuidString == value }) {
+                                Text("Unavailable").tag(value)
+                            }
+                            ForEach(buttonStore.document.sets) { item in Text(item.name).tag(item.id.uuidString) }
                         }.labelsHidden()
                     }
                     GridRow {
@@ -153,10 +175,6 @@ struct ProfileEditor: View {
                                         JumpHostPicker(profile: $profile, profiles: model.profiles).labelsHidden()
                                     }
                                 }.frame(maxWidth: .infinity, alignment: .leading)
-                                Divider().padding(.vertical, 4)
-                                Toggle("Enable X11 forwarding (-Y)", isOn: $profile.x11Forwarding)
-                                Text("Requires a running X11 server. Remote applications receive trusted access to your X server.")
-                                    .font(.caption).foregroundStyle(.secondary)
                                 Text("Authentication").font(.headline)
                                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 12) {
                                     GridRow {
@@ -165,7 +183,14 @@ struct ProfileEditor: View {
                                             ForEach(AuthenticationMode.selectable) { Text($0.title).tag($0) }
                                         }.labelsHidden()
                                     }
-                                    if profile.authentication == .password {
+                                    if profile.authentication.supportsKey && profile.authentication.supportsPassword {
+                                        GridRow {
+                                            Text("SSH Key").foregroundStyle(.secondary)
+                                            KeySelectionView(library: model.keyLibrary, keyID: $profile.keyID,
+                                                             legacyPath: $profile.identityFile).labelsHidden()
+                                        }
+                                    }
+                                    if profile.authentication.supportsPassword {
                                         GridRow {
                                             Text("Credentials").foregroundStyle(.secondary)
                                             CredentialSelectionView(vault: model.vault, credentialID: $profile.credentialID)
@@ -216,11 +241,15 @@ struct ProfileEditor: View {
                                                 }
                                             }
                                         }
-                                    } else if profile.authentication == .identityFile {
+                                    }
+                                    if profile.authentication.supportsKey {
+                                        if !profile.authentication.supportsPassword {
                                         GridRow {
                                             Text("Username").foregroundStyle(.secondary);
                                             TextField("Username", text: $profile.user).accessibilityLabel("Username")
                                         }
+                                        }
+                                        if !profile.authentication.supportsPassword {
                                         GridRow {
                                             Text("SSH Key").foregroundStyle(.secondary);
                                             KeySelectionView(
@@ -228,8 +257,15 @@ struct ProfileEditor: View {
                                                 legacyPath: $profile.identityFile
                                             ).labelsHidden()
                                         }
+                                        }
                                     }
                                 }.frame(maxWidth: .infinity, alignment: .leading)
+                                if profile.authentication.supportsKey {
+                                    Divider().padding(.vertical, 4)
+                                    Toggle("Enable X11 forwarding (-Y)", isOn: $profile.x11Forwarding)
+                                    Text("Requires a running X11 server. Remote applications receive trusted access to your X server.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
                             }.frame(maxWidth: .infinity, alignment: .topLeading).padding(.vertical, 4)
                         }
                     }
@@ -248,9 +284,9 @@ struct ProfileEditor: View {
                             updated.port = number
                         }
                         let changed = draft.original.map { !updated.sameDestination(as: $0) } ?? false
-                        if updated.authentication != .password || changed { updated.savePassword = false }
-                        if updated.authentication != .password { updated.credentialID = nil }
-                        if updated.authentication != .identityFile { updated.keyID = nil; updated.identityFile = nil }
+                        if !updated.authentication.supportsPassword || changed { updated.savePassword = false }
+                        if !updated.authentication.supportsPassword { updated.credentialID = nil }
+                        if !updated.authentication.supportsKey { updated.keyID = nil; updated.identityFile = nil }
                         if let onSave { try onSave(updated) }
                         else {
                             try model.save(updated, password: "", reuse: false)
@@ -264,6 +300,7 @@ struct ProfileEditor: View {
             }
         }.padding(22).frame(minWidth: 760, idealWidth: 820, minHeight: 440, idealHeight: 530)
         .onChange(of: profile.connectionType) { _, _ in page = "General"; error = nil; profile.savePassword = false }
-        .onChange(of: profile.authentication) { _, _ in error = nil }
+        .onAppear { selectDefaultKey() }
+        .onChange(of: profile.authentication) { _, _ in error = nil; selectDefaultKey() }
     }
 }

@@ -265,6 +265,8 @@ struct SendStringButtonBar: View {
         }
         nonmutating set {
             if let tabSelection {
+                if let connection = model.selectedConnection,
+                   !model.saveButtonBarSelection(newValue?.uuidString ?? "", for: connection) { return }
                 tabSelection.wrappedValue = newValue.map(ButtonBarSelection.named) ?? .defaultSet
                 model.persistWorkspace()
             } else {
@@ -358,6 +360,8 @@ struct SendStringButtonBar: View {
         .contextMenu { Button("New Button…") { edit(nil) }.disabled(store.loadError != nil) }
     }
     private func followFolder() {
+        if let connection = model.selectedConnection,
+           !model.saveButtonBarSelection(nil, for: connection) { return }
         tabSelection?.wrappedValue = nil
         standaloneSelection = nil
         model.persistWorkspace()

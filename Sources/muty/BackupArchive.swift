@@ -128,14 +128,14 @@ enum BackupArchive {
         for session in configuration.sessions {
             if let id = session.credentialID {
                 guard let credential = credentials.first(where: { $0.id == id }),
-                      session.authentication == .password, session.connectionType == .ssh,
+                      session.authentication.supportsPassword, session.connectionType == .ssh,
                       session.user == credential.username else { throw MutyError("Missing or incompatible shared credential in backup.") }
             }
         }
         configuration.restoredCredentials = credentials
         for entry in backup.passwords {
             guard let session = configuration.sessions.first(where: { $0.id == entry.sessionID }),
-                  session.connectionType == .ssh, session.authentication == .password, session.credentialID == nil,
+                  session.connectionType == .ssh, session.authentication.supportsPassword, session.credentialID == nil,
                   !entry.password.isEmpty, entry.password.utf8.count <= 1023,
                   !entry.password.contains("\n"), !entry.password.contains("\r"), !entry.password.contains("\0") else {
                 throw MutyError("Invalid backup password record.")

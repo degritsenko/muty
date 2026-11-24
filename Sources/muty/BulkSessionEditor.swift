@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct BulkEditRequest: Identifiable {
     let id = UUID()
@@ -27,6 +28,7 @@ struct BulkSessionEditor: View {
     @ViewState private var user = ""
     @ViewState private var changeKey = false
     @ViewState private var key = ""
+    @ViewState private var externalKeyPath: String?
     @ViewState private var assignCredential = false
     @ViewState private var credentialID: UUID?
     @ViewState private var changeJump = false
@@ -44,7 +46,7 @@ struct BulkSessionEditor: View {
         && (!changeIcon || sessionIcon != "mixed")
         && (!changeButtonBar || buttonBarSet != "mixed")
         && (!hasSSH || !changeUser || !user.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        && (!hasSSH || !changeKey || UUID(uuidString: key) != nil)
+        && (!hasSSH || !changeKey || UUID(uuidString: key) != nil || externalKeyPath != nil)
         && (!hasSSH || !assignCredential || (credentialID != nil && !changeKey && !changeUser))
     }
     var body: some View {
@@ -105,12 +107,14 @@ struct BulkSessionEditor: View {
                 }
                 GridRow {
                     Toggle("SSH Key", isOn: $changeKey).disabled(!hasSSH)
-                        Picker("SSH key", selection: $key) {
+                        Picker("SSH Key", selection: $key) {
                             Text("Select a key").tag("")
                             ForEach(model.keyLibrary.keys.filter { $0.pendingDeletion != true }) { item in
                                 Text(item.name).tag(item.id.uuidString)
                             }
-                        }.labelsHidden().disabled(!hasSSH || !changeKey)
+                        }.labelsHidden().disabled(!hasSSH || !changeKey || externalKeyPath != nil)
+                        Button(externalKeyLabel) { chooseExternalKey() }
+                            .disabled(!hasSSH || !changeKey)
                 }
                 GridRow {
                     Toggle("Shared Credential", isOn: $assignCredential).disabled(!hasSSH)
@@ -163,6 +167,7 @@ struct BulkSessionEditor: View {
                 do {
                     try model.applyBulkEdit(request, user: hasSSH && changeUser ? user : nil,
                         keyID: hasSSH && changeKey ? UUID(uuidString: key) : nil,
+                        identityFile: hasSSH && changeKey ? externalKeyPath : nil,
                         changeJump: hasSSH && changeJump, jumpID: UUID(uuidString: jump), credentialID: hasSSH && assignCredential ? credentialID : nil,
                         sshEnabled: hasSSH && changeModes ? sshEnabled : nil, sftpEnabled: hasSSH && changeModes ? sftpEnabled : nil,
                         changeColor: changeColor, color: color.isEmpty ? nil : color,
@@ -172,6 +177,27 @@ struct BulkSessionEditor: View {
                     dismiss()
                 } catch { self.error = error.localizedDescription }
             }
+        }
+    }
+
+    private var externalKeyLabel: String {
+        guard let path = externalKeyPath else { return "Choose File…" }
+        return URL(fileURLWithPath: path).lastPathComponent
+    }
+
+    private func chooseExternalKey() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        panel.message = "Choose a private SSH key. It will not be added to the key library."
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try SSHKeyLibrary.validateConnectionKey(url)
+                externalKeyPath = url.path
+                key = ""
+            } catch let validationError { self.error = validationError.localizedDescription }
         }
     }
 }

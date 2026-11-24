@@ -271,6 +271,7 @@ struct CredentialSelectionView: View {
     @ObservedObject var vault: VaultStore
     @Binding var credentialID: UUID?
     var sessionCredentialsTitle = "Session credentials"
+    var autoSelectOnlyCredential = false
 
     var body: some View {
         if vault.isLocked || vault.needsSetup {
@@ -285,6 +286,13 @@ struct CredentialSelectionView: View {
                 ForEach(vault.credentials) { Text($0.title).tag(Optional($0.id)) }
                 if let credentialID, !vault.credentials.contains(where: { $0.id == credentialID }) { Text("Missing credential").tag(Optional(credentialID)) }
             }
+            .onAppear { selectOnlyCredentialIfNeeded() }
+            .onChange(of: vault.credentials.map(\.id)) { _, _ in selectOnlyCredentialIfNeeded() }
         }
+    }
+
+    private func selectOnlyCredentialIfNeeded() {
+        guard autoSelectOnlyCredential, credentialID == nil, vault.credentials.count == 1 else { return }
+        credentialID = vault.credentials[0].id
     }
 }

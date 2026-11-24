@@ -191,6 +191,16 @@ final class AppModel: ObservableObject {
 
     @Published var terminalFindRequest = UUID()
     @Published var quickConnect = false
+    func requestQuickConnect() {
+        guard !quickConnect else {
+            quickConnect = false
+            RunLoop.main.perform(inModes: [.default]) { [weak self] in
+                self?.quickConnect = true
+            }
+            return
+        }
+        quickConnect = true
+    }
     @Published var newFolderPrompt = false
     @Published var bulkEditing: BulkEditRequest?
     @Published var editing: ProfileDraft?
@@ -390,7 +400,7 @@ final class AppModel: ObservableObject {
         bulkEditing = BulkEditRequest(folder: folder, profiles: affected)
     }
 
-    func applyBulkEdit(_ request: BulkEditRequest, user: String?, keyID: UUID?,
+    func applyBulkEdit(_ request: BulkEditRequest, user: String?, keyID: UUID?, identityFile: String? = nil,
                        changeJump: Bool, jumpID: UUID?, credentialID: UUID? = nil,
                        sshEnabled: Bool? = nil, sftpEnabled: Bool? = nil,
                        changeColor: Bool = false, color: String? = nil,
@@ -402,11 +412,12 @@ final class AppModel: ObservableObject {
         guard request.profiles.allSatisfy({ original in profiles.contains(original) }) else {
             throw MutyError("Sessions changed. Close and reopen Bulk Edit.")
         }
-        guard credentialID == nil || (user == nil && keyID == nil) else { throw MutyError("Assign a shared credential separately from username or SSH key changes.") }
+        guard credentialID == nil || (user == nil && keyID == nil && identityFile == nil) else { throw MutyError("Assign a shared credential separately from username or SSH key changes.") }
         if changeIcon, let icon, SessionIcon(rawValue: icon) == nil { throw MutyError("Invalid session icon.") }
         let shared: SavedCredential?
         if let credentialID { try vault.ensureAvailable(); shared = try vault.credential(credentialID) } else { shared = nil }
         if let keyID { _ = try keyLibrary.path(for: keyID) }
+        if let identityFile { try SSHKeyLibrary.validateConnectionKey(URL(fileURLWithPath: identityFile)) }
         if changeButtonBar, let selection = buttonBarSet, !selection.isEmpty {
             guard let id = UUID(uuidString: selection),
                   SendStringButtonStore.shared.document.sets.contains(where: { $0.id == id }) else {
@@ -420,7 +431,7 @@ final class AppModel: ObservableObject {
             if updated[index].connectionType == .ssh {
                 if let sshEnabled { updated[index].sshEnabled = sshEnabled }
                 if let sftpEnabled { updated[index].sftpEnabled = sftpEnabled }
-                if user != nil || keyID != nil { updated[index].credentialID = nil }
+                if user != nil || keyID != nil || identityFile != nil { updated[index].credentialID = nil }
                 if let shared {
                     updated[index].credentialID = shared.id; updated[index].user = shared.username
                     updated[index].authentication = .password; updated[index].savePassword = false
@@ -432,6 +443,10 @@ final class AppModel: ObservableObject {
                 }
                 if let keyID {
                     updated[index].keyID = keyID; updated[index].identityFile = nil
+                    updated[index].authentication = .identityFile; updated[index].savePassword = false
+                }
+                if let identityFile {
+                    updated[index].keyID = nil; updated[index].identityFile = identityFile
                     updated[index].authentication = .identityFile; updated[index].savePassword = false
                 }
                 if changeJump { updated[index].jumpHostID = jumpID }
@@ -473,6 +488,16 @@ final class AppModel: ObservableObject {
             do { try workspaceStore.clear() }
             catch { errorMessage = "Could not clear saved workspace: " + error.localizedDescription }
         }
+    }
+
+    @discardableResult
+    func saveButtonBarSelection(_ value: String?, for connection: SSHConnection) -> Bool {
+        guard !connection.temporary, let index = profiles.firstIndex(where: { $0.id == connection.profile.id }) else { return true }
+        var updated = profiles
+        updated[index].buttonBarSet = value
+        guard persist(updated) else { return false }
+        connection.profile.buttonBarSet = value
+        return true
     }
 
     func persistWorkspace() {
@@ -524,7 +549,7 @@ final class AppModel: ObservableObject {
         progress?("Exporting \(configuration.folders.count) folders and Button Bar.")
         await Task.yield()
         var passwords: [BackupPassword] = []
-        let saved = snapshot.filter { $0.connectionType == .ssh && $0.authentication == .password && $0.credentialID == nil && $0.savePassword }
+        let saved = snapshot.filter { $0.connectionType == .ssh && $0.authentication.supportsPassword && $0.credentialID == nil && $0.savePassword }
         for (index, profile) in saved.enumerated() {
             try Task.checkCancellation()
             backupProgress = "Reading password \(index + 1) of \(saved.count): \(profile.name)"
@@ -626,7 +651,7 @@ final class AppModel: ObservableObject {
                     if let match = updated.firstIndex(where: { $0.id == entry.id }) ?? updated.firstIndex(where: { $0.name == entry.name && $0.folder == SessionProfile.canonicalFolder(entry.folder) }) {
                         let isNew = !profiles.contains(where: { $0.id == updated[match].id })
                         let ownPassword = candidate!.sessionPasswords[updated[match].id.uuidString]
-                        if isNew || (linkExistingCredentials && updated[match].authentication == .password &&
+                        if isNew || (linkExistingCredentials && updated[match].authentication.supportsPassword &&
                                      (replacePasswords || (updated[match].credentialID == nil && ownPassword == nil))) {
                             updated[match].credentialID = linked
                             updated[match].savePassword = false
@@ -638,7 +663,7 @@ final class AppModel: ObservableObject {
                 guard let secret = backup.restoredPasswords[entry.id] else { continue }
                 try VaultStore.validatePassword(secret)
                 guard let index = updated.firstIndex(where: { $0.id == entry.id }) ?? updated.firstIndex(where: { $0.name == entry.name && $0.folder == SessionProfile.canonicalFolder(entry.folder) }),
-                      updated[index].connectionType == .ssh, updated[index].authentication == .password,
+                      updated[index].connectionType == .ssh, updated[index].authentication.supportsPassword,
                       (updated[index].credentialID == nil || (linkExistingCredentials && replacePasswords)), updated[index].host == entry.host,
                       updated[index].user == entry.user, updated[index].port == entry.port else {
                     throw MutyError("Cannot restore password for " + entry.name + ": destination or authentication differs.")
@@ -784,7 +809,7 @@ final class AppModel: ObservableObject {
     func save(_ value: SessionProfile, password: String, reuse: Bool, revokeActiveAuthentication: Bool = true) throws {
         guard !readOnly else { throw MutyError("Profiles are read-only because loading failed. Fix the file and restart muty.") }
         var input = value
-        if input.authentication == .password, let id = input.credentialID {
+        if input.authentication.supportsPassword, let id = input.credentialID {
             try vault.ensureAvailable()
             input.user = try vault.credential(id).username; input.savePassword = false
         }
@@ -834,6 +859,10 @@ final class AppModel: ObservableObject {
             tabs.filter { $0.profile.id == p.id || $0.profile.jumpHostID == p.id }.forEach { $0.revokeAuthentication() }
         }
         profiles = updated; selectedProfile = p.id; selectedFolder = p.folder
+        if old?.buttonBarSet != p.buttonBarSet {
+            for tab in tabs where !tab.temporary && tab.profile.id == p.id { tab.buttonBarSelection = nil }
+            persistWorkspace()
+        }
     }
 
     var folders: [String] {
@@ -1083,7 +1112,7 @@ final class AppModel: ObservableObject {
         var updated = value
         updated.id = connection.profile.id
         updated.savePassword = false
-        if updated.authentication != .password { updated.credentialID = nil }
+        if !updated.authentication.supportsPassword { updated.credentialID = nil }
         updated = try effectiveProfile(updated).validated()
         let original = connection.profile
         let transportChanged = updated.connectionType != original.connectionType ||
@@ -1096,12 +1125,14 @@ final class AppModel: ObservableObject {
             updated.x11Forwarding != original.x11Forwarding
         if transportChanged {
             guard confirmSessionSettings("Apply Temporary Tab Settings?", text: "This tab will restart with the updated connection settings.") else { return }
+            if updated.buttonBarSet != original.buttonBarSet { connection.buttonBarSelection = nil }
             connection.disconnect()
             let replacement = SSHConnection(profile: updated, manual: connection.manual, temporary: true,
                                             credentials: passwordStore, transferQueueID: connection.transferQueueID)
             configurePasswordSaving(replacement)
             replaceTab(connection, with: replacement)
         } else {
+            if updated.buttonBarSet != original.buttonBarSet { connection.buttonBarSelection = nil }
             connection.profile = updated
             connection.setTheme(updated.terminalTheme ?? UserDefaults.standard.string(forKey: "terminalTheme") ?? TerminalColorScheme.mutyDark.rawValue)
         }
@@ -1135,7 +1166,7 @@ final class AppModel: ObservableObject {
 
     func effectiveProfile(_ value: SessionProfile) throws -> SessionProfile {
         var profile = value
-        if profile.connectionType == .ssh && profile.authentication == .password {
+        if profile.connectionType == .ssh && profile.authentication.supportsPassword {
             if let id = profile.credentialID {
                 try vault.ensureAvailable()
                 let credential = try vault.credential(id)

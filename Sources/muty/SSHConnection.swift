@@ -105,12 +105,12 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
                 try startLocalShell()
                 return
             }
-            if p.authentication == .identityFile, let keyID = p.keyID {
+            if p.authentication.supportsKey, let keyID = p.keyID {
                 p.identityFile = try SSHKeyLibrary().path(for: keyID)
             }
             try KnownHostsStore.prepare(file: knownHostsFile)
             var args = sshOptions + (try SSHNetworking.transportArguments(p, knownHostsFile: knownHostsFile))
-            if p.authentication == .password {
+            if p.authentication.supportsPassword {
                 targetReceipt = try SSHAuthenticationReceipt()
                 args = targetReceipt!.arguments + args
             }
@@ -137,13 +137,13 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
                     throw MutyError("Select one SSH jump host without another jump host.")
                 }
                 connectedJumpProfile = jump
-                if jump.authentication == .identityFile, let keyID = jump.keyID {
+                if jump.authentication.supportsKey, let keyID = jump.keyID {
                     jump.identityFile = try SSHKeyLibrary().path(for: keyID)
                 }
                 let jumpAuth = try askpassEnvironment(for: jump, jump: true)
                 let destination = PortForward.address(p.host) + ":" + String(p.port)
                 var jumpArgs = try SSHNetworking.transportArguments(jump, knownHostsFile: knownHostsFile) + ["-W", destination, "--", jump.host]
-                if jump.authentication == .password {
+                if jump.authentication.supportsPassword {
                     jumpReceipt = try SSHAuthenticationReceipt()
                     jumpArgs = jumpReceipt!.arguments + jumpArgs
                 }
@@ -224,7 +224,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
         guard FileManager.default.isExecutableFile(atPath: helper) else { throw MutyError("ASKPASS helper is missing.") }
         let server = AskpassBroker(credentials: credentials)
         let extra = try server.start(connectionID: jump ? UUID() : id, profileID: node.credentialID ?? node.id)
-        server.useSavedPassword = node.authentication == .password && (node.savePassword || node.credentialID != nil) && !ignoreSavedPassword
+        server.useSavedPassword = node.authentication.supportsPassword && (node.savePassword || node.credentialID != nil) && !ignoreSavedPassword
         server.interactivePrompt = { [weak self] prompt, isPassword, replacingSavedPassword, passwordRejected in
             guard let self else { return nil }
             // A new prompt means the preceding candidate was rejected.
@@ -242,7 +242,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
                 }
             }
             let replacing = self.ignoreSavedPassword || replacingSavedPassword
-            return self.promptForSecret(prompt, allowSave: isPassword && node.authentication == .password,
+            return self.promptForSecret(prompt, allowSave: isPassword && node.authentication.supportsPassword,
                                         endpoint: node.endpoint, save: stage, canSave: jump || !self.temporary,
                                         replaceSaved: replacing && node.savePassword, passwordRejected: passwordRejected)
 

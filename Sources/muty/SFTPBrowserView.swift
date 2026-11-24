@@ -228,16 +228,16 @@ private struct SFTPFilePane: View {
                 }.disabled(browser.busy || browser.disconnected || browser.remotePath.isEmpty || selectedFiles.isEmpty)
             }
             HStack(spacing: 6) {
-                if remote {
-                    Button(browser.sudoEnabled ? "SFTP · root" : "Sudo", systemImage: browser.sudoEnabled ? "lock.open.fill" : "lock.shield") { browser.toggleSudo() }
-                        .disabled(!browser.canSwitchSudo)
-                        .help("Switch SFTP privileges. Close remote editors and finish transfers first.")
-                }
                 Button { home() } label: { Image(systemName: "house") }.help("Home directory")
                 TextField(remote ? "Remote path" : "Local path", text: $path)
                     .textFieldStyle(.roundedBorder).onSubmit { navigate(path) }
                     .accessibilityLabel(remote ? "Remote directory" : "Local directory")
                 Button { navigate(directory) } label: { Image(systemName: "arrow.clockwise") }.help("Refresh")
+                if remote {
+                    Button(browser.sudoEnabled ? "SFTP · root" : "Sudo", systemImage: browser.sudoEnabled ? "lock.open.fill" : "lock.shield") { browser.toggleSudo() }
+                        .disabled(!browser.canSwitchSudo)
+                        .help("Switch SFTP privileges. Close remote editors and finish transfers first.")
+                }
                 Button { newItem(file: true) } label: { Image(systemName: "doc.badge.plus") }.help("New file").disabled(unavailable)
                 Button { newItem(file: false) } label: { Image(systemName: "folder.badge.plus") }.help("New folder").disabled(unavailable)
             }.disabled(browser.busy || (remote && browser.disconnected))

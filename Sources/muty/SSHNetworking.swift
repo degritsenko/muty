@@ -60,6 +60,16 @@ enum SSHNetworking {
             }
             args += ["-i", file, "-o", "IdentitiesOnly=yes", "-o", "PreferredAuthentications=publickey",
                      "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no"]
+        } else if p.authentication == .agentAndPassword {
+            if let file = p.identityFile, !file.isEmpty {
+                guard FileManager.default.isReadableFile(atPath: file) else { throw MutyError("Choose a readable identity file.") }
+                args += ["-i", file, "-o", "IdentitiesOnly=yes"]
+            } else {
+                throw MutyError("Choose an SSH identity file.")
+            }
+            args += ["-o", "PreferredAuthentications=publickey,password", "-o", "PubkeyAuthentication=yes",
+                     "-o", "PasswordAuthentication=yes", "-o", "KbdInteractiveAuthentication=no",
+                     "-o", "NumberOfPasswordPrompts=3"]
         } else {
             args += ["-o", "PreferredAuthentications=password", "-o", "PasswordAuthentication=yes",
                      "-o", "PubkeyAuthentication=no", "-o", "KbdInteractiveAuthentication=no",
