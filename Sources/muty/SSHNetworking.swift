@@ -67,5 +67,31 @@ enum SSHNetworking {
         }
         return args
     }
+    static func x11Configuration() throws -> (display: String, xauth: String) {
+        let environment = ProcessInfo.processInfo.environment
+        var display = environment["DISPLAY"] ?? ""
+        if display.isEmpty || display == "muty:0" {
+            let process = Process()
+            let output = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            process.arguments = ["getenv", "DISPLAY"]
+            process.standardOutput = output; process.standardError = FileHandle.nullDevice
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            display = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if display.isEmpty, FileManager.default.fileExists(atPath: "/tmp/.X11-unix/X0") { display = ":0" }
+        guard !display.isEmpty, display != "muty:0" else {
+            throw MutyError("No X11 display found. Start your X11 server and make DISPLAY available before connecting.")
+        }
+        let paths = (environment["PATH"] ?? "").split(separator: ":").map { String($0) + "/xauth" }
+            + ["/opt/X11/bin/xauth", "/usr/X11/bin/xauth", "/usr/bin/xauth", "/opt/homebrew/bin/xauth", "/usr/local/bin/xauth"]
+        guard let xauth = paths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            throw MutyError("X11 forwarding requires xauth. Install it with your X11 server.")
+        }
+        return (display, xauth)
+    }
+
     static func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 }

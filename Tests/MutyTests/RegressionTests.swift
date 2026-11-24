@@ -770,6 +770,18 @@ final class RegressionTests {
         let profile = try JSONDecoder().decode(SessionProfile.self, from: Data(json.utf8))
         assert(profile.authentication == .password)
         assert(!profile.favorite)
+        assert(!profile.x11Forwarding)
+        var enabled = profile
+        enabled.x11Forwarding = true
+        let stored = try JSONDecoder().decode(SessionProfile.self, from: JSONEncoder().encode(enabled))
+        assert(stored.x11Forwarding)
+        let portable = PortableSession(enabled, keyName: nil, keyFingerprint: nil)
+        let restored = try JSONDecoder().decode(PortableSession.self, from: JSONEncoder().encode(portable)).profile(keyID: nil)
+        assert(restored.x11Forwarding)
+        var legacy = try JSONSerialization.jsonObject(with: JSONEncoder().encode(portable)) as! [String: Any]
+        legacy.removeValue(forKey: "x11Forwarding")
+        let oldBackup = try JSONDecoder().decode(PortableSession.self, from: JSONSerialization.data(withJSONObject: legacy)).profile(keyID: nil)
+        assert(!oldBackup.x11Forwarding)
     }
     func testFavoriteRowIdentityIsDistinct() {
         let id = UUID()

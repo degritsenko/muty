@@ -122,6 +122,14 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
             env["TERM"] = "xterm-256color"; env["COLORTERM"] = "truecolor"
             let targetAuth = try askpassEnvironment(for: p, jump: false)
             env.merge(targetAuth) { _, new in new }
+            if p.x11Forwarding && p.sshEnabled && !p.tunnelOnly {
+                let x11 = try SSHNetworking.x11Configuration()
+                env["DISPLAY"] = x11.display
+                let xauthPath = x11.xauth.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+                args += ["-Y", "-o", "XAuthLocation=\"" + xauthPath + "\""]
+            } else {
+                args += ["-x"]
+            }
             if let jumpID = p.jumpHostID {
                 guard let resolveJumpProfile else { throw MutyError("Jump host is unavailable.") }
                 var jump = try resolveJumpProfile(jumpID).validated()

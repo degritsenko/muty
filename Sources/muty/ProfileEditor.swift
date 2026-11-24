@@ -154,6 +154,9 @@ struct ProfileEditor: View {
                                     }
                                 }.frame(maxWidth: .infinity, alignment: .leading)
                                 Divider().padding(.vertical, 4)
+                                Toggle("Enable X11 forwarding (-Y)", isOn: $profile.x11Forwarding)
+                                Text("Requires a running X11 server. Remote applications receive trusted access to your X server.")
+                                    .font(.caption).foregroundStyle(.secondary)
                                 Text("Authentication").font(.headline)
                                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 12) {
                                     GridRow {

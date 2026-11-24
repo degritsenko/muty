@@ -32,6 +32,7 @@ struct SessionProfile: Codable, Identifiable, Equatable {
     var terminalTheme: String?
     var connectionType: ConnectionType = .ssh
     var forwards: [PortForward] = []
+    var x11Forwarding = false
     var tunnelOnly = false
     var jumpHostID: UUID?
     var authentication: AuthenticationMode = .password
@@ -44,7 +45,7 @@ struct SessionProfile: Codable, Identifiable, Equatable {
     init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case buttonBarSet, terminalTheme, id, credentialID, name, description, sshEnabled, sftpEnabled, host, port, user, savePassword, folder, favorite, identityFile, keyID, color, icon, authentication, connectionType, forwards, tunnelOnly, jumpHostID
+        case x11Forwarding, buttonBarSet, terminalTheme, id, credentialID, name, description, sshEnabled, sftpEnabled, host, port, user, savePassword, folder, favorite, identityFile, keyID, color, icon, authentication, connectionType, forwards, tunnelOnly, jumpHostID
     }
 
     init(from decoder: Decoder) throws {
@@ -68,6 +69,7 @@ struct SessionProfile: Codable, Identifiable, Equatable {
         buttonBarSet = try c.decodeIfPresent(String.self, forKey: .buttonBarSet)
         terminalTheme = try c.decodeIfPresent(String.self, forKey: .terminalTheme)
         forwards = try c.decodeIfPresent([PortForward].self, forKey: .forwards) ?? []
+        x11Forwarding = try c.decodeIfPresent(Bool.self, forKey: .x11Forwarding) ?? false
         tunnelOnly = try c.decodeIfPresent(Bool.self, forKey: .tunnelOnly) ?? false
         jumpHostID = try c.decodeIfPresent(UUID.self, forKey: .jumpHostID)
         connectionType = try c.decodeIfPresent(ConnectionType.self, forKey: .connectionType) ?? .ssh
@@ -88,7 +90,7 @@ struct SessionProfile: Codable, Identifiable, Equatable {
             p.authentication = (p.keyID != nil || !(p.identityFile ?? "").isEmpty) ? .identityFile : .password
         }
         if p.connectionType == .localShell {
-            p.forwards = []; p.tunnelOnly = false; p.jumpHostID = nil
+            p.forwards = []; p.x11Forwarding = false; p.tunnelOnly = false; p.jumpHostID = nil
             p.savePassword = false; p.identityFile = nil; p.keyID = nil; p.credentialID = nil
             p.authentication = .password
             if p.name.isEmpty { p.name = "Local Shell" }

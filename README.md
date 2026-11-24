@@ -6,7 +6,7 @@ Native SSH and SFTP client for macOS. Built with SwiftUI and SwiftTerm, powered 
 - Two-pane SFTP browser with transfer queue, bookmarks and remote text editor.
 - Saved sessions, folder colors, search, shared credentials and encrypted backups.
 - Terminal themes, keyword highlighting and configurable Button Bar with folder inheritance and per-session assignments through Bulk Edit.
-- Jump hosts, port forwarding and tunnel-only sessions.
+- Jump hosts, port forwarding, trusted X11 forwarding and tunnel-only sessions.
 - Import sessions from SecureCRT and MobaXterm.
 
 ![Split workspace with a local shell above the SFTP browser and an SSH terminal on the right](docs/split-workspace.png)
@@ -16,6 +16,10 @@ Native SSH and SFTP client for macOS. Built with SwiftUI and SwiftTerm, powered 
 muty requires Apple silicon (arm64) and macOS 14 or later. Download the app ZIP from the [latest GitHub release](https://github.com/degritsenko/muty/releases/latest), unzip it, and move `muty.app` to Applications.
 
 The app is ad-hoc signed and has not been notarized. If macOS blocks the app and you trust the download, go to **System Settings → Privacy & Security → Open Anyway** after the first launch attempt and confirm. macOS saves an exception for muty. [Apple Support](https://support.apple.com/en-us/102445)
+
+## X11 forwarding
+
+Enable **X11 forwarding (-Y)** in a session’s SSH settings to run remote X11 applications on your local X server. Start the X server before connecting. muty uses `DISPLAY` from its environment or launchd, with `:0` as a fallback when the local X0 socket exists, and requires an executable `xauth`. X11 forwarding must also be enabled on the SSH server. Trusted forwarding gives remote X11 applications access to your local X server; enable it only for trusted hosts.
 
 ## Build from source
 

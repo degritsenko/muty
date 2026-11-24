@@ -1092,7 +1092,8 @@ final class AppModel: ObservableObject {
             updated.keyID != original.keyID || updated.identityFile != original.identityFile ||
             updated.credentialID != original.credentialID ||
             updated.sshEnabled != original.sshEnabled || updated.sftpEnabled != original.sftpEnabled ||
-            updated.forwards != original.forwards || updated.tunnelOnly != original.tunnelOnly
+            updated.forwards != original.forwards || updated.tunnelOnly != original.tunnelOnly ||
+            updated.x11Forwarding != original.x11Forwarding
         if transportChanged {
             guard confirmSessionSettings("Apply Temporary Tab Settings?", text: "This tab will restart with the updated connection settings.") else { return }
             connection.disconnect()

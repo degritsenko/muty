@@ -63,6 +63,7 @@ struct PortableSession: Codable, Identifiable {
     var connectionType: ConnectionType
     var authentication: AuthenticationMode
     var forwards: [PortForward]
+    var x11Forwarding: Bool?
     var tunnelOnly: Bool
     var jumpHostID: UUID?
     var keyName: String?
@@ -77,6 +78,7 @@ struct PortableSession: Codable, Identifiable {
         id = p.id; name = p.name; host = p.host; port = p.port; user = p.user
         folder = p.folder; favorite = p.favorite; color = p.color; connectionType = p.connectionType
         icon = p.icon
+        x11Forwarding = p.x11Forwarding
         authentication = p.authentication; forwards = p.forwards; tunnelOnly = p.tunnelOnly
         jumpHostID = p.jumpHostID; self.keyName = keyName; self.keyFingerprint = keyFingerprint
     }
@@ -92,6 +94,7 @@ struct PortableSession: Codable, Identifiable {
         p.id = id; p.name = name; p.host = host; p.port = port; p.user = user
         p.folder = folder; p.favorite = favorite; p.color = color; p.connectionType = connectionType
         p.icon = icon
+        p.x11Forwarding = x11Forwarding ?? false
         p.authentication = authentication; p.forwards = forwards; p.tunnelOnly = tunnelOnly
         p.credentialID = credentialID
         p.jumpHostID = jumpHostID; p.keyID = keyID; p.savePassword = false
