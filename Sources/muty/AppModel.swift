@@ -191,6 +191,7 @@ final class AppModel: ObservableObject {
 
     @Published var terminalFindRequest = UUID()
     @Published var quickConnect = false
+    static let localShellButtonBarKey = "localShellButtonBarSet"
     func requestQuickConnect() {
         guard !quickConnect else {
             quickConnect = false
@@ -492,6 +493,10 @@ final class AppModel: ObservableObject {
 
     @discardableResult
     func saveButtonBarSelection(_ value: String?, for connection: SSHConnection) -> Bool {
+        if connection.temporary, connection.profile.connectionType == .localShell {
+            UserDefaults.standard.set(value ?? "", forKey: Self.localShellButtonBarKey)
+            return true
+        }
         guard !connection.temporary, let index = profiles.firstIndex(where: { $0.id == connection.profile.id }) else { return true }
         var updated = profiles
         updated[index].buttonBarSet = value
@@ -1259,6 +1264,10 @@ final class AppModel: ObservableObject {
         do { profile = try effectiveProfile(value) }
         catch { errorMessage = error.localizedDescription; return }
         let connection = SSHConnection(profile: profile, manual: manual, temporary: temporary, credentials: passwordStore, ignoreSavedPassword: promptForPassword)
+        if temporary, profile.connectionType == .localShell,
+           let selection = UserDefaults.standard.string(forKey: Self.localShellButtonBarKey) {
+            connection.buttonBarSelection = UUID(uuidString: selection).map(ButtonBarSelection.named) ?? .defaultSet
+        }
         configurePasswordSaving(connection)
         tabs.append(connection); selectTab(connection.id)
     }

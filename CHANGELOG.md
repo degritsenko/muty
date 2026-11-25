@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+
+- Choose session icons in Session Settings and Bulk Edit; preserve them when copying sessions and creating backups.
+- Switch the SFTP browser to root privileges using sudo, with password and NOPASSWD support.
+- Enable trusted X11 forwarding for SSH sessions, including connections through a jump host.
+- Connect with an explicitly selected SSH key followed by a password.
+- Assign external private-key files through Bulk Edit.
+
+### Fixed
+
+- Resize SFTP columns, remember Local and Remote widths separately, and show full truncated filenames on hover.
+- Save Button Bar selections for saved sessions and remember the last selection for new Local Shell tabs.
+- Open the external private-key chooser from Quick Connect and Session Settings.
+- Improve Quick Connect reopening and quit handling.
+- Automatically select the only shared credential available in Quick Connect after unlocking credentials.
+
+### Changed
+
+- Present Quick Connect as a sheet attached to the main window.
+- Place SSH keys before credentials in combined authentication, and move X11 options below authentication.
+- Clarify that a backup can use a new password independent of the vault password.
+- Delay status messages for quick SFTP operations and suppress status popups when switching sudo mode.
+- Move the SFTP sudo control beside navigation actions.
+
 ## 0.8.5
 
 ### Fixed
