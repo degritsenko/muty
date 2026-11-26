@@ -37,6 +37,7 @@ struct SFTPBookmark: Codable, Identifiable {
     @Published private(set) var remotePath = ""
     @Published private(set) var localFiles: [BrowserFile] = []
     @Published private(set) var remoteFiles: [BrowserFile] = []
+    @Published private(set) var skippedRemoteNames = 0
     @Published var localSelection = Set<String>()
     @Published var remoteSelection = Set<String>()
     @Published var showHidden = true { didSet { localSelection = []; remoteSelection = [] } }
@@ -52,6 +53,8 @@ struct SFTPBookmark: Codable, Identifiable {
     private var cleanupPassword: String?
     private var sudoPrompt: NSAlert?
     private var switchingClient: SFTPClient?
+    @Published private var channelCleanup: Task<[String], Never>?
+    var canCancelOperation: Bool { channelCleanup == nil }
     private let normalClient: SFTPClient
     private let sudoArguments: [String]?
     @Published private(set) var sudoEnabled = false
@@ -67,7 +70,7 @@ struct SFTPBookmark: Codable, Identifiable {
         let path: String
         let readOnly: Bool
     }
-    private var editors: [EditorKey: RemoteTextEditor] = [:]
+    @Published private var editors: [EditorKey: RemoteTextEditor] = [:]
     private weak var app: AppModel?
     var visibleLocal: [BrowserFile] { localFiles.filter { showHidden || !$0.name.hasPrefix(".") } }
     var visibleRemote: [BrowserFile] { remoteFiles.filter { showHidden || !$0.name.hasPrefix(".") } }
@@ -78,7 +81,7 @@ struct SFTPBookmark: Codable, Identifiable {
         self.normalClient = client; self.sudoArguments = sudoArguments
         self.client = client; self.app = app; self.sessionID = sessionID
         self.transferQueue = transferQueue
-        transferQueue.attach(owner: id, executor: SFTPTransferAdapter(client: client))
+        transferQueue.attach(owner: id, executor: SFTPTransferAdapter(client: client), privilege: .user)
         let saved = UserDefaults.standard.string(forKey: "sftp-local-" + sessionID.uuidString)
         navigateLocal(transferQueue.localPath ?? saved ?? localPath)
     }
@@ -107,27 +110,34 @@ struct SFTPBookmark: Codable, Identifiable {
             }
         }) : normalClient.independentChannel()
         switchingClient = candidate
-        busy = true; silentOperationID = operationID; error = nil; status = enabling ? "Starting SFTP as root…" : "Starting regular SFTP…"
+        busy = true; error = nil; status = enabling ? "Starting SFTP as root…" : "Starting regular SFTP…"
         let directory = remotePath
         job = Task { [weak self] in
             guard let self else { candidate.shutdown(); return }
             do {
                 let result = try await candidate.perform { channel in
                     let path: String
-                    do { path = try channel.canonical(directory.isEmpty ? "." : directory); return (path, try channel.list(path)) }
-                    catch { let home = try channel.canonical("."); return (home, try channel.list(home)) }
+                    do { path = try channel.canonical(directory.isEmpty ? "." : directory); return (path, try channel.listForBrowser(path)) }
+                    catch { let home = try channel.canonical("."); return (home, try channel.listForBrowser(home)) }
                 }
                 try Task.checkCancellation()
                 guard !disconnected else { throw CancellationError() }
-                transferQueue.attach(owner: id, executor: SFTPTransferAdapter(client: candidate))
-                client.shutdown()
+                let previousClient = client
+                let previousPassword = sudoPasswordInMemory
+                transferQueue.attach(owner: id, executor: SFTPTransferAdapter(client: candidate), privilege: enabling ? .root : .user)
                 client = candidate
                 sudoEnabled = enabling
                 if !enabling { sudoPasswordInMemory = nil }
                 applyRemoteDirectory(result)
-                status = enabling ? "SFTP · root" : "SFTP connected"
-            } catch is CancellationError { candidate.shutdown(); sudoPasswordInMemory = nil; status = "Cancelled" }
-            catch { candidate.shutdown(); sudoPasswordInMemory = nil; self.error = error.localizedDescription; status = "Failed" }
+                status = "Finishing previous SFTP channel…"
+                let cleanup = Task { await previousClient.closeAndCleanStagedFiles(cleanupPassword: previousPassword) }
+                channelCleanup = cleanup
+                let remaining = await cleanup.value
+                channelCleanup = nil
+                if !remaining.isEmpty { self.error = Self.incompleteCleanup(remaining) }
+                if !disconnected { status = enabling ? "SFTP · root" : "SFTP connected" }
+            } catch is CancellationError { candidate.shutdown(); if enabling { sudoPasswordInMemory = nil }; status = "Cancelled" }
+            catch { candidate.shutdown(); if enabling { sudoPasswordInMemory = nil }; self.error = error.localizedDescription; status = "Failed" }
             switchingClient = nil
             busy = false; job = nil
         }
@@ -176,7 +186,7 @@ struct SFTPBookmark: Codable, Identifiable {
             let local = try readLocalDirectory(bookmark.localPath)
             run("Opening bookmark…", work: { client in
                 let path = try client.canonical(bookmark.remotePath)
-                return (path, try client.list(path))
+                return (path, try client.listForBrowser(path))
             }) { [weak self] remote in
                 self?.applyLocalDirectory(local)
                 self?.applyRemoteDirectory(remote)
@@ -214,10 +224,21 @@ struct SFTPBookmark: Codable, Identifiable {
         job?.cancel()
         removalJob?.cancel()
         removalClient?.shutdown()
-        await client.finishForQuit(cleanupPassword: password)
+        let previous = await channelCleanup?.value ?? []
+        let remaining = previous + (await client.closeAndCleanStagedFiles(cleanupPassword: password))
+        if !remaining.isEmpty { app?.errorMessage = Self.incompleteCleanup(remaining) }
+    }
+
+    private static func incompleteCleanup(_ paths: [String]) -> String {
+        "Could not remove \(paths.count) temporary SFTP items:\n" + paths.prefix(8).joined(separator: "\n")
     }
     func cancel() {
-        switchingClient?.cancel()
+        guard canCancelOperation else { return }
+        if let switchingClient {
+            job?.cancel()
+            switchingClient.cancel()
+            return
+        }
         transferQueue.cancel(owner: id)
         job?.cancel(); client.cancel()
         removalJob?.cancel(); removalClient?.cancel()
@@ -254,19 +275,24 @@ struct SFTPBookmark: Codable, Identifiable {
         run("Loading directory…", work: { client in
             do {
                 let canonical = try client.canonical(path.isEmpty ? "." : path)
-                return (canonical, try client.list(canonical))
+                return (canonical, try client.listForBrowser(canonical))
             } catch is SFTPStatus where restoring && path != "." {
                 let home = try client.canonical(".")
-                return (home, try client.list(home))
+                return (home, try client.listForBrowser(home))
             }
         }) { [weak self] value in self?.applyRemoteDirectory(value) }
     }
 
-    private func applyRemoteDirectory(_ directory: (path: String, files: [BrowserFile])) {
+    private func applyRemoteDirectory(_ directory: (path: String, listing: (files: [BrowserFile], skipped: Int))) {
         remotePath = directory.path; transferQueue.remotePath = directory.path
         UserDefaults.standard.set(directory.path, forKey: "sftp-remote-" + sessionID.uuidString)
-        remoteFiles = directory.files; remoteSelection = []
+        applyRemoteListing(directory.listing); remoteSelection = []
         status = ""
+    }
+
+    private func applyRemoteListing(_ listing: (files: [BrowserFile], skipped: Int)) {
+        remoteFiles = listing.files
+        skippedRemoteNames = listing.skipped
     }
 
     func refresh() {
@@ -299,8 +325,8 @@ struct SFTPBookmark: Codable, Identifiable {
                 // cleaned through the next SFTP channel before listing.
                 let lastStatus = status
                 let directory = remotePath
-                run("Refreshing…", work: { client in try client.list(directory) }) { entries in
-                    self.remoteFiles = entries; self.remoteSelection = []; self.status = lastStatus
+                run("Refreshing…", work: { client in try client.listForBrowser(directory) }) { entries in
+                    self.applyRemoteListing(entries); self.remoteSelection = []; self.status = lastStatus
                     self.error = message
                 }
             }
@@ -517,7 +543,18 @@ struct SFTPBookmark: Codable, Identifiable {
         let isolated = id.flatMap { id in
             transferQueue.items.first { $0.id == id && ($0.state == .interrupted || transferQueue.awaitingStart) }?.id
         }
-        transferQueue.retry(owner: self.id, id: id)
+        let mode: SFTPTransfer.Privilege = sudoEnabled ? .root : .user
+        let changed = transferQueue.retries(id: id).filter { $0.privilege != mode }
+        let details = changed.map { transfer in
+            (transfer.source as NSString).lastPathComponent + " (" + (transfer.privilege?.rawValue ?? "unknown") + ")"
+        }
+        guard changed.isEmpty || confirm(
+            "Retry as " + mode.rawValue + "?",
+            "These transfers were queued with different or unknown privileges:\n\n" + details.joined(separator: "\n"),
+            action: "Retry as " + mode.rawValue
+        ) else { return }
+        guard !busy, !disconnected, sudoEnabled == (mode == .root) else { return }
+        transferQueue.retry(owner: self.id, id: id, approved: Set(changed.map(\.id)))
         processTransfers(only: isolated)
     }
     private func resolveConflict(_ transfer: SFTPTransfer) -> SFTPConflictResolution {
@@ -593,9 +630,9 @@ struct SFTPBookmark: Codable, Identifiable {
                 let directory = self.remotePath
                 let result = try await self.client.perform { client in
                     let snapshot = try client.saveDocument(file.path, bytes: bytes, expected: expected)
-                    return (snapshot, try? client.list(directory))
+                    return (snapshot, try? client.listForBrowser(directory))
                 }
-                if let entries = result.1 { self.remoteFiles = entries }
+                if let entries = result.1 { self.applyRemoteListing(entries) }
                 self.status = "Saved"
                 return result.0
             }
@@ -677,7 +714,7 @@ struct SFTPBookmark: Codable, Identifiable {
                 do {
                     try await channel.perform { client in
                         for file in files {
-                            try client.removeTree(file.path) { progress.update(name: $0, bytes: 1, total: nil) }
+                            try client.removeTree(file.path, confirmed: file) { progress.update(name: $0, bytes: 1, total: nil) }
                         }
                     }
                 } catch is CancellationError { }
@@ -701,8 +738,8 @@ struct SFTPBookmark: Codable, Identifiable {
         let message = removalError
         removalError = nil
         let directory = remotePath
-        run("Refreshing…", work: { try $0.list(directory) }) { entries in
-            self.remoteFiles = entries
+        run("Refreshing…", work: { try $0.listForBrowser(directory) }) { entries in
+            self.applyRemoteListing(entries)
             self.remoteSelection = []
             self.error = message
         }

@@ -32,12 +32,32 @@ struct FullBackupExportView: View {
         }.interactiveDismissDisabled(log.running)
     }
 
+    private var externalKeySessions: [SessionProfile] {
+        model.profiles.filter {
+            $0.connectionType == .ssh && $0.authentication.supportsKey &&
+                $0.keyID == nil && $0.identityFile?.isEmpty == false
+        }
+    }
+
     private var options: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Back Up").font(.title2)
             Toggle("Include passwords", isOn: $includePasswords)
             Text(includePasswords ? "Includes configuration, Button Bar, session passwords and shared credentials. Private keys are excluded." : "Includes sessions, folders and Button Bar. Passwords, shared credentials and private keys are excluded.")
                 .font(.callout).foregroundStyle(.secondary)
+            if !externalKeySessions.isEmpty {
+                Text("Select a key from the SSH key library for these sessions when restoring.")
+                    .font(.callout)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(externalKeySessions) { profile in
+                            Text([profile.folder, profile.name].compactMap { $0 }.joined(separator: "/"))
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(height: min(CGFloat(externalKeySessions.count) * 22, 100))
+                .font(.caption)
+            }
             Text("Button commands are included. Use encryption if commands contain sensitive values.")
                 .font(.caption).foregroundStyle(.secondary)
             Toggle("Encrypt backup", isOn: $encrypted)

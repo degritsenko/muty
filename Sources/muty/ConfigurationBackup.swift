@@ -33,7 +33,8 @@ struct ConfigurationBackup: Codable, Identifiable {
         buttonBar = try values.decodeIfPresent(ButtonBarDocument.self, forKey: .buttonBar)
     }
     func validated() throws -> Self {
-        guard format == "muty.sessions", version == 1, sessions.count <= 10000,
+        guard sessions.count <= 10_000 else { throw MutyError("Backup exceeds 10,000 sessions.") }
+        guard format == "muty.sessions", version == 1,
               Set(sessions.map(\.id)).count == sessions.count else {
             throw MutyError("Invalid or unsupported muty backup.")
         }
@@ -60,6 +61,7 @@ struct PortableSession: Codable, Identifiable {
     var color: String?
     var icon: String?
     var terminalTheme: String?
+    var buttonBarSet: String?
     var connectionType: ConnectionType
     var authentication: AuthenticationMode
     var forwards: [PortForward]
@@ -72,6 +74,7 @@ struct PortableSession: Codable, Identifiable {
 
     init(_ p: SessionProfile, keyName: String?, keyFingerprint: String?, includeCredentialLink: Bool = false) {
         terminalTheme = p.terminalTheme
+        buttonBarSet = p.buttonBarSet
         credentialID = includeCredentialLink ? p.credentialID : nil
         description = p.description.isEmpty ? nil : p.description
         sshEnabled = p.sshEnabled; sftpEnabled = p.sftpEnabled
@@ -89,6 +92,7 @@ struct PortableSession: Codable, Identifiable {
         }
         var p = SessionProfile()
         p.terminalTheme = terminalTheme
+        p.buttonBarSet = buttonBarSet
         p.description = description ?? ""
         p.sshEnabled = sshEnabled ?? true; p.sftpEnabled = sftpEnabled ?? true
         p.id = id; p.name = name; p.host = host; p.port = port; p.user = user
@@ -108,6 +112,21 @@ struct ConfigurationImportPlan {
     var existingIDs = Set<UUID>()
 
     init(backup: ConfigurationBackup, existing: [SessionProfile], selected: Set<UUID>, keyBindings: [UUID: UUID], availableKeys: Set<UUID>) {
+        func matchesJumpRoute(_ entry: PortableSession, _ profile: SessionProfile) -> Bool {
+            switch (entry.jumpHostID, profile.jumpHostID) {
+            case (nil, nil):
+                return true
+            case let (incomingID?, currentID?):
+                guard let incoming = backup.sessions.first(where: { $0.id == incomingID }),
+                      let current = existing.first(where: { $0.id == currentID }),
+                      incoming.connectionType == .ssh, current.connectionType == .ssh,
+                      incoming.jumpHostID == nil, current.jumpHostID == nil else { return false }
+                return incoming.host == current.host && incoming.port == current.port && incoming.user == current.user
+            default:
+                return false
+            }
+        }
+
         var mapping: [UUID: UUID] = [:]
         var candidates: [UUID: SessionProfile] = [:]
         for entry in backup.sessions where selected.contains(entry.id) {
@@ -116,6 +135,10 @@ struct ConfigurationImportPlan {
             }
             if let match {
                 if match.host == entry.host && match.user == entry.user && match.port == entry.port && match.connectionType == entry.connectionType {
+                    guard matchesJumpRoute(entry, match) else {
+                        notes[entry.id] = "Conflict with existing session — jump host route differs"
+                        continue
+                    }
                     mapping[entry.id] = match.id; existingIDs.insert(entry.id)
                     notes[entry.id] = "Already exists — kept unchanged"
                 } else { notes[entry.id] = "Conflict with existing session — skipped" }

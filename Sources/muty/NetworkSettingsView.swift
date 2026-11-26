@@ -1,21 +1,77 @@
 import SwiftUI
 
 struct JumpHostPicker: View {
-    @Binding var profile: SessionProfile
-    let profiles: [SessionProfile]
+    @Binding var selection: UUID?
+    @ObservedObject var model: AppModel
+    var excluding: UUID? = nil
+    @ViewState private var showingChoices = false
+    @ViewState private var query = ""
+    @FocusState private var searchFocused: Bool
+
     private var choices: [SessionProfile] {
-        profiles.filter { $0.id != profile.id && $0.connectionType == .ssh && $0.jumpHostID == nil }
+        model.profiles.filter { $0.id != excluding && $0.connectionType == .ssh && $0.jumpHostID == nil }
     }
+
+    private var title: String {
+        guard let selection else { return "None (direct connection)" }
+        guard let profile = choices.first(where: { $0.id == selection }) else { return "Unavailable — select another" }
+        return [profile.folder, profile.name].compactMap { $0 }.joined(separator: "/")
+    }
+
     var body: some View {
-        Picker("Jump Host", selection: $profile.jumpHostID) {
-            Text("None (direct connection)").tag(nil as UUID?)
-            if let id = profile.jumpHostID, !choices.contains(where: { $0.id == id }) {
-                Text("Unavailable — select another").tag(Optional(id))
-            }
-            ForEach(choices) { session in
-                Text([session.folder, session.name].compactMap { $0 }.joined(separator: "/")).tag(Optional(session.id))
+        Button {
+            query = ""
+            showingChoices = true
+        } label: {
+            HStack(spacing: 8) {
+                Text(title).lineLimit(1).truncationMode(.middle)
+                Image(systemName: "chevron.down").font(.caption)
             }
         }
+        .frame(maxWidth: 275, alignment: .leading)
+        .accessibilityLabel("Jump Host")
+        .accessibilityValue(title)
+        .help(title)
+        .popover(isPresented: $showingChoices, arrowEdge: .bottom) { chooser }
+    }
+
+    private var chooser: some View {
+        let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let visible = search.isEmpty
+            ? choices.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            : SavedSessionSearch.matches(choices, query: search)
+        return VStack(alignment: .leading, spacing: 10) {
+            TextField("Search sessions or folders", text: $query)
+                .focused($searchFocused)
+                .onSubmit {
+                    if !search.isEmpty, visible.count == 1 { select(visible[0].id) }
+                }
+            Button { select(nil) } label: {
+                Label("None (direct connection)", systemImage: selection == nil ? "checkmark" : "arrow.right")
+            }.buttonStyle(.plain)
+            Divider()
+            if visible.isEmpty {
+                Text(search.isEmpty ? "No saved Jump Hosts available" : "No matching sessions")
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        PaneSessionBranch(parent: nil, profiles: visible, searching: !search.isEmpty, model: model) {
+                            select($0.id)
+                        }
+                    }
+                }.frame(height: 240)
+            }
+        }
+        .padding(12)
+        .frame(width: 360)
+        .onAppear { searchFocused = true }
+        .onExitCommand { showingChoices = false }
+    }
+
+    private func select(_ id: UUID?) {
+        selection = id
+        showingChoices = false
     }
 }
 

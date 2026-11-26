@@ -50,7 +50,7 @@ struct SFTPTransfersView: View {
                                 Image(systemName: item.isUpload ? "arrow.up" : "arrow.down")
                                 Text((item.source as NSString).lastPathComponent).lineLimit(1).help(item.source + " → " + item.destination)
                                 Spacer()
-                                Text(item.state.rawValue).font(.caption)
+                                Text(item.state.rawValue + " · " + (item.privilege?.rawValue ?? "unknown privileges")).font(.caption)
                                 if let error = item.error { Image(systemName: "exclamationmark.triangle").help(error) }
                                 if item.canRetry {
                                     Button(item.state == .interrupted ? "Restart" : "Retry") { browser.retryTransfers(id: item.id) }

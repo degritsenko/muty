@@ -491,7 +491,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
             childPID = 0
             return
         }
-        if let transport = sharedTransport {
+        if !stopping, exitCode != 0, let transport = sharedTransport {
             let diagnostics = transport.diagnosticOutput
             if !diagnostics.isEmpty { terminal.feed(byteArray: Array(diagnostics.utf8)[...]) }
         }

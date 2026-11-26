@@ -70,6 +70,7 @@ enum BackupArchive {
     }
 
     static func encode(_ backup: FullBackup, masterPassword: String?) throws -> Data {
+        _ = try validatedConfiguration(from: backup)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let plain = try encoder.encode(backup)
         guard plain.count <= limit else { throw MutyError("Backup exceeds 64 MB.") }
@@ -108,16 +109,16 @@ enum BackupArchive {
             guard try decoder.decode(Header.self, from: plain).format == "muty.backup" else {
                 throw MutyError("Invalid encrypted backup payload.")
             }
-            return try decodeFull(plain)
-        case "muty.backup": return try decodeFull(data)
+            return try validatedConfiguration(from: decoder.decode(FullBackup.self, from: plain))
+        case "muty.backup": return try validatedConfiguration(from: decoder.decode(FullBackup.self, from: data))
         default: throw MutyError("Invalid or unsupported muty backup.")
         }
     }
 
-    private static func decodeFull(_ data: Data) throws -> ConfigurationBackup {
-        let backup = try JSONDecoder().decode(FullBackup.self, from: data)
+    private static func validatedConfiguration(from backup: FullBackup) throws -> ConfigurationBackup {
         var configuration = try backup.configuration.validated()
-        guard (backup.version == 1 || backup.version == 2), backup.passwords.count <= configuration.sessions.count,
+        guard backup.format == "muty.backup", (backup.version == 1 || backup.version == 2),
+              backup.passwords.count <= configuration.sessions.count,
               Set(backup.passwords.map(\.sessionID)).count == backup.passwords.count else {
             throw MutyError("Invalid backup password records.")
         }
@@ -125,16 +126,18 @@ enum BackupArchive {
         guard credentials.count <= 10000, Set(credentials.map(\.id)).count == credentials.count,
               Set(credentials.map { $0.title.lowercased() }).count == credentials.count else { throw MutyError("Invalid shared credentials in backup.") }
         for credential in credentials { _ = try credential.validated() }
+        let credentialsByID = Dictionary(uniqueKeysWithValues: credentials.map { ($0.id, $0) })
         for session in configuration.sessions {
             if let id = session.credentialID {
-                guard let credential = credentials.first(where: { $0.id == id }),
+                guard let credential = credentialsByID[id],
                       session.authentication.supportsPassword, session.connectionType == .ssh,
                       session.user == credential.username else { throw MutyError("Missing or incompatible shared credential in backup.") }
             }
         }
         configuration.restoredCredentials = credentials
+        let sessionsByID = Dictionary(uniqueKeysWithValues: configuration.sessions.map { ($0.id, $0) })
         for entry in backup.passwords {
-            guard let session = configuration.sessions.first(where: { $0.id == entry.sessionID }),
+            guard let session = sessionsByID[entry.sessionID],
                   session.connectionType == .ssh, session.authentication.supportsPassword, session.credentialID == nil,
                   !entry.password.isEmpty, entry.password.utf8.count <= 1023,
                   !entry.password.contains("\n"), !entry.password.contains("\r"), !entry.password.contains("\0") else {

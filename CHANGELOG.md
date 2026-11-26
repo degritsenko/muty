@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.9.1
+
+### Added
+
+- Choose a saved SSH session as a Jump Host in Quick Connect. Browse folders or search for a session in Quick Connect and Session Settings.
+
+- Enable trusted X11 forwarding for temporary SSH sessions in Quick Connect.
+
+### Fixed
+
+- Avoid replaying SSH startup diagnostics after a successful session exit.
+
+- Clarify X11 availability, identify selected Jump Hosts by folder, and avoid duplicate SFTP cleanup on quit.
+
+- Show the X11 forwarding option for password-authenticated SSH sessions.
+
+- Keep SSH Key + Password and its saved credentials when changing library keys in Bulk Edit.
+- Check the Jump Host route before restoring passwords to existing sessions and preserve per-session Button Bar settings in backups.
+- Recheck the selected remote item before deleting it. Confirm privilege changes before retrying SFTP transfers.
+- Update the SFTP sudo button when editors or transfers finish, show progress during slow switches, and clean up staged files before releasing the previous channel.
+- Keep Quick Connect open when a required key is missing and keep temporary tab settings open when a restart is cancelled.
+- Preserve temporary tab names and Button Bar selections on restart. Include all split tabs in keyboard navigation and allow keyboard and VoiceOver resizing.
+- Apply the same limits when saving and loading backups and workspaces.
+
+### Changed
+
+- Use library keys in Bulk Edit and list sessions that need their external key remapped after backup restore.
+- Warn about metadata that remote editor saves may lose and show usable SFTP entries when some filenames are not valid UTF-8.
+
 ## 0.9.0
 
 ### Added

@@ -102,7 +102,10 @@ struct RemoteTextSnapshot: Equatable {
         message.font = .systemFont(ofSize: 11); message.textColor = .secondaryLabelColor
         let buttons = NSStackView(views: [message, find, saveButton, close]); buttons.orientation = .horizontal; buttons.spacing = 8
         message.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let stack = NSStackView(views: [pathLabel, scroll, buttons]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 10
+        let metadata = NSTextField(wrappingLabelWithString: "Saving replaces the file. ACLs, extended attributes, and hard links are not preserved.")
+        metadata.font = .systemFont(ofSize: 11)
+        metadata.textColor = .secondaryLabelColor
+        let stack = NSStackView(views: readOnly ? [pathLabel, scroll, buttons] : [pathLabel, metadata, scroll, buttons]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 10
         guard let content = window.contentView else { return }
         content.addSubview(stack); stack.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -114,6 +117,7 @@ struct RemoteTextSnapshot: Equatable {
             buttons.widthAnchor.constraint(equalTo: stack.widthAnchor),
             pathLabel.widthAnchor.constraint(equalTo: stack.widthAnchor)
         ])
+        if !readOnly { metadata.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
         window.initialFirstResponder = editor; window.center(); update()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }

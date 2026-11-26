@@ -37,8 +37,8 @@ struct SFTPBrowserView: View {
                 }.controlSize(.small).padding(.horizontal, 8).padding(.vertical, 4)
             }
             HSplitView {
-                SFTPFilePane(browser: browser, remote: false, title: "Local")
-                SFTPFilePane(browser: browser, remote: true, title: "Remote · " + endpoint)
+                SFTPFilePane(browser: browser, queue: browser.transferQueue, remote: false, title: "Local")
+                SFTPFilePane(browser: browser, queue: browser.transferQueue, remote: true, title: "Remote · " + endpoint)
             }
             SFTPTransfersView(queue: browser.transferQueue, browser: browser)
             if browser.disconnected || (visibleOperationID == browser.operationID && browser.silentOperationID != browser.operationID) {
@@ -54,9 +54,14 @@ struct SFTPBrowserView: View {
                         } else { ProgressView().controlSize(.small) }
                     } else { ProgressView().controlSize(.small); Text(browser.removing ? "Removing… " + browser.removalPath : browser.status).lineLimit(1).truncationMode(.middle) }
                     Spacer(minLength: 4)
-                    Button("Cancel") { browser.cancel() }
+                    if browser.canCancelOperation { Button("Cancel") { browser.cancel() } }
                 } else { Text(browser.status).foregroundStyle(.secondary); Spacer(minLength: 0) }
             }.font(.system(size: 11)).controlSize(.small).padding(.horizontal, 8).frame(height: 24)
+            }
+            if browser.skippedRemoteNames > 0 && !browser.disconnected {
+                Label("Some remote files are hidden because their names are not valid UTF-8.", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8)
             }
             if let error = browser.error ?? browser.moveCleanupNotice {
                 HStack {
@@ -102,6 +107,7 @@ struct SFTPBrowserView: View {
 private struct SFTPFilePane: View {
     static let dragType = "local.muty.sftp-items"
     @ObservedObject var browser: SFTPBrowserModel
+    @ObservedObject var queue: SFTPTransferQueue
     let remote: Bool
     let title: String
     @ViewState private var path = ""

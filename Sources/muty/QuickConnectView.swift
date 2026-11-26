@@ -8,6 +8,7 @@ struct QuickConnectView: View {
     @ViewState private var connectionType = ConnectionType.ssh
     @ViewState private var sshEnabled = true
     @ViewState private var sftpEnabled = false
+    @ViewState private var x11Forwarding = false
     @ViewState private var host = ""
     @ViewState private var port = "22"
     @ViewState private var user = ""
@@ -16,6 +17,7 @@ struct QuickConnectView: View {
     @ViewState private var credentialID: UUID?
     @ViewState private var keyID: UUID?
     @ViewState private var identityFile: String?
+    @ViewState private var jumpHostID: UUID?
     @FocusState private var usernameFocused: Bool
 
     private var connectionHint: String {
@@ -23,7 +25,7 @@ struct QuickConnectView: View {
             return "Select a saved credential to connect without entering a password, or leave it empty to enter one when prompted."
         }
         if connectionType == .ssh, authentication.supportsPassword, credentialID == nil {
-            return "Click Connect to enter the password when prompted. No profile or password is saved."
+            return "Click Connect to enter the password when prompted. No target profile or password is saved."
         }
         return "No profile is saved."
     }
@@ -53,6 +55,10 @@ struct QuickConnectView: View {
                         }
                         GridRow {
                             Text("Port").foregroundStyle(.secondary); TextField("Port", text: $port).accessibilityLabel("Port")
+                        }
+                        GridRow {
+                            Text("Jump Host").foregroundStyle(.secondary)
+                            JumpHostPicker(selection: $jumpHostID, model: model)
                         }
                         GridRow {
                             Text("Username").foregroundStyle(.secondary)
@@ -92,6 +98,14 @@ struct QuickConnectView: View {
                                 .labelsHidden()
                             }
                         }
+                        if sshEnabled {
+                            GridRow {
+                                Text("X11").foregroundStyle(.secondary)
+                                Toggle("Enable X11 forwarding (-Y)", isOn: $x11Forwarding)
+                                    .toggleStyle(.checkbox)
+                                    .help("Requires a running X11 server. Remote applications receive trusted access to it.")
+                            }
+                        }
                     } else {
                         Text("Starts your default login shell in your home directory.")
                             .gridCellColumns(2)
@@ -123,11 +137,18 @@ struct QuickConnectView: View {
                                 throw MutyError("The username in Host does not match the selected credential (\(selectedUser)).")
                             }
                             profile.host = address.host; profile.port = address.port; profile.user = address.user
+                            if let jumpHostID {
+                                guard model.profiles.contains(where: {
+                                    $0.id == jumpHostID && $0.connectionType == .ssh && $0.jumpHostID == nil
+                                }) else { throw MutyError("Jump host is unavailable. Select another session.") }
+                                profile.jumpHostID = jumpHostID
+                            }
                             profile.authentication = authentication
+                            profile.x11Forwarding = sshEnabled && x11Forwarding
                             profile.credentialID = authentication.supportsPassword ? credentialID : nil
                             profile.keyID = keyID; profile.identityFile = identityFile
-                            if authentication.supportsKey, keyID == nil, let identityFile {
-                                try SSHKeyLibrary.validateConnectionKey(URL(fileURLWithPath: identityFile))
+                            if authentication.supportsKey {
+                                try model.validateSSHKeySelection(profile)
                             }
                         }
                         model.connect(try profile.validated(), temporary: true)

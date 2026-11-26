@@ -1,31 +1,22 @@
 # muty workspace rules
 
-## Repository and user data
+- Work only in `degritsenko/muty` at `/Users/gritsenko/k8s/muty-public`. Check branch and status before editing, preserve unrelated changes, and use `slowhands/` for new branches. Reuse these instructions in the current chat until they change or you switch workspaces.
+- Use disposable profiles, servers, and credentials for checks. Preserve user sessions, profiles, keys, the password vault, and Keychain items.
+- Lead with the result or diff and relevant symbols. Keep full logs in files and report relevant checks, blockers, and skips. Link README.md and CHANGELOG.md when changed or preparing a release. Suggest a commit message for code changes.
+- Use subagents for substantial independent work or review of concrete risks. Report their models and any model changes. The lead verifies findings and integrates changes.
+- Get agreement before removing functionality or changing dependency sources, including vendoring or adopting a fork.
 
-- Work in `degritsenko/muty` at `/Users/gritsenko/k8s/muty-public`. `/Users/gritsenko/k8s/muty` is an old copy; do not edit it for current development. Check the branch and working tree before editing and preserve unrelated local changes. Use `slowhands/` for new branches.
-- Use disposable profiles, servers, and credentials for checks. Preserve user sessions, profiles, keys, password vault, and Keychain items.
+## Verification
 
-## Workflow and communication
+| Scope | Required checks |
+| --- | --- |
+| Docs and instructions | `git diff --check` and changed links. |
+| App changes | Smallest existing check covering the change. Add tests only on request, when CI or the release gate requires them, or for a concrete regression or critical security or data loss risk. Run full suites on request, when CI or the gate requires them, or when targeted checks are insufficient. |
+| Runnable app handover | Build once per batch with `scripts/build-app.sh` and run `codesign --verify --deep --strict dist/muty.app`. Advance the build number in `VERSION` exactly once, accounting for script auto-increment. Keep the release version unless requested. Honor explicit build deferrals. |
+| Release | Follow the [release runbook](docs/release.md). Run `bash scripts/check-release.sh` before publication. |
 
-- Keep communication concise and technical. Start with the diff and relevant symbols; expand scope when findings require it. Keep full logs in files and report relevant results, blockers, and skipped checks.
-- Use subagents for worthwhile independent reviews or parallel tasks. Choose from the models available in the current session. Report model changes and the model used by each subagent. The lead agent verifies findings and integrates changes.
-- Get user agreement before removing existing functionality or changing how a dependency is sourced, including vendoring or adopting a fork, unless already authorized.
-- Prepare work locally first. Report changes and verification results. Include README.md and CHANGELOG.md links when those files changed or when preparing a release. Propose a commit message when handing over code changes.
+Reviews start with the diff and targeted searches. Build or test on request or to resolve a concrete risk. Reuse passing checks for unchanged code and inputs. Diagnose failures and rerun affected checks after fixing the cause.
 
-## Verification and local builds
+## Git
 
-- For docs and instructions, run `git diff --check` and verify changed links.
-- For app changes, run the smallest existing check covering the behavior. Add tests only when explicitly requested, required by CI or the release gate, or necessary for a concrete regression or critical security/data-loss risk. Run full suites when explicitly requested, required by CI or the release gate, or targeted checks are insufficient.
-- Reuse passing results for unchanged code and inputs. Diagnose failures and rerun affected checks after fixing their cause.
-- Reviews start with the diff and targeted searches. Build or test when requested or needed to resolve a concrete risk.
-- When handing over a runnable app, build once per batch with `scripts/build-app.sh` and verify `codesign --verify --deep --strict dist/muty.app`. Increment only the build number in `VERSION` once, preserving the release version unless requested. Avoid double increments if the script advances the build. Honor explicit build deferrals.
-
-## Commits and publication
-
-- Commit, push, create or push tags, and publish releases only with explicit authorization for each action. “Делай” authorizes local preparation. Release-readiness discussion grants no publication authorization.
-- Commit subjects name the affected feature and concrete change. For multiple changes, add a body explaining the main changes and reasons. Release commits include the version and the substantive change.
-
-## Release preparation
-
-- Before publishing, run `bash scripts/check-release.sh`. Verify the ZIP, SHA-256 checksum, and packaged app signature, version, and architecture. Report skipped manual checks. Broad GUI, sleep/wake, and Keychain-denial campaigns require an explicit request.
-- Group changelog entries and release notes under **Added**, **Fixed**, and **Changed**. Derive release notes from the matching changelog section, preserve its headings, and keep validation logs in the handover report. Release titles use the version without a build number.
+Prepare locally first. Commit, push, create tags, push tags, and publish releases each require explicit authorization. “Делай” authorizes local preparation. Release-readiness discussion grants no publication authorization. Name the feature and concrete change in the commit subject. For multiple changes, explain the main changes and reasons in the body.

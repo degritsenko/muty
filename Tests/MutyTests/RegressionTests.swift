@@ -930,6 +930,27 @@ final class RegressionTests {
         try FileManager.default.createSymbolicLink(at: directory.appendingPathComponent("link"), withDestinationURL: external)
         let client = SFTPClient(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: [])
         defer { client.shutdown() }
+        let changed = root.appendingPathComponent("changed")
+        try Data("old".utf8).write(to: changed)
+        try runSFTPTest {
+            let selected = try await client.perform { client in
+                guard let file = try client.list(root.path).first(where: { $0.path == changed.path }) else {
+                    throw MutyError("Expected the selected file in the SFTP listing.")
+                }
+                return file
+            }
+            try FileManager.default.removeItem(at: changed)
+            try FileManager.default.createDirectory(at: changed, withIntermediateDirectories: false)
+            let sentinel = changed.appendingPathComponent("keep")
+            try Data("keep".utf8).write(to: sentinel)
+            do {
+                try await client.perform { try $0.removeTree(changed.path, confirmed: selected) }
+                preconditionFailure("A replacement directory was removed.")
+            } catch {
+                assert(error.localizedDescription.contains("selected item changed"))
+                assert(FileManager.default.fileExists(atPath: sentinel.path))
+            }
+        }
         try runSFTPTest { try await client.perform { try $0.removeTree(directory.path) } }
         assert(!FileManager.default.fileExists(atPath: directory.path))
         assert(FileManager.default.fileExists(atPath: external.appendingPathComponent("keep").path))
@@ -1022,7 +1043,8 @@ final class RegressionTests {
             } catch is CancellationError {}
             let interruptedFiles = try FileManager.default.contentsOfDirectory(atPath: root.path)
             assert(interruptedFiles.contains { $0.hasPrefix(".muty-upload-") })
-            await quitting.finishForQuit()
+            let remaining = await quitting.closeAndCleanStagedFiles()
+            assert(remaining.isEmpty)
         }
         assert(!FileManager.default.fileExists(atPath: root.appendingPathComponent("quit").path))
         let deniedClose = SFTPClient(executable: URL(fileURLWithPath: "/usr/libexec/sftp-server"), arguments: ["-P", "close"])
@@ -1448,6 +1470,29 @@ final class RegressionTests {
         let decoded = try JSONDecoder().decode(ConfigurationBackup.self, from: JSONSerialization.data(withJSONObject: object))
         assert(decoded.version == 1 && decoded.folderColors.isEmpty && decoded.folderIcons.isEmpty && decoded.folders == ["Prod"])
     }
+    func testConfigurationImportChecksJumpRoute() throws {
+        var oldJump = SessionProfile()
+        oldJump.host = "old-jump.invalid"; oldJump.user = "tester"
+        var newJump = oldJump
+        newJump.id = UUID(); newJump.host = "new-jump.invalid"
+        var current = SessionProfile()
+        current.host = "internal.invalid"; current.user = "tester"; current.jumpHostID = oldJump.id
+        var incoming = current
+        incoming.jumpHostID = newJump.id
+
+        let backup = ConfigurationBackup(sessions: [incoming, newJump].map {
+            PortableSession($0, keyName: nil, keyFingerprint: nil)
+        }, folders: [])
+        let conflict = ConfigurationImportPlan(backup: backup, existing: [current, oldJump],
+                                               selected: [incoming.id], keyBindings: [:], availableKeys: [])
+        assert(!conflict.existingIDs.contains(incoming.id))
+
+        oldJump.host = newJump.host
+        let match = ConfigurationImportPlan(backup: backup, existing: [current, oldJump],
+                                            selected: [incoming.id], keyBindings: [:], availableKeys: [])
+        assert(match.existingIDs.contains(incoming.id))
+    }
+
     @MainActor func testConfigurationRestorePreservesFolderColors() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1549,6 +1594,9 @@ final class RegressionTests {
         assert(missing.splitSlots == [nil, missing.tabs[1].id])
         assert(missing.selectedTab == missing.tabs[1].id)
         missing.cycleTab(1)
+        assert(missing.selectedTab == missing.tabs[0].id)
+        assert(missing.splitSlots == [nil, missing.tabs[0].id])
+        missing.cycleTab(-1)
         assert(missing.selectedTab == missing.tabs[1].id)
         assert(missing.splitSlots == [nil, missing.tabs[1].id])
 
@@ -1957,6 +2005,7 @@ final class RegressionTests {
             ("sessions.temporaryTabSettings", tests.testTemporaryTabSettings),
             ("sessions.localShellTabHostName", tests.testLocalShellTabHostName),
             ("sftp.queueConflictsAndRetry", SFTPQueueTests.conflictsAndRetry),
+            ("sftp.queueRetryRequiresPrivilegeApproval", SFTPQueueTests.retryRequiresPrivilegeApproval),
             ("sftp.queuePauseCancelAndRetry", SFTPQueueTests.pauseCancelAndRetry),
             ("sftp.queueOwnerReplacement", SFTPQueueTests.ownerReplacement),
             ("sftp.queueRecovery", SFTPQueueTests.recovery),
@@ -1968,6 +2017,7 @@ final class RegressionTests {
             ("ui.quickAddressPasteAndColor", tests.testQuickAddressAndPasteSafety),
             ("profiles.folderCanonicalization", tests.testFolderCanonicalization),
             ("backups.legacyFolderColors", tests.testLegacyConfigurationBackupWithoutFolderColors),
+            ("backups.importChecksJumpRoute", tests.testConfigurationImportChecksJumpRoute),
             ("backups.restoreFolderColors", tests.testConfigurationRestorePreservesFolderColors),
             ("profiles.currentFolderAndAtomicSave", tests.testCurrentFolderAndAtomicProfileSave),
             ("workspace.splitPersistence", tests.testWorkspaceSplitPersistence),

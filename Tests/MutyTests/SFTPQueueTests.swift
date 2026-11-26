@@ -80,6 +80,29 @@ enum SFTPQueueTests {
     .init(choice: .replace)
   }
 
+  static func retryRequiresPrivilegeApproval() throws {
+    try runSFTPTest {
+      let queue = SFTPTransferQueue()
+      let executor = MemoryTransferExecutor()
+      let owner = UUID()
+      queue.attach(owner: owner, executor: executor, privilege: .user)
+      executor.failure = "/source/file"
+      try await queue.run(owner: owner, request: request(["file"]), resolveConflict: replace)
+      let failed = queue.items[0]
+      assert(failed.state == .failed && failed.privilege == .user)
+
+      executor.failure = nil
+      queue.attach(owner: owner, executor: executor, privilege: .root)
+      queue.retry(owner: owner, id: failed.id)
+      try await queue.run(owner: owner, resolveConflict: replace)
+      assert(queue.items[0].state == .failed && executor.copied.isEmpty)
+
+      queue.retry(owner: owner, id: failed.id, approved: [failed.id])
+      try await queue.run(owner: owner, resolveConflict: replace)
+      assert(queue.items[0].state == .done && queue.items[0].privilege == .root)
+    }
+  }
+
   static func conflictsAndRetry() throws {
     try runSFTPTest {
       let queue = SFTPTransferQueue()

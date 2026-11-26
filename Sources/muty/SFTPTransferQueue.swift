@@ -8,6 +8,7 @@ struct SFTPProgress {
 }
 
 struct SFTPTransfer: Codable, Identifiable {
+  enum Privilege: String, Codable { case user, root }
   enum Kind: String, Codable { case upload, download, uploadDirectory, downloadDirectory }
   enum State: String, Codable {
     case waiting = "Waiting"
@@ -24,6 +25,7 @@ struct SFTPTransfer: Codable, Identifiable {
   var destination: String
   var state: State = .waiting
   var error: String?
+  var privilege: Privilege?
   var isUpload: Bool { kind == .upload || kind == .uploadDirectory }
   var isDirectory: Bool { kind == .uploadDirectory || kind == .downloadDirectory }
   var canRetry: Bool { state == .failed || state == .cancelled || state == .interrupted }
@@ -74,7 +76,9 @@ final class SFTPTransferQueue: ObservableObject {
     guard self.owner == owner, operation == nil, let recoveryStore else { return }
     let restored = recoveryStore.takeRecovered().map { item in
       var item = item
-      if item.state == .copying { item.state = .interrupted }
+      if item.state == .copying || (item.state == .waiting && item.privilege != privilege) {
+        item.state = .interrupted
+      }
       return item
     }
     guard !restored.isEmpty else { return }
@@ -106,6 +110,7 @@ final class SFTPTransferQueue: ObservableObject {
   var localPath: String?
   var remotePath: String?
   private var owner: UUID?
+  private var privilege: SFTPTransfer.Privilege?
   private var executor: (any SFTPTransferExecuting)?
   private var operation: UUID?
   private var isolatedTransfer: UUID?
@@ -113,10 +118,14 @@ final class SFTPTransferQueue: ObservableObject {
 
   var hasPending: Bool { items.contains { $0.state == .waiting } }
 
-  func attach(owner: UUID, executor: any SFTPTransferExecuting) {
-    if let previous = self.owner { detach(owner: previous) }
+  func attach(owner: UUID, executor: any SFTPTransferExecuting, privilege: SFTPTransfer.Privilege? = nil) {
+    if let previous = self.owner {
+      if previous != owner || operation != nil { detach(owner: previous) }
+      else { self.executor?.cancel() }
+    }
     self.owner = owner
     self.executor = executor
+    self.privilege = privilege
   }
 
   func detach(owner: UUID) {
@@ -134,6 +143,7 @@ final class SFTPTransferQueue: ObservableObject {
     saveItems(copying.map { items[$0] })
     self.owner = nil
     executor = nil
+    privilege = nil
     if let recoveryStore, persistenceError == nil, items.contains(where: { !$0.isFinished || $0.canRetry }) {
       recoveryStore.returnForRecovery(items)
       items.removeAll()
@@ -166,15 +176,21 @@ final class SFTPTransferQueue: ObservableObject {
     executor?.cancel()
   }
 
-  func retry(owner: UUID, id: UUID? = nil) {
+  func retries(id: UUID?) -> [SFTPTransfer] {
+    items.filter { $0.canRetry && ($0.id == id || (id == nil && $0.state != .interrupted)) }
+  }
+
+  func retry(owner: UUID, id: UUID? = nil, approved: Set<UUID> = []) {
     guard self.owner == owner, operation == nil else { return }
     let retrying = items.indices.filter { index in
       let item = items[index]
-      return item.canRetry && (item.id == id || (id == nil && item.state != .interrupted))
+      return item.canRetry && (item.id == id || (id == nil && item.state != .interrupted)) &&
+        (item.privilege == privilege || approved.contains(item.id))
     }
     for index in retrying {
       items[index].state = .waiting
       items[index].error = nil
+      items[index].privilege = privilege
     }
     saveItems(retrying.map { items[$0] })
     resume(owner: owner)
@@ -211,7 +227,11 @@ final class SFTPTransferQueue: ObservableObject {
       }
     }
     if let request {
-      let planned = try await executor.plan(request)
+      let planned = try await executor.plan(request).map { item in
+        var item = item
+        item.privilege = privilege
+        return item
+      }
       try check(token)
       items.append(contentsOf: planned)
       saveItems(planned)
@@ -220,7 +240,7 @@ final class SFTPTransferQueue: ObservableObject {
     running = true
     var allChoice: SFTPConflictResolution.Choice?
     while operation == token, !cancelled, !Task.isCancelled, !paused,
-      let index = items.firstIndex(where: { $0.state == .waiting && (transferID == nil || $0.id == transferID) })
+      let index = items.firstIndex(where: { $0.state == .waiting && $0.privilege == privilege && (transferID == nil || $0.id == transferID) })
     {
       let transfer = items[index]
       items[index].state = .copying

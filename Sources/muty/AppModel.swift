@@ -180,7 +180,7 @@ final class AppModel: ObservableObject {
     }
 
     func cycleTab(_ direction: Int) {
-        let candidates = splitMode == "none" ? tabs.map(\.id) : splitSlots.compactMap { $0 }
+        let candidates = splitMode == "none" ? tabs.map(\.id) : splitGroups.flatMap(\.tabs)
         guard !candidates.isEmpty else { return }
         guard let current = candidates.firstIndex(where: { $0 == selectedTab }) else {
             if let target = direction < 0 ? candidates.last : candidates.first { selectTab(target) }
@@ -193,14 +193,17 @@ final class AppModel: ObservableObject {
     @Published var quickConnect = false
     static let localShellButtonBarKey = "localShellButtonBarSet"
     func requestQuickConnect() {
-        guard !quickConnect else {
-            quickConnect = false
-            RunLoop.main.perform(inModes: [.default]) { [weak self] in
-                self?.quickConnect = true
-            }
-            return
-        }
+        guard !quickConnect else { return }
         quickConnect = true
+    }
+
+    func validateSSHKeySelection(_ profile: SessionProfile) throws {
+        if let keyID = profile.keyID {
+            _ = try keyLibrary.path(for: keyID)
+        } else {
+            guard let path = profile.identityFile, !path.isEmpty else { throw MutyError("Choose an SSH identity file.") }
+            try SSHKeyLibrary.validateConnectionKey(URL(fileURLWithPath: NSString(string: path).expandingTildeInPath))
+        }
     }
     @Published var newFolderPrompt = false
     @Published var bulkEditing: BulkEditRequest?
@@ -401,7 +404,7 @@ final class AppModel: ObservableObject {
         bulkEditing = BulkEditRequest(folder: folder, profiles: affected)
     }
 
-    func applyBulkEdit(_ request: BulkEditRequest, user: String?, keyID: UUID?, identityFile: String? = nil,
+    func applyBulkEdit(_ request: BulkEditRequest, user: String?, keyID: UUID?,
                        changeJump: Bool, jumpID: UUID?, credentialID: UUID? = nil,
                        sshEnabled: Bool? = nil, sftpEnabled: Bool? = nil,
                        changeColor: Bool = false, color: String? = nil,
@@ -413,12 +416,11 @@ final class AppModel: ObservableObject {
         guard request.profiles.allSatisfy({ original in profiles.contains(original) }) else {
             throw MutyError("Sessions changed. Close and reopen Bulk Edit.")
         }
-        guard credentialID == nil || (user == nil && keyID == nil && identityFile == nil) else { throw MutyError("Assign a shared credential separately from username or SSH key changes.") }
+        guard credentialID == nil || (user == nil && keyID == nil) else { throw MutyError("Assign a shared credential separately from username or SSH key changes.") }
         if changeIcon, let icon, SessionIcon(rawValue: icon) == nil { throw MutyError("Invalid session icon.") }
         let shared: SavedCredential?
         if let credentialID { try vault.ensureAvailable(); shared = try vault.credential(credentialID) } else { shared = nil }
         if let keyID { _ = try keyLibrary.path(for: keyID) }
-        if let identityFile { try SSHKeyLibrary.validateConnectionKey(URL(fileURLWithPath: identityFile)) }
         if changeButtonBar, let selection = buttonBarSet, !selection.isEmpty {
             guard let id = UUID(uuidString: selection),
                   SendStringButtonStore.shared.document.sets.contains(where: { $0.id == id }) else {
@@ -432,7 +434,7 @@ final class AppModel: ObservableObject {
             if updated[index].connectionType == .ssh {
                 if let sshEnabled { updated[index].sshEnabled = sshEnabled }
                 if let sftpEnabled { updated[index].sftpEnabled = sftpEnabled }
-                if user != nil || keyID != nil || identityFile != nil { updated[index].credentialID = nil }
+                if user != nil { updated[index].credentialID = nil }
                 if let shared {
                     updated[index].credentialID = shared.id; updated[index].user = shared.username
                     updated[index].authentication = .password; updated[index].savePassword = false
@@ -444,11 +446,11 @@ final class AppModel: ObservableObject {
                 }
                 if let keyID {
                     updated[index].keyID = keyID; updated[index].identityFile = nil
-                    updated[index].authentication = .identityFile; updated[index].savePassword = false
-                }
-                if let identityFile {
-                    updated[index].keyID = nil; updated[index].identityFile = identityFile
-                    updated[index].authentication = .identityFile; updated[index].savePassword = false
+                    if updated[index].authentication != .agentAndPassword {
+                        updated[index].authentication = .identityFile
+                        updated[index].credentialID = nil
+                        updated[index].savePassword = false
+                    }
                 }
                 if changeJump { updated[index].jumpHostID = jumpID }
                 let original = profiles[index]
@@ -521,6 +523,7 @@ final class AppModel: ObservableObject {
             selectedIndex: selectedTab.flatMap { indices[$0] }, split: split
         )
         do { try workspaceStore.save(document) }
+        catch let limit as WorkspaceStore.LimitError { errorMessage = "Could not save workspace: " + limit.localizedDescription }
         catch { workspaceBlocked = true; errorMessage = "Could not save workspace: " + error.localizedDescription }
     }
 
@@ -715,6 +718,16 @@ final class AppModel: ObservableObject {
         }
         if incomingButtonBar != nil {
             summaryLines.append("Button Bar: current sets, commands and folder assignments will be replaced.")
+        }
+        let finalButtonBar = incomingButtonBar ?? SendStringButtonStore.shared.document
+        let availableButtonBars = Set(finalButtonBar.sets.map(\.id))
+        let buttonBarProfiles = incomingButtonBar == nil ? plan.profiles : updated
+        let missingButtonBarCount = buttonBarProfiles.filter { profile in
+            guard let selection = profile.buttonBarSet, let id = UUID(uuidString: selection) else { return false }
+            return !availableButtonBars.contains(id)
+        }.count
+        if missingButtonBarCount > 0 {
+            summaryLines.append("Button Bar: \(missingButtonBarCount) sessions reference unavailable sets and will use their folder or default set.")
         }
         var messages = plan.profiles.map { "Added session: " + $0.name }
         messages += backup.sessions.filter { selected.contains($0.id) && plan.existingIDs.contains($0.id) }
@@ -1110,7 +1123,8 @@ final class AppModel: ObservableObject {
         editing = ProfileDraft(new: draft, fromTemporaryTab: true)
     }
 
-    func updateTemporaryTab(_ connection: SSHConnection, profile value: SessionProfile) throws {
+    @discardableResult
+    func updateTemporaryTab(_ connection: SSHConnection, profile value: SessionProfile) throws -> Bool {
         guard connection.temporary, tabs.contains(where: { $0.id == connection.id }) else {
             throw MutyError("Temporary session is no longer open.")
         }
@@ -1129,11 +1143,14 @@ final class AppModel: ObservableObject {
             updated.forwards != original.forwards || updated.tunnelOnly != original.tunnelOnly ||
             updated.x11Forwarding != original.x11Forwarding
         if transportChanged {
-            guard confirmSessionSettings("Apply Temporary Tab Settings?", text: "This tab will restart with the updated connection settings.") else { return }
-            if updated.buttonBarSet != original.buttonBarSet { connection.buttonBarSelection = nil }
+            guard confirmSessionSettings("Apply Temporary Tab Settings?", text: "This tab will restart with the updated connection settings.") else { return false }
             connection.disconnect()
             let replacement = SSHConnection(profile: updated, manual: connection.manual, temporary: true,
                                             credentials: passwordStore, transferQueueID: connection.transferQueueID)
+            replacement.tabName = connection.tabName
+            if updated.buttonBarSet == original.buttonBarSet {
+                replacement.buttonBarSelection = connection.buttonBarSelection
+            }
             configurePasswordSaving(replacement)
             replaceTab(connection, with: replacement)
         } else {
@@ -1141,6 +1158,7 @@ final class AppModel: ObservableObject {
             connection.profile = updated
             connection.setTheme(updated.terminalTheme ?? UserDefaults.standard.string(forKey: "terminalTheme") ?? TerminalColorScheme.mutyDark.rawValue)
         }
+        return true
     }
 
     @discardableResult
@@ -1537,16 +1555,9 @@ final class AppModel: ObservableObject {
     func shutdown(completion: @escaping () -> Void) {
         persistWorkspace()
         let connections = tabs
-        Task {
-            await withTaskGroup(of: Void.self) { group in
-                for browser in connections.compactMap(\.fileBrowser) {
-                    group.addTask { await browser.finishForQuit() }
-                }
-            }
-            connections.forEach { $0.disconnect() }
-            vault.lock()
-            SSHConnection.cleanup.notify(queue: .main, execute: completion)
-        }
+        connections.forEach { $0.disconnect() }
+        vault.lock()
+        SSHConnection.cleanup.notify(queue: .main, execute: completion)
     }
 
     func confirm(_ title: String, text: String, action: String = "Continue", cancel: String = "Cancel") -> Bool {

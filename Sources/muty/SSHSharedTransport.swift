@@ -40,7 +40,7 @@ final class SSHSharedTransport {
     var diagnosticOutput: String {
         guard let data = try? Data(contentsOf: directory.appendingPathComponent("transport.log")) else { return "" }
         return String(decoding: data.prefix(131072), as: UTF8.self)
-            .components(separatedBy: "\n").filter { !$0.hasPrefix("debug") }.joined(separator: "\r\n")
+            .components(separatedBy: "\n").filter { !$0.hasPrefix("debug") && !$0.hasPrefix("Authenticated to ") }.joined(separator: "\r\n")
     }
     func close() {
         guard !closed else { return }

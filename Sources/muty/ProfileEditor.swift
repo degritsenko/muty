@@ -5,13 +5,13 @@ struct ProfileEditor: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var buttonStore = SendStringButtonStore.shared
     let draft: ProfileDraft
-    var onSave: ((SessionProfile) throws -> Void)? = nil
+    var onSave: ((SessionProfile) throws -> Bool)? = nil
     @ViewState private var profile: SessionProfile
     @ViewState private var port: String
     @ViewState private var page = "General"
     @ViewState private var error: String?
 
-    init(model: AppModel, draft: ProfileDraft, onSave: ((SessionProfile) throws -> Void)? = nil) {
+    init(model: AppModel, draft: ProfileDraft, onSave: ((SessionProfile) throws -> Bool)? = nil) {
         self.model = model; self.draft = draft
         self.onSave = onSave
         var initial = draft.profile
@@ -172,7 +172,7 @@ struct ProfileEditor: View {
                                     }
                                     GridRow {
                                         Text("Jump Host").foregroundStyle(.secondary);
-                                        JumpHostPicker(profile: $profile, profiles: model.profiles).labelsHidden()
+                                        JumpHostPicker(selection: $profile.jumpHostID, model: model, excluding: profile.id)
                                     }
                                 }.frame(maxWidth: .infinity, alignment: .leading)
                                 Text("Authentication").font(.headline)
@@ -260,12 +260,17 @@ struct ProfileEditor: View {
                                         }
                                     }
                                 }.frame(maxWidth: .infinity, alignment: .leading)
-                                if profile.authentication.supportsKey {
-                                    Divider().padding(.vertical, 4)
-                                    Toggle("Enable X11 forwarding (-Y)", isOn: $profile.x11Forwarding)
-                                    Text("Requires a running X11 server. Remote applications receive trusted access to your X server.")
-                                        .font(.caption).foregroundStyle(.secondary)
+                                Divider().padding(.vertical, 4)
+                                Toggle("Enable X11 forwarding (-Y)", isOn: Binding(
+                                    get: { profile.sshEnabled && !profile.tunnelOnly && profile.x11Forwarding },
+                                    set: { profile.x11Forwarding = $0 }
+                                ))
+                                    .disabled(!profile.sshEnabled || profile.tunnelOnly)
+                                if !profile.sshEnabled || profile.tunnelOnly {
+                                    Text("Enable an SSH terminal to use X11 forwarding.").font(.caption).foregroundStyle(.secondary)
                                 }
+                                Text("Requires a running X11 server. Remote applications receive trusted access to your X server.")
+                                    .font(.caption).foregroundStyle(.secondary)
                             }.frame(maxWidth: .infinity, alignment: .topLeading).padding(.vertical, 4)
                         }
                     }
@@ -287,7 +292,11 @@ struct ProfileEditor: View {
                         if !updated.authentication.supportsPassword || changed { updated.savePassword = false }
                         if !updated.authentication.supportsPassword { updated.credentialID = nil }
                         if !updated.authentication.supportsKey { updated.keyID = nil; updated.identityFile = nil }
-                        if let onSave { try onSave(updated) }
+                        if updated.connectionType == .ssh, updated.authentication.supportsKey {
+                            do { try model.validateSSHKeySelection(updated) }
+                            catch { page = "SSH"; throw error }
+                        }
+                        if let onSave { guard try onSave(updated) else { return } }
                         else {
                             try model.save(updated, password: "", reuse: false)
                             if draft.fromTemporaryTab {

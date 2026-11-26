@@ -109,7 +109,8 @@ struct TerminalWorkspace<Pane: View>: View {
                             model.splitColumnFraction = min(0.85, max(0.15, event.location.x / max(1, geometry.size.width)))
                         }.onEnded { _ in model.persistWorkspace() })
                         .onHover { inside in if inside { NSCursor.resizeLeftRight.set() } else { NSCursor.arrow.set() } }
-                        .accessibilityLabel("Resize columns")
+                        .modifier(SplitDividerControls(label: "Resize columns", fraction: $model.splitColumnFraction,
+                                                       decrease: .leftArrow, increase: .rightArrow, save: model.persistWorkspace))
                 }
                 if let y = layout.row {
                     Rectangle().fill(Color.black.opacity(0.001)).frame(width: layout.rowWidth, height: 16)
@@ -120,7 +121,8 @@ struct TerminalWorkspace<Pane: View>: View {
                             model.splitRowFraction = min(0.85, max(0.15, event.location.y / max(1, geometry.size.height)))
                         }.onEnded { _ in model.persistWorkspace() })
                         .onHover { inside in if inside { NSCursor.resizeUpDown.set() } else { NSCursor.arrow.set() } }
-                        .accessibilityLabel("Resize rows")
+                        .modifier(SplitDividerControls(label: "Resize rows", fraction: $model.splitRowFraction,
+                                                       decrease: .upArrow, increase: .downArrow, save: model.persistWorkspace))
                 }
             }.sheet(isPresented: Binding(get: { sessionPickerIndex != nil }, set: { if !$0 { sessionPickerIndex = nil } })) {
                 savedSessionPicker
@@ -316,5 +318,36 @@ private struct PaneSessionFolder: View {
             transaction.animation = nil
             transaction.disablesAnimations = true
         }
+    }
+}
+
+private struct SplitDividerControls: ViewModifier {
+    let label: String
+    @Binding var fraction: CGFloat
+    let decrease: SwiftUI.KeyEquivalent
+    let increase: SwiftUI.KeyEquivalent
+    let save: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .focusable()
+            .onKeyPress(decrease) { adjust(-0.05); return .handled }
+            .onKeyPress(increase) { adjust(0.05); return .handled }
+            .accessibilityLabel(label)
+            .accessibilityValue(Double(fraction).formatted(.percent.precision(.fractionLength(0))))
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: adjust(0.05)
+                case .decrement: adjust(-0.05)
+                @unknown default: break
+                }
+            }
+    }
+
+    private func adjust(_ delta: CGFloat) {
+        let next = min(0.85, max(0.15, fraction + delta))
+        guard next != fraction else { return }
+        fraction = next
+        save()
     }
 }

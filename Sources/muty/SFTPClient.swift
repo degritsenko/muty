@@ -144,12 +144,13 @@ final class SFTPClient: @unchecked Sendable {
         if let pid, pid > 0 { _ = kill(pid, SIGTERM) }
         queue.async { [self] in disconnectProcess() }
     }
-    func finishForQuit(cleanupPassword: String? = nil) async {
+    @discardableResult
+    func closeAndCleanStagedFiles(cleanupPassword: String? = nil) async -> [String] {
         shutdown()
         let paths = await withCheckedContinuation { continuation in
             queue.async { [self] in continuation.resume(returning: pendingCleanup) }
         }
-        guard !paths.isEmpty else { return }
+        guard !paths.isEmpty else { return [] }
 
         // The upload channel may have outstanding replies from cancellation.
         // Keep the SSH master alive and use a separate SFTP channel for cleanup.
@@ -161,19 +162,22 @@ final class SFTPClient: @unchecked Sendable {
         let timeout = DispatchWorkItem { cleaner.shutdown() }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3, execute: timeout)
         defer { timeout.cancel(); cleaner.shutdown() }
-        try? await cleaner.perform { client in
+        let remaining = try? await cleaner.perform { client in
+            var remaining: [String] = []
             for (path, directory) in paths.reversed() {
-                try client.checkCancellation()
                 do {
+                    try client.checkCancellation()
                     try client.validateDirectoryAncestors(path)
                     try client.remove(path, directory: directory)
-                } catch is CancellationError {
-                    throw CancellationError()
+                } catch let error as SFTPStatus where error.code == 2 {
+                    continue
                 } catch {
-                    // Continue cleaning other exact paths if one removal fails.
+                    remaining.append(path)
                 }
             }
+            return remaining
         }
+        return remaining ?? paths.map { $0.0 }
     }
     deinit { if let process, process.isRunning { process.terminate() } }
     func setPaused(_ value: Bool) {
@@ -397,19 +401,29 @@ final class SFTPClient: @unchecked Sendable {
         } catch let error as SFTPStatus where error.code == 2 { return nil }
     }
     func list(_ path: String) throws -> [BrowserFile] {
+        let listing = try listForBrowser(path)
+        guard listing.skipped == 0 else {
+            throw MutyError("This directory contains filenames that are not valid UTF-8.")
+        }
+        return listing.files
+    }
+
+    func listForBrowser(_ path: String) throws -> (files: [BrowserFile], skipped: Int) {
         try checkCancellation()
         let directory = try handle(11) { $0.string(path) }
         defer { try? close(directory) }
         var files: [BrowserFile] = []
+        var skipped = 0
         while true {
             try checkCancellation()
             do {
                 var (kind, response) = try request(12) { $0.string(directory) }
                 guard kind == 104 else { throw MutyError("Invalid SFTP directory response.") }
                 let count = try response.u32()
-                guard count > 0, count <= 100000, files.count + Int(count) <= 100000 else { throw MutyError("Directory is too large or invalid.") }
+                guard count > 0, count <= 100000, files.count + skipped + Int(count) <= 100000 else { throw MutyError("Directory is too large or invalid.") }
                 for _ in 0..<count {
-                    let name = try response.text(); let longName = try response.string(); let attrs = try response.attributes()
+                    let nameBytes = try response.string(); let longName = try response.string(); let attrs = try response.attributes()
+                    guard let name = String(data: nameBytes, encoding: .utf8) else { skipped += 1; continue }
                     let fields = String(data: longName, encoding: .utf8)?.split(whereSeparator: \.isWhitespace) ?? []
                     let hasUnixFormat = fields.count >= 9 && fields[0].count >= 10 && "-dlcbps".contains(fields[0].first ?? "?") && UInt64(fields[1]) != nil
                     let ownerName = hasUnixFormat ? String(fields[2]) : nil
@@ -422,7 +436,7 @@ final class SFTPClient: @unchecked Sendable {
                 }
             } catch let error as SFTPStatus where error.code == 1 { break }
         }
-        return BrowserFile.sorted(files)
+        return (BrowserFile.sorted(files), skipped)
     }
     func mkdir(_ path: String) throws { try checkCancellation(); try status(14) { $0.string(path); $0.u32(4); $0.u32(0o700) } }
     func createFile(_ path: String) throws {
@@ -461,7 +475,7 @@ final class SFTPClient: @unchecked Sendable {
         }
     }
 
-    func removeTree(_ path: String, depth: Int = 0, expected: [String: BrowserFile]? = nil,
+    func removeTree(_ path: String, depth: Int = 0, expected: [String: BrowserFile]? = nil, confirmed: BrowserFile? = nil,
                     progress: (String) -> Void = { _ in }) throws {
         try checkCancellation()
         guard path.hasPrefix("/"), path != "/", depth <= 128 else { throw MutyError("Invalid path or excessive directory depth: " + path) }
@@ -469,6 +483,14 @@ final class SFTPClient: @unchecked Sendable {
             progress(path)
             try validateDirectoryAncestors(path)
             guard let attrs = try attributes(path), attrs.permissions != nil else { throw MutyError("Cannot determine file type") }
+            if let confirmed {
+                guard path == confirmed.path,
+                      attrs.isSymlink == confirmed.isSymlink,
+                      attrs.isDirectory == confirmed.isDirectory,
+                      confirmed.isDirectory || (attrs.size == confirmed.size && attrs.modified == confirmed.modified) else {
+                    throw MutyError("The selected item changed. Refresh the directory and try again.")
+                }
+            }
             if let expected {
                 guard let original = expected[path], !attrs.isSymlink,
                       attrs.isDirectory == original.isDirectory,
