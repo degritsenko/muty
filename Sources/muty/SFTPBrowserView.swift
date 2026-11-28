@@ -132,8 +132,11 @@ private struct SFTPFilePane: View {
     @ViewState private var propertiesPrompt = false
     @ViewState private var renaming: BrowserFile?
     @ViewState private var sortOrder = [KeyPathComparator(\BrowserFile.name)]
+    @ViewState private var nameFilter = ""
     private var files: [BrowserFile] {
-        (remote ? browser.visibleRemote : browser.visibleLocal).sorted { lhs, rhs in
+        (remote ? browser.visibleRemote : browser.visibleLocal).filter {
+            nameFilter.isEmpty || $0.name.localizedStandardContains(nameFilter)
+        }.sorted { lhs, rhs in
             if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
             for comparator in sortOrder {
                 let result = comparator.compare(lhs, rhs)
@@ -234,19 +237,48 @@ private struct SFTPFilePane: View {
                 }.disabled(browser.busy || browser.disconnected || browser.remotePath.isEmpty || selectedFiles.isEmpty)
             }
             HStack(spacing: 6) {
+                Button { browser.navigateHistory(remote: remote, forward: false) } label: {
+                    Image(systemName: "chevron.left")
+                }.help("Back").accessibilityLabel("Back")
+                    .disabled(!browser.canNavigateHistory(remote: remote, forward: false))
+                Button { browser.navigateHistory(remote: remote, forward: true) } label: {
+                    Image(systemName: "chevron.right")
+                }.help("Forward").accessibilityLabel("Forward")
+                    .disabled(!browser.canNavigateHistory(remote: remote, forward: true))
                 Button { home() } label: { Image(systemName: "house") }.help("Home directory")
                 TextField(remote ? "Remote path" : "Local path", text: $path)
                     .textFieldStyle(.roundedBorder).onSubmit { navigate(path) }
                     .accessibilityLabel(remote ? "Remote directory" : "Local directory")
+                Menu {
+                    ForEach(browser.directoryHistory(remote: remote), id: \.position) { item in
+                        Button(item.path) { browser.navigateHistory(remote: remote, position: item.position) }
+                    }
+                } label: { Image(systemName: "clock.arrow.circlepath") }
+                .menuStyle(.borderlessButton).fixedSize()
+                .help("Directory history").accessibilityLabel("Directory history")
+                .disabled(browser.directoryHistory(remote: remote).isEmpty)
                 Button { navigate(directory) } label: { Image(systemName: "arrow.clockwise") }.help("Refresh")
                 if remote {
-                    Button(browser.sudoEnabled ? "SFTP · root" : "Sudo", systemImage: browser.sudoEnabled ? "lock.open.fill" : "lock.shield") { browser.toggleSudo() }
+                    Button(browser.rootPrivileges ? "SFTP · root" : "Sudo", systemImage: browser.rootPrivileges ? "lock.open.fill" : "lock.shield") { browser.toggleSudo() }
                         .disabled(!browser.canSwitchSudo)
                         .help("Switch SFTP privileges. Close remote editors and finish transfers first.")
                 }
                 Button { newItem(file: true) } label: { Image(systemName: "doc.badge.plus") }.help("New file").disabled(unavailable)
                 Button { newItem(file: false) } label: { Image(systemName: "folder.badge.plus") }.help("New folder").disabled(unavailable)
             }.disabled(browser.busy || (remote && browser.disconnected))
+            HStack(spacing: 6) {
+                Image(systemName: "line.3.horizontal.decrease").foregroundStyle(.secondary)
+                TextField("Filter names", text: $nameFilter)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel(remote ? "Filter remote filenames" : "Filter local filenames")
+                if !nameFilter.isEmpty {
+                    Button { nameFilter = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).help("Clear filter")
+                }
+            }
+            .onChange(of: nameFilter) { _, _ in
+                selection.wrappedValue.formIntersection(Set(files.map(\.id)))
+            }
             Table(of: BrowserFile.self, selection: selection, sortOrder: $sortOrder) {
                 TableColumn("Name", value: \.name) { file in
                     HStack(spacing: 5) {

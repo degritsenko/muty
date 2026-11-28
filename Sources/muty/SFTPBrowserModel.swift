@@ -57,8 +57,10 @@ struct SFTPBookmark: Codable, Identifiable {
     var canCancelOperation: Bool { channelCleanup == nil }
     private let normalClient: SFTPClient
     private let sudoArguments: [String]?
+    private let loginIsRoot: Bool
+    var rootPrivileges: Bool { loginIsRoot || sudoEnabled }
     @Published private(set) var sudoEnabled = false
-    var canSwitchSudo: Bool { sudoArguments != nil && !busy && !disconnected && !removing && !transferQueue.running && !transferQueue.hasPending && editors.isEmpty && pendingMoveCleanup == nil }
+    var canSwitchSudo: Bool { !loginIsRoot && sudoArguments != nil && !busy && !disconnected && !removing && !transferQueue.running && !transferQueue.hasPending && editors.isEmpty && pendingMoveCleanup == nil }
     private var job: Task<Void, Never>?
     private var removalJob: Task<Void, Never>?
     private var removalClient: SFTPClient?
@@ -74,14 +76,15 @@ struct SFTPBookmark: Codable, Identifiable {
     private weak var app: AppModel?
     var visibleLocal: [BrowserFile] { localFiles.filter { showHidden || !$0.name.hasPrefix(".") } }
     var visibleRemote: [BrowserFile] { remoteFiles.filter { showHidden || !$0.name.hasPrefix(".") } }
-    init(sudoArguments: [String]? = nil, client: SFTPClient, app: AppModel, sessionID: UUID, transferQueue: SFTPTransferQueue, endpoint: String? = nil, jumpEndpoint: String? = nil, temporary: Bool = false) {
+    init(sudoArguments: [String]? = nil, loginIsRoot: Bool = false, client: SFTPClient, app: AppModel, sessionID: UUID, transferQueue: SFTPTransferQueue, endpoint: String? = nil, jumpEndpoint: String? = nil, temporary: Bool = false) {
+        self.loginIsRoot = loginIsRoot
         self.endpoint = endpoint
         let bookmarkScope = temporary ? "quick-connect" : sessionID.uuidString
         bookmarkDestination = endpoint.map { bookmarkScope + "|" + String($0.count) + ":" + $0 + (jumpEndpoint ?? "") }
         self.normalClient = client; self.sudoArguments = sudoArguments
         self.client = client; self.app = app; self.sessionID = sessionID
         self.transferQueue = transferQueue
-        transferQueue.attach(owner: id, executor: SFTPTransferAdapter(client: client), privilege: .user)
+        transferQueue.attach(owner: id, executor: SFTPTransferAdapter(client: client), privilege: loginIsRoot ? .root : .user)
         let saved = UserDefaults.standard.string(forKey: "sftp-local-" + sessionID.uuidString)
         navigateLocal(transferQueue.localPath ?? saved ?? localPath)
     }
@@ -243,6 +246,59 @@ struct SFTPBookmark: Codable, Identifiable {
         job?.cancel(); client.cancel()
         removalJob?.cancel(); removalClient?.cancel()
     }
+    private struct DirectoryHistory {
+        var paths: [String] = []
+        var index = -1
+
+        mutating func record(_ path: String, position: Int? = nil) {
+            if let position, paths.indices.contains(position), paths[position] == path {
+                index = position
+                return
+            }
+            guard index < 0 || paths[index] != path else { return }
+            paths = Array(paths.prefix(index + 1))
+            paths.append(path)
+            if paths.count > 100 { paths.removeFirst() }
+            index = paths.count - 1
+        }
+    }
+    @Published private var localHistory = DirectoryHistory()
+    @Published private var remoteHistory = DirectoryHistory()
+
+    func directoryHistory(remote: Bool) -> [(position: Int, path: String)] {
+        let history = remote ? remoteHistory : localHistory
+        return history.paths.enumerated().reversed().map { (position: $0.offset, path: $0.element) }
+    }
+
+    func navigateHistory(remote: Bool, position: Int) {
+        let history = remote ? remoteHistory : localHistory
+        guard !busy, !remote || !disconnected, history.paths.indices.contains(position) else { return }
+        if remote {
+            navigateRemote(history.paths[position], historyPosition: position)
+        } else {
+            do { applyLocalDirectory(try readLocalDirectory(history.paths[position]), historyPosition: position) }
+            catch { self.error = error.localizedDescription }
+        }
+    }
+
+    func canNavigateHistory(remote: Bool, forward: Bool) -> Bool {
+        let history = remote ? remoteHistory : localHistory
+        let target = history.index + (forward ? 1 : -1)
+        return !busy && (!remote || !disconnected) && history.paths.indices.contains(target)
+    }
+
+    func navigateHistory(remote: Bool, forward: Bool) {
+        guard canNavigateHistory(remote: remote, forward: forward) else { return }
+        let history = remote ? remoteHistory : localHistory
+        let target = history.index + (forward ? 1 : -1)
+        if remote {
+            navigateRemote(history.paths[target], historyPosition: target)
+        } else {
+            do { applyLocalDirectory(try readLocalDirectory(history.paths[target]), historyPosition: target) }
+            catch { self.error = error.localizedDescription }
+        }
+    }
+
     func navigateLocal(_ path: String) {
         guard !busy else { return }
         do { applyLocalDirectory(try readLocalDirectory(path)) }
@@ -262,7 +318,8 @@ struct SFTPBookmark: Codable, Identifiable {
         return (url.path, BrowserFile.sorted(entries))
     }
 
-    private func applyLocalDirectory(_ directory: (path: String, files: [BrowserFile])) {
+    private func applyLocalDirectory(_ directory: (path: String, files: [BrowserFile]), historyPosition: Int? = nil) {
+        localHistory.record(directory.path, position: historyPosition)
         localPath = directory.path; transferQueue.localPath = directory.path
         UserDefaults.standard.set(directory.path, forKey: "sftp-local-" + sessionID.uuidString)
         localFiles = directory.files; localSelection = []; error = nil
@@ -271,7 +328,7 @@ struct SFTPBookmark: Codable, Identifiable {
     func localHome() { navigateLocal(FileManager.default.homeDirectoryForCurrentUser.path) }
     func remoteUp() { navigateRemote((remotePath as NSString).deletingLastPathComponent) }
     func goRemoteHome() { navigateRemote(".") }
-    func navigateRemote(_ path: String, restoring: Bool = false) {
+    func navigateRemote(_ path: String, restoring: Bool = false, historyPosition: Int? = nil) {
         run("Loading directory…", work: { client in
             do {
                 let canonical = try client.canonical(path.isEmpty ? "." : path)
@@ -280,10 +337,11 @@ struct SFTPBookmark: Codable, Identifiable {
                 let home = try client.canonical(".")
                 return (home, try client.listForBrowser(home))
             }
-        }) { [weak self] value in self?.applyRemoteDirectory(value) }
+        }) { [weak self] value in self?.applyRemoteDirectory(value, historyPosition: historyPosition) }
     }
 
-    private func applyRemoteDirectory(_ directory: (path: String, listing: (files: [BrowserFile], skipped: Int))) {
+    private func applyRemoteDirectory(_ directory: (path: String, listing: (files: [BrowserFile], skipped: Int)), historyPosition: Int? = nil) {
+        remoteHistory.record(directory.path, position: historyPosition)
         remotePath = directory.path; transferQueue.remotePath = directory.path
         UserDefaults.standard.set(directory.path, forKey: "sftp-remote-" + sessionID.uuidString)
         applyRemoteListing(directory.listing); remoteSelection = []
@@ -543,7 +601,7 @@ struct SFTPBookmark: Codable, Identifiable {
         let isolated = id.flatMap { id in
             transferQueue.items.first { $0.id == id && ($0.state == .interrupted || transferQueue.awaitingStart) }?.id
         }
-        let mode: SFTPTransfer.Privilege = sudoEnabled ? .root : .user
+        let mode: SFTPTransfer.Privilege = rootPrivileges ? .root : .user
         let changed = transferQueue.retries(id: id).filter { $0.privilege != mode }
         let details = changed.map { transfer in
             (transfer.source as NSString).lastPathComponent + " (" + (transfer.privilege?.rawValue ?? "unknown") + ")"
@@ -553,7 +611,7 @@ struct SFTPBookmark: Codable, Identifiable {
             "These transfers were queued with different or unknown privileges:\n\n" + details.joined(separator: "\n"),
             action: "Retry as " + mode.rawValue
         ) else { return }
-        guard !busy, !disconnected, sudoEnabled == (mode == .root) else { return }
+        guard !busy, !disconnected, rootPrivileges == (mode == .root) else { return }
         transferQueue.retry(owner: self.id, id: id, approved: Set(changed.map(\.id)))
         processTransfers(only: isolated)
     }

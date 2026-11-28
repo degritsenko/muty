@@ -203,7 +203,7 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
             let queue = app.transferQueue(for: transferQueueID, profileID: temporary ? nil : profile.id, endpoint: profile.endpoint, jump: connectedJumpProfile)
             let sudoScript = "for p in /usr/lib/openssh/sftp-server /usr/libexec/openssh/sftp-server /usr/lib/ssh/sftp-server /usr/lib/sftp-server; do if test -x \"$p\"; then exec sudo -S -p 'MUTY_SUDO_PASSWORD:' -- sh -c 'printf R; exec \"$1\"' muty-sftp \"$p\"; fi; done; printf 'External sftp-server not found' >&2; exit 1"
             let sudoArgs = transport.clientArguments() + ["-T", "-p", String(profile.port), "-l", profile.user, "--", profile.host, sudoScript]
-            fileBrowser = SFTPBrowserModel(sudoArguments: sudoArgs, client: SFTPClient(arguments: args), app: app, sessionID: profile.id, transferQueue: queue, endpoint: profile.endpoint, jumpEndpoint: connectedJumpProfile?.endpoint, temporary: temporary)
+            fileBrowser = SFTPBrowserModel(sudoArguments: profile.user == "root" ? nil : sudoArgs, loginIsRoot: profile.user == "root", client: SFTPClient(arguments: args), app: app, sessionID: profile.id, transferQueue: queue, endpoint: profile.endpoint, jumpEndpoint: connectedJumpProfile?.endpoint, temporary: temporary)
         }
         showingSFTP = true
         terminal.cancelPendingPaste()
@@ -470,10 +470,14 @@ final class SSHConnection: NSObject, ObservableObject, Identifiable, LocalProces
             }
             activeTunnels = transport.tunnelManager
         }
-        canOpenSFTP = profile.sftpEnabled && !profile.tunnelOnly && transportReady
-        if transportReady {
-            negotiatedCipher = sharedTransport?.negotiatedCipher
-            status = "Connected"
+        let ready = transportReady
+        let sftpAvailable = profile.sftpEnabled && !profile.tunnelOnly && ready
+        if canOpenSFTP != sftpAvailable { canOpenSFTP = sftpAvailable }
+        if ready {
+            if negotiatedCipher == nil, let cipher = sharedTransport?.negotiatedCipher {
+                negotiatedCipher = cipher
+            }
+            if status != "Connected" { status = "Connected" }
         }
     }
 

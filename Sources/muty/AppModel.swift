@@ -495,6 +495,9 @@ final class AppModel: ObservableObject {
 
     @discardableResult
     func saveButtonBarSelection(_ value: String?, for connection: SSHConnection) -> Bool {
+        if connection.temporary {
+            connection.profile.buttonBarSet = value
+        }
         if connection.temporary, connection.profile.connectionType == .localShell {
             UserDefaults.standard.set(value ?? "", forKey: Self.localShellButtonBarKey)
             return true
@@ -1146,13 +1149,14 @@ final class AppModel: ObservableObject {
             guard confirmSessionSettings("Apply Temporary Tab Settings?", text: "This tab will restart with the updated connection settings.") else { return false }
             connection.disconnect()
             let replacement = SSHConnection(profile: updated, manual: connection.manual, temporary: true,
-                                            credentials: passwordStore, transferQueueID: connection.transferQueueID)
+                                            credentials: passwordStore, transferQueueID: updated.sameDestination(as: original) ? connection.transferQueueID : UUID())
             replacement.tabName = connection.tabName
             if updated.buttonBarSet == original.buttonBarSet {
                 replacement.buttonBarSelection = connection.buttonBarSelection
             }
             configurePasswordSaving(replacement)
             replaceTab(connection, with: replacement)
+            if updated.buttonBarSet != original.buttonBarSet { replacement.buttonBarSelection = nil }
         } else {
             if updated.buttonBarSet != original.buttonBarSet { connection.buttonBarSelection = nil }
             connection.profile = updated

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.2
+
+### Added
+
+- Select paths from SFTP directory history and filter filenames independently in Local and Remote panels.
+- Navigate back and forward through separate Local and Remote SFTP directory histories.
+
+### Fixed
+
+- Avoid repeating unchanged SSH status updates and hide inactive terminal views while continuing to process their output.
+- Disable redundant sudo switching for SSH sessions logged in as root and record root privileges in their transfer queues.
+- Keep temporary tab Button Bar settings consistent across the panel, settings editor and restart. Retain temporary tunnel edits across reconnect and clarify when tab changes are saved or applied.
+- Remove tunnels from active connections and persist tunnel additions, edits and removals to saved sessions.
+- Show Saved when a tunnel matches its saved session rule, independently of whether it is currently running.
+
 ## 0.9.1
 
 ### Added

@@ -39,8 +39,8 @@ struct ProfileEditor: View {
             return draft.fromTemporaryTab ? "Creates a saved profile. The current tab remains temporary." :
                 "Creates a saved profile in Session Manager."
         }
-        return draft.fromTemporaryTab ? "Connection changes require a restart. Colors and themes apply immediately." :
-            "Connection changes apply on reconnect. Colors and themes apply immediately."
+        return draft.fromTemporaryTab ? "Applies to this temporary tab. Connection changes restart it; appearance and Button Bar apply immediately." :
+            "Saves the session. Connection changes apply on reconnect; appearance and Button Bar apply immediately."
     }
 
     private var generalSettings: some View {

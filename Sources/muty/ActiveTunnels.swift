@@ -40,6 +40,14 @@ import AppKit
             if let index = entries.firstIndex(where: { $0.id == id }), !ended { entries[index].state = error.localizedDescription }
         }
     }
+    func remove(_ id: UUID) async {
+        guard !busy, let entry = entries.first(where: { $0.id == id }) else { return }
+        if entry.active {
+            await change(id, start: false)
+            guard let current = entries.first(where: { $0.id == id }), !current.active else { return }
+        }
+        entries.removeAll { $0.id == id }
+    }
     private nonisolated static func control(_ args: [String]) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             DispatchQueue.global(qos: .utility).async {
@@ -69,7 +77,8 @@ struct ActiveTunnelsView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var manager: ActiveTunnelManager
     @ObservedObject var model: AppModel
-    let profile: SessionProfile
+    @ObservedObject var connection: SSHConnection
+    private var profile: SessionProfile { connection.profile }
     @ViewState private var editing: PortForward?
     @ViewState private var error: String?
     var body: some View {
@@ -79,6 +88,10 @@ struct ActiveTunnelsView: View {
                 Button("Add…") { editing = PortForward() }.disabled(manager.busy || manager.ended)
                 Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
             }
+            Text(connection.temporary
+                 ? "Changes apply immediately to this temporary tab. Save the tab as a session to keep them."
+                 : "Tunnel edits are saved to the session and applied immediately. Start and Stop affect this connection.")
+                .font(.caption).foregroundStyle(.secondary)
             Text("Listening confirms the forwarding listener, not availability of the destination service.").font(.caption).foregroundStyle(.secondary)
             List(manager.entries) { entry in
                 VStack(alignment: .leading, spacing: 5) {
@@ -88,7 +101,26 @@ struct ActiveTunnelsView: View {
                         Spacer()
                         Button(entry.active ? "Stop" : "Start / Retry") { Task { await manager.change(entry.id, start: !entry.active) } }
                         Button("Edit…") { editing = entry.rule }
-                        Button("Save to Session") { var rule = entry.rule; rule.enabled = entry.active; save(rule) }.disabled(model.readOnly || !model.profiles.contains(where: { $0.id == profile.id }))
+                        Button(isSaved(entry) ? "Saved" : "Save to Session") {
+                            save(entry.rule)
+                        }
+                        .disabled(isSaved(entry) || model.readOnly || !model.profiles.contains(where: { $0.id == profile.id }))
+                        Button("Remove") {
+                            let saved = model.profiles.first(where: { $0.id == profile.id })?.forwards.contains(where: { $0.id == entry.id }) == true
+                            let detail = saved ? "The tunnel will be stopped and removed from the saved session." : "The tunnel will be removed from this connection."
+                            if model.confirm("Remove Tunnel?", text: detail, action: "Remove") {
+                                Task {
+                                    if entry.active {
+                                        await manager.change(entry.id, start: false)
+                                        guard manager.entries.first(where: { $0.id == entry.id })?.active == false else { return }
+                                    }
+                                    do {
+                                        try persist(entry.rule, removing: true)
+                                        await manager.remove(entry.id)
+                                    } catch { self.error = error.localizedDescription }
+                                }
+                            }
+                        }
                     }
                     let destination = entry.rule.kind == .socks
                         ? "SOCKS"
@@ -111,6 +143,8 @@ struct ActiveTunnelsView: View {
                         await manager.change(value.id, start: false)
                         guard manager.entries.first(where: { $0.id == value.id })?.active == false else { return }
                     }
+                    do { try persist(value) }
+                    catch { self.error = error.localizedDescription; return }
                     if let i = manager.entries.firstIndex(where: { $0.id == value.id }) { manager.entries[i] = .init(rule: value) }
                     else { manager.entries.append(.init(rule: value)) }
                     await manager.change(value.id, start: true)
@@ -118,12 +152,33 @@ struct ActiveTunnelsView: View {
             }
         }
     }
+    private func isSaved(_ entry: ActiveTunnelManager.Entry) -> Bool {
+        return model.profiles.first(where: { $0.id == profile.id })?.forwards.contains(entry.rule) == true
+    }
+
     private func save(_ rule: PortForward) {
-        guard var updated = model.profiles.first(where: { $0.id == profile.id }) else { return }
-        if let i = updated.forwards.firstIndex(where: { $0.id == rule.id }) { updated.forwards[i] = rule }
-        else { updated.forwards.append(rule) }
-        do { try model.save(updated, password: "", reuse: false, revokeActiveAuthentication: false) }
+        do { try persist(rule) }
         catch { self.error = error.localizedDescription }
+    }
+
+    private func persist(_ rule: PortForward, removing: Bool = false) throws {
+        guard connection.temporary || model.profiles.contains(where: { $0.id == profile.id }) else {
+            throw MutyError("The saved session was deleted.")
+        }
+        var updated = connection.temporary ? connection.profile : model.profiles.first(where: { $0.id == profile.id })!
+        if removing {
+            updated.forwards.removeAll { $0.id == rule.id }
+        } else if let index = updated.forwards.firstIndex(where: { $0.id == rule.id }) {
+            updated.forwards[index] = rule
+        } else {
+            updated.forwards.append(rule)
+        }
+        if connection.temporary {
+            connection.profile.forwards = updated.forwards
+        } else {
+            try model.save(updated, password: "", reuse: false, revokeActiveAuthentication: false)
+            connection.profile.forwards = updated.forwards
+        }
     }
 }
 private struct ActiveTunnelEditor: View {

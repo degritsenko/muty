@@ -632,7 +632,7 @@ struct SessionTab: View {
             Button("Close Tab") { model.close(connection) }
         }
         .sheet(isPresented: $tunnelsVisible) {
-            if let tunnels = connection.activeTunnels { ActiveTunnelsView(manager: tunnels, model: model, profile: connection.profile) }
+            if let tunnels = connection.activeTunnels { ActiveTunnelsView(manager: tunnels, model: model, connection: connection) }
         }
         .alert("Rename Tab", isPresented: $renaming) {
             TextField("Tab name", text: $nameDraft)
@@ -680,7 +680,11 @@ private struct SessionPane: View {
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
             }
-            TerminalPane(connection: connection, fontSize: fontSize, selected: selected && !connection.showingSFTP,
+            TerminalPane(connection: connection, fontSize: fontSize,
+                         visible: !connection.showingSFTP && (model.splitGroups.isEmpty
+                             ? model.selectedTab == connection.id
+                             : model.splitGroups.contains { $0.selected == connection.id }),
+                         selected: selected && !connection.showingSFTP,
                          onSelect: { [weak model, weak connection] in
                              if let connection { model?.selectTab(connection.id) }
                          }, isCurrentSelection: { model.selectedTab == connection.id })
@@ -705,7 +709,7 @@ private struct SessionPane: View {
                 window.makeFirstResponder(nil)
             }
         }.sheet(isPresented: $tunnelsVisible) {
-            if let tunnels = connection.activeTunnels { ActiveTunnelsView(manager: tunnels, model: model, profile: connection.profile) }
+            if let tunnels = connection.activeTunnels { ActiveTunnelsView(manager: tunnels, model: model, connection: connection) }
         }.onAppear {
             applySettings()
             openSFTPIfNeeded()

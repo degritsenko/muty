@@ -4,6 +4,7 @@ import AppKit
 struct TerminalPane: NSViewRepresentable {
     @ObservedObject var connection: SSHConnection
     var fontSize: Double
+    var visible: Bool
     var selected: Bool
     var onSelect: () -> Void
     var isCurrentSelection: () -> Bool
@@ -36,6 +37,10 @@ struct TerminalPane: NSViewRepresentable {
         if let container = view as? Container {
             container.freezeTerminalSize = connection.showingSFTP
             container.needsLayout = true
+        }
+        if connection.terminal.isHidden == visible {
+            connection.terminal.isHidden = !visible
+            if visible { connection.terminal.needsDisplay = true }
         }
         connection.setFontSize(fontSize)
         connection.terminal.onTerminalClick = onSelect
